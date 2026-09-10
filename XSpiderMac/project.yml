@@ -32,5 +32,10 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - Tests
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac.tests
+      SWIFT_VERSION: "6.0"
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
     dependencies:
       - target: XSpiderMac
