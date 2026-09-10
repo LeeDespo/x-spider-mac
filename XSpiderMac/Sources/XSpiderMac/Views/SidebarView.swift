@@ -2,10 +2,12 @@ import SwiftUI
 
 struct SidebarView: View {
     @Binding var selection: NavigationItem?
+    @State private var showCookieSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
             accountCard
+                .onTapGesture { showCookieSheet = true }
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -28,6 +30,9 @@ struct SidebarView: View {
         }
         .frame(minWidth: 200, idealWidth: 220)
         .background(.clear)
+        .sheet(isPresented: $showCookieSheet) {
+            CookieImportView(isPresented: $showCookieSheet)
+        }
     }
 
     private var accountCard: some View {
