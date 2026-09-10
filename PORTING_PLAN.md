@@ -160,7 +160,13 @@ targets:
 
 ## 7. 里程碑（每步：做什么 / 调用什么 / 验收）
 
-- **M0 仓库就绪（已完成）**：上游完整历史入库；origin 指向 LeeDespo/x-spider-mac（fork API 403 → 建空仓库直推的等效方案）；gh 已登录。
+- **M0 仓库就绪（部分完成）**：上游完整历史已入库（master，领先上游 1 commit）；
+  remote `upstream`→MiningCattiva/x-spider、`origin`→LeeDespo/x-spider-mac（URL 已配好）。
+  **阻塞**：当前 gh token（fine-grained PAT）无 fork/建仓权限（API 403）。
+  **人工步骤**：在浏览器打开 https://github.com/new ，名称填 `x-spider-mac`，Public，
+  **不要**勾选 README/gitignore/license（本地已有完整历史）。建好后回到仓库目录执行：
+  `cd /Users/mac/Documents/x-spider-mac && git push -u origin master`。
+  备选：GitHub 上直接 fork MiningCattiva/x-spider 后 rename 为 x-spider-mac（会保留 fork 关系）。
 - **M1 工程骨架**：`brew install xcodegen` → 写 `project.yml` → `xcodegen generate` →
   `export DEVELOPER_DIR=… && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac build`。
   验收：app 启动出现玻璃质感空窗口 + sidebar 骨架。
