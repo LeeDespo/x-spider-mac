@@ -1,0 +1,496 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
+		72D3CDEF62F5C4B830171189 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C67A4155E3A3ADB82010417 /* SidebarView.swift */; };
+		7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */; };
+		DC1C3563D7B0406F17ED3069 /* Placeholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B58EC8523DB4849FC907AB /* Placeholder.swift */; };
+		E04E855AB238056433E1596E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1BBD226AD033835C037F4E7E /* Assets.xcassets */; };
+		EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F384578208B4323FB9E377 /* ContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A7A4EF118478EDDC77AA4463 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2132E386BF1EADE710AA2784 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 41AB8042EBAEA8A9E14E0B6E;
+			remoteInfo = XSpiderMac;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacApp.swift; sourceTree = "<group>"; };
+		1BBD226AD033835C037F4E7E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2C67A4155E3A3ADB82010417 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
+		49F384578208B4323FB9E377 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		583B467661B41B8F17D31BDF /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		82F18809605044A1B3F2B7A5 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		9FBF3B6352EC01EFE8FF9BB3 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		A9FF2B6963D0CB232CB5947E /* XSpiderMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = XSpiderMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B0B58EC8523DB4849FC907AB /* Placeholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Placeholder.swift; sourceTree = "<group>"; };
+		CF04B13606AE9D30B5392F7C /* XSpiderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XSpiderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA025EF3ECBDC3FAB302A622 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		FADCA961AD9D4F3C749F8A46 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0A88B03F17E29512367B0991 = {
+			isa = PBXGroup;
+			children = (
+				C4660C9AB449A714A0F5BF9D /* Resources */,
+				ABCF6C537659FC9845E66F49 /* Sources */,
+				C3ACA30BA64BF7D4ED63B691 /* Tests */,
+				5AE56BCE44D8FB92FE6B3E03 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		182C3153A9525CE5C1D06F62 /* XSpiderMac */ = {
+			isa = PBXGroup;
+			children = (
+				07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */,
+				D1AA5589A02CCB60354A8846 /* Models */,
+				B34E9AE4469084B1E93E2C6D /* Services */,
+				D9A584A3E59D50A1E2C6A3A0 /* Stores */,
+				89B00E24CAAF513D7F8FEB38 /* Support */,
+				31B7D5CA5DF8A98393BDF186 /* Views */,
+			);
+			path = XSpiderMac;
+			sourceTree = "<group>";
+		};
+		31B7D5CA5DF8A98393BDF186 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				EA025EF3ECBDC3FAB302A622 /* .gitkeep */,
+				49F384578208B4323FB9E377 /* ContentView.swift */,
+				2C67A4155E3A3ADB82010417 /* SidebarView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		5AE56BCE44D8FB92FE6B3E03 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CF04B13606AE9D30B5392F7C /* XSpiderMac.app */,
+				A9FF2B6963D0CB232CB5947E /* XSpiderMacTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		89B00E24CAAF513D7F8FEB38 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				82F18809605044A1B3F2B7A5 /* .gitkeep */,
+				B0B58EC8523DB4849FC907AB /* Placeholder.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		ABCF6C537659FC9845E66F49 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				182C3153A9525CE5C1D06F62 /* XSpiderMac */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		B34E9AE4469084B1E93E2C6D /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				FADCA961AD9D4F3C749F8A46 /* .gitkeep */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C3ACA30BA64BF7D4ED63B691 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				D3BEFBAEE027F494EEAA3D35 /* XSpiderMacTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		C4660C9AB449A714A0F5BF9D /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1BBD226AD033835C037F4E7E /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		D1AA5589A02CCB60354A8846 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				583B467661B41B8F17D31BDF /* .gitkeep */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		D3BEFBAEE027F494EEAA3D35 /* XSpiderMacTests */ = {
+			isa = PBXGroup;
+			children = (
+				3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */,
+			);
+			path = XSpiderMacTests;
+			sourceTree = "<group>";
+		};
+		D9A584A3E59D50A1E2C6A3A0 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				9FBF3B6352EC01EFE8FF9BB3 /* .gitkeep */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		41AB8042EBAEA8A9E14E0B6E /* XSpiderMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6DA9D0CC8469DE3059508F77 /* Build configuration list for PBXNativeTarget "XSpiderMac" */;
+			buildPhases = (
+				516BEEFF93E15F030EEFFE76 /* Sources */,
+				34EF8A87E0623A03AB2D59A2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = XSpiderMac;
+			packageProductDependencies = (
+			);
+			productName = XSpiderMac;
+			productReference = CF04B13606AE9D30B5392F7C /* XSpiderMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4975324BBE33912392704953 /* XSpiderMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 11A5B4EB2C17EF3C91C71BF4 /* Build configuration list for PBXNativeTarget "XSpiderMacTests" */;
+			buildPhases = (
+				1D634C2B26CD8B97F1291A15 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C7BA994E0A67DEB83760936F /* PBXTargetDependency */,
+			);
+			name = XSpiderMacTests;
+			packageProductDependencies = (
+			);
+			productName = XSpiderMacTests;
+			productReference = A9FF2B6963D0CB232CB5947E /* XSpiderMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2132E386BF1EADE710AA2784 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					41AB8042EBAEA8A9E14E0B6E = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FBBCFF0CE44ED13436C4DCCE /* Build configuration list for PBXProject "XSpiderMac" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 0A88B03F17E29512367B0991;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5AE56BCE44D8FB92FE6B3E03 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				41AB8042EBAEA8A9E14E0B6E /* XSpiderMac */,
+				4975324BBE33912392704953 /* XSpiderMacTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		34EF8A87E0623A03AB2D59A2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E04E855AB238056433E1596E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1D634C2B26CD8B97F1291A15 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		516BEEFF93E15F030EEFFE76 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */,
+				DC1C3563D7B0406F17ED3069 /* Placeholder.swift in Sources */,
+				72D3CDEF62F5C4B830171189 /* SidebarView.swift in Sources */,
+				7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C7BA994E0A67DEB83760936F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 41AB8042EBAEA8A9E14E0B6E /* XSpiderMac */;
+			targetProxy = A7A4EF118478EDDC77AA4463 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0146C645620DC7F255B4D83C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		559BBC1F715A4F88C88EA948 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/XSpiderMac.app/Contents/MacOS/XSpiderMac";
+			};
+			name = Release;
+		};
+		AB025E4551A738A11C19F300 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = XSpiderMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "X-Spider";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		DF6FE9C34022552AF4F2DCEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/XSpiderMac.app/Contents/MacOS/XSpiderMac";
+			};
+			name = Debug;
+		};
+		EC7955728D427CA2E9B9921F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = XSpiderMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "X-Spider";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		FA7342173E9ACC2B033F479A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		11A5B4EB2C17EF3C91C71BF4 /* Build configuration list for PBXNativeTarget "XSpiderMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DF6FE9C34022552AF4F2DCEE /* Debug */,
+				559BBC1F715A4F88C88EA948 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6DA9D0CC8469DE3059508F77 /* Build configuration list for PBXNativeTarget "XSpiderMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB025E4551A738A11C19F300 /* Debug */,
+				EC7955728D427CA2E9B9921F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FBBCFF0CE44ED13436C4DCCE /* Build configuration list for PBXProject "XSpiderMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0146C645620DC7F255B4D83C /* Debug */,
+				FA7342173E9ACC2B033F479A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 2132E386BF1EADE710AA2784 /* Project object */;
+}

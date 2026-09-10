@@ -1,0 +1,36 @@
+name: XSpiderMac
+targets:
+  XSpiderMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - Sources
+      - Resources
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac
+      INFOPLIST_KEY_CFBundleDisplayName: "X-Spider"
+      INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+      GENERATE_INFOPLIST_FILE: YES
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: ""
+      ENABLE_HARDENED_RUNTIME: YES
+      SWIFT_VERSION: "6.0"
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+    entitlements:
+      path: XSpiderMac.entitlements
+      properties:
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+    scheme:
+      XSpiderMac:
+        testTargets:
+          - XSpiderMacTests
+  XSpiderMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - Tests
+    dependencies:
+      - target: XSpiderMac
