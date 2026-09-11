@@ -31,7 +31,7 @@ actor XClientTransaction {
     private var loadedAt: Date?
 
     /// twscrape/account.py TOKEN（X 轮换后的有效 Bearer；上游 2024 年硬编码的已失效）
-    static let bearer = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZzS4fnriEAGWWjCpTnA"
+    static let bearer = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
     private var client: NetworkClient
 
@@ -365,11 +365,12 @@ actor XClientTransaction {
         let val = Cubic(curves: curves).getValue(time: targetTime)
 
         var color = interpolate(fromColor, toColor, val).map { min(255, max(0, $0)) }
-        color = color.map { Double(round($0)) }
+        // Python round() 银行家舍入
+        color = color.map { $0.rounded(.toNearestOrEven) }
         let rotation = interpolate(fromRotation, toRotation, val)
 
         let matrix = rotationMatrix(rotation[0])
-        var strArr = color.dropLast().map { String(Int($0), radix: 16) }
+        var strArr = color.dropLast().map { String(Int($0), radix: 16) }  // 整数值，radix 足够
         for value in matrix {
             let rounded = (value * 100).rounded() / 100
             let absRounded = abs(rounded)
@@ -431,7 +432,7 @@ actor XClientTransaction {
 
     static func solve(_ value: Double, minVal: Double, maxVal: Double, rounding: Bool) -> Double {
         let result = value * (maxVal - minVal) / 255 + minVal
-        return rounding ? Double(floor(result)) : (result * 100).rounded() / 100
+        return rounding ? Double(floor(result)) : (result * 100).rounded(.toNearestOrEven) / 100
     }
 
     static func rotationMatrix(_ rotation: Double) -> [Double] {
@@ -461,7 +462,7 @@ actor XClientTransaction {
         result.append(".")
         var frac = fraction
         var guardCount = 0
-        while frac > 0 && guardCount < 10 {
+        while frac > 0 && guardCount < 1000 {
             frac *= 16
             let integer = Int(frac)
             frac -= Double(integer)
