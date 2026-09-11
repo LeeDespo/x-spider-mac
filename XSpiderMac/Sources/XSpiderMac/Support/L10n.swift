@@ -140,6 +140,17 @@ enum L10n {
         ("个日志文件", "個日誌檔案"),
         ("共", "共"),
         ("标签2", "標籤2"),
+        ("加载媒体", "載入媒體"),
+        ("搜索后自动加载媒体时间线", "搜尋後自動載入媒體時間線"),
+        ("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。", "關閉後，主頁僅顯示用戶資訊與下載設定，需要時點擊「載入媒體」手動載入，可顯著節省流量。媒體網格始終使用縮圖展示，下載原圖不受影響。"),
+        ("失败", "失敗"),
+        ("需要重启应用才能完全生效", "需要重新啟動應用才能完全生效"),
+        ("立刻重启", "立刻重新啟動"),
+        ("暂不重启", "暫不重新啟動"),
+        ("字号与语言修改已保存。部分界面元素将在重启后应用新设置。", "字號與語言修改已儲存。部分介面元素將在重新啟動後套用新設定。"),
+        ("macOS 原生版 X 媒体下载器", "macOS 原生版 X 媒體下載器"),
+        ("关于", "關於"),
+
     ])
 
     // MARK: - English
@@ -253,6 +264,17 @@ enum L10n {
         ("个日志文件", " log file(s)"),
         ("共", ""),
         ("标签2", "Label 2"),
+        ("加载媒体", "Load Media"),
+        ("搜索后自动加载媒体时间线", "Auto-load media timeline after search"),
+        ("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。", "When off, Home shows only the user card and download settings; click “Load Media” to fetch manually and save bandwidth. The grid always uses thumbnails; original downloads are unaffected."),
+        ("失败", "Failed"),
+        ("需要重启应用才能完全生效", "Restart required to fully apply"),
+        ("立刻重启", "Restart Now"),
+        ("暂不重启", "Later"),
+        ("字号与语言修改已保存。部分界面元素将在重启后应用新设置。", "Font size and language changes are saved. Some UI elements apply after restart."),
+        ("macOS 原生版 X 媒体下载器", "Native macOS media downloader for X"),
+        ("关于", "About"),
+
     ])
 }
 

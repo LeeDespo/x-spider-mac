@@ -41,13 +41,22 @@ final class HomepageStore {
             userInfoLoading = false
             userInfo = user
             AppStore.shared.addSearchHistory(sn)
-            await loadPostList()
+            // 「搜索后加载媒体」开关关闭时只显示用户卡 + 下载配置，省流量
+            if SettingsStore.shared.settings.autoLoadMediaEnabled {
+                await loadPostList()
+            }
         } catch {
             userInfoLoading = false
             if error is CancellationError { return }
             NSLog("loadUser error: \(error.localizedDescription)")
             throwError(error)
         }
+    }
+
+    /// 手动加载/重新加载媒体时间线（开关开启或用户点「加载媒体」）
+    func loadMediaNow() async {
+        guard userInfo != nil else { return }
+        await loadPostList()
     }
 
     // MARK: - 媒体列表（上游 loadPostList / loadMorePostList：cursor 翻页）

@@ -34,14 +34,23 @@ struct SettingsView: View {
 
             // 按账号建子目录（替代原"目录模板"）
             Toggle(L("按账号创建子文件夹"), isOn: Binding(
-                get: { settingsStore.settings.download.accountSubfolder },
+                get: { settingsStore.settings.accountSubfolderEnabled },
                 set: { settingsStore.settings.download.accountSubfolder = $0 }
             ))
-            if settingsStore.settings.download.accountSubfolder {
+            if settingsStore.settings.accountSubfolderEnabled {
                 Text(L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中，如：") + "\(settingsStore.settings.download.saveDirBase)/abc-@123")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            // 主页媒体自动加载（流量优化）
+            Toggle(L("搜索后自动加载媒体时间线"), isOn: Binding(
+                get: { settingsStore.settings.autoLoadMediaEnabled },
+                set: { settingsStore.settings.download.autoLoadMedia = $0 }
+            ))
+            Text(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             // 文件名模板（单一输入 + 实时预览）
             TextField(L("文件名模板"), text: Binding(
@@ -101,7 +110,6 @@ struct SettingsView: View {
 
     // MARK: - 外观（字体大小 + 语言）
 
-
     private var appearanceSection: some View {
         Section {
             Picker(L("界面字体大小"), selection: Binding(
@@ -117,8 +125,8 @@ struct SettingsView: View {
                 get: { settingsStore.language },
                 set: { newLang in
                     guard newLang != settingsStore.language else { return }
-                    // 应用内字符串表即时生效，无需重启
                     settingsStore.language = newLang
+                    restartDialogVisible = true
                 }
             )) {
                 ForEach(Settings.Language.allCases) { lang in
@@ -127,6 +135,38 @@ struct SettingsView: View {
             }
         } header: {
             Label(L("外观"), systemImage: "textformat")
+        }
+        // 字号修改提示：字体环境在部分原生控件上需要重启才能完全生效
+        .onChange(of: settingsStore.fontSize) { old, new in
+            guard old != new else { return }
+            restartDialogVisible = true
+        }
+        .confirmationDialog(
+            L("需要重启应用才能完全生效"),
+            isPresented: $restartDialogVisible,
+            titleVisibility: .visible
+        ) {
+            Button(L("立刻重启"), role: .destructive) { restartApp() }
+            Button(L("暂不重启")) { /* 保留设置，用户稍后自行重启 */ }
+        } message: {
+            Text(L("字号与语言修改已保存。部分界面元素将在重启后应用新设置。"))
+        }
+    }
+
+    @State private var restartDialogVisible = false
+
+    /// 重启应用：启动新进程后退出当前进程
+    private func restartApp() {
+        let bundleURL = Bundle.main.bundleURL
+        let process = Process()
+        process.executableURL = bundleURL.appendingPathComponent("Contents/MacOS/XSpiderMac")
+        do {
+            try process.run()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                NSApplication.shared.terminate(nil)
+            }
+        } catch {
+            AppLogger.error(L("重启失败，请手动退出并重新打开应用"), category: "APP", ["error": error.localizedDescription])
         }
     }
 

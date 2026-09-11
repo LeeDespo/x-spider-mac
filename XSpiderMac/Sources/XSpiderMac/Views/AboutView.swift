@@ -3,15 +3,21 @@ import SwiftUI
 struct AboutView: View {
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 96))
-                .foregroundStyle(.secondary)
+            if let icon = NSApplication.shared.applicationIconImage {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 128, height: 128)
+            } else {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 96))
+                    .foregroundStyle(.secondary)
+            }
 
             Text("X-Spider")
                 .font(.largeTitle)
                 .fontWeight(.semibold)
 
-            Text("macOS native port of x-spider")
+            Text(L("macOS 原生版 X 媒体下载器"))
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -24,7 +30,7 @@ struct AboutView: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("About")
+        .navigationTitle(L("关于"))
     }
 }
 

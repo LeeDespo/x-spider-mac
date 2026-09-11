@@ -9,14 +9,20 @@ final class SettingsStore {
         didSet { save() }
     }
 
-    /// UI 字体大小（12–18pt，默认 14）
+    /// 需要重启才能完全生效的修改提示（设置页弹窗）
+    var pendingRestartNotice: String?
+
+    /// UI 字号（进 settings 持久化；12–18）
     var fontSize: Double {
-        get { UserDefaults.standard.object(forKey: "app.fontSize") as? Double ?? 14 }
+        get { settings.fontSizeValue }
         set {
-            UserDefaults.standard.set(newValue, forKey: "app.fontSize")
-            applyLanguage()
+            settings.fontSizeValue = newValue
+            restartNoticePendingFonts = true
         }
     }
+
+    /// 字号修改后是否需要重启提示（视图层读取后清除）
+    var restartNoticePendingFonts = false
 
     private let storage = UserDefaults.standard
     private let key = "settings.v2"
@@ -26,10 +32,23 @@ final class SettingsStore {
            let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
             settings = decoded
         }
+        // 迁移：旧版字号存 UserDefaults，搬进 settings
+        if settings.app.fontSize == nil,
+           let legacy = UserDefaults.standard.object(forKey: "app.fontSize") as? Double {
+            settings.fontSizeValue = legacy
+        }
+        // 默认保存路径：~/Downloads（仅当从未设置过）
+        if settings.download.saveDirBase.isEmpty {
+            if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+                settings.download.saveDirBase = downloads.path
+            }
+        }
         AppLogger.fileLoggingEnabled = settings.app.writeLogs
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
     }
+
+    private var savedSettings: Settings?
 
     private func save() {
         if let data = try? JSONEncoder().encode(settings) {

@@ -39,7 +39,12 @@ final class DownloadStore {
         let templateData = FileNameTemplateData(post: post, media: media)
         // 目录规则：accountSubfolder 开启时 → 保存路径/昵称-@用户名（如 ~/Download/abc-@123）
         var dir = settings.download.saveDirBase
-        if settings.download.accountSubfolder {
+        if dir.isEmpty {
+            if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+                dir = downloads.path
+            }
+        }
+        if settings.accountSubfolderEnabled {
             let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
             dir = (dir as NSString).appendingPathComponent(folderName)
         }
@@ -183,7 +188,12 @@ final class DownloadStore {
     // MARK: - 下载完成回调（DownloadDelegate 调用）
 
     func handleDownloadCompleted(gid: String, localURL: URL?, response: URLResponse?, error: Error?) {
-        defer { sessionTasks.removeValue(forKey: gid) }
+        defer {
+            sessionTasks.removeValue(forKey: gid)
+            if let localURL, localURL.path.contains("xspider-dl-") {
+                try? fm.removeItem(at: localURL)
+            }
+        }
 
         guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
         let task = tasks[index]
@@ -224,7 +234,7 @@ final class DownloadStore {
             return
         }
 
-        // 移动到目标目录
+        // 移动到目标目录（必须同步：didFinishDownloadingTo 返回后系统即删除临时文件）
         let destURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(task.fileName))
         try? fm.createDirectory(atPath: task.dir, withIntermediateDirectories: true)
         do {
@@ -240,7 +250,29 @@ final class DownloadStore {
             AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)"])
             refreshSleepAssertion()
         } catch {
-            update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }
+            // 临时文件即将被系统删除：move 失败时先拷贝兜底，仍失败才报错
+            do {
+                try? fm.removeItem(at: destURL)
+                try fm.copyItem(at: localURL, to: destURL)
+                let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
+                update(gid: gid) {
+                    $0.status = .complete
+                    $0.completeSize = size ?? 0
+                    $0.totalSize = size ?? 0
+                    $0.error = nil
+                }
+                AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)"])
+                refreshSleepAssertion()
+            } catch {
+                update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }
+                AppLogger.error("下载文件落盘失败", category: "DL", [
+                    "file": task.fileName,
+                    "dest": destURL.path,
+                    "error": error.localizedDescription,
+                ])
+                notify(title: "任务下载失败", body: "\(task.fileName)\n文件写入失败: \(error.localizedDescription)")
+                refreshSleepAssertion()
+            }
         }
     }
 
@@ -278,8 +310,22 @@ final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked S
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        Task { @MainActor in
-            self.store.handleDownloadCompleted(gid: self.gid, localURL: location, response: downloadTask.response, error: nil)
+        // 关键：必须在回调返回前同步处理——回调返回后系统会删除 location 临时文件。
+        // 先同步拷贝到稳定位置，再投递到 MainActor 更新状态。
+        let stableURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xspider-dl-\(UUID().uuidString)")
+        do {
+            try? FileManager.default.removeItem(at: stableURL)
+            try FileManager.default.copyItem(at: location, to: stableURL)
+            Task { @MainActor in
+                self.store.handleDownloadCompleted(gid: self.gid, localURL: stableURL, response: downloadTask.response, error: nil)
+            }
+        } catch {
+            struct TempCopyError: LocalizedError { let errorDescription: String? }
+            let msg = TempCopyError(errorDescription: "临时文件拷贝失败: \(error.localizedDescription)")
+            Task { @MainActor in
+                self.store.handleDownloadCompleted(gid: self.gid, localURL: nil, response: downloadTask.response, error: msg)
+            }
         }
     }
 

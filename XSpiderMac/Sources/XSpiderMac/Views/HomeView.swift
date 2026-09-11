@@ -21,7 +21,18 @@ struct HomeView: View {
                 } else if let user = store.userInfo {
                     userInfoCard(user)
                     downloadController
-                    postListGrid
+                    // 「搜索后自动加载媒体」关闭时，只显示用户卡 + 下载配置，可手动加载
+                    if store.postList.isEmpty && !SettingsStore.shared.settings.autoLoadMediaEnabled {
+                        Button {
+                            Task { await store.loadMediaNow() }
+                        } label: {
+                            Label(L("加载媒体"), systemImage: "photo.stack")
+                        }
+                        .buttonStyle(.glass)
+                        .padding(.top, 4)
+                    } else {
+                        postListGrid
+                    }
                 } else {
                     emptyState
                 }
@@ -346,8 +357,18 @@ struct MediaGridItem: View {
 
     private func loadThumbnail() async {
         guard let urlString = media.url, let url = URL(string: urlString) else { return }
+        // 缩略图优先：pbs.twimg.com 图片 URL 加 name=small（约 120px 宽）省流量；
+        // 网格展示用缩略图，下载时才取 name=orig 原图
+        var smallURL = url
+        if url.path.contains("/media/") {
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            var items = comps.queryItems?.filter { $0.name != "name" } ?? []
+            items.append(URLQueryItem(name: "name", value: "small"))
+            comps.queryItems = items
+            if let u = comps.url { smallURL = u }
+        }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await URLSession.shared.data(from: smallURL)
             thumbnail = NSImage(data: data)
         } catch {}
     }
