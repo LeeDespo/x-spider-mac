@@ -97,25 +97,17 @@ struct SidebarView: View {
     }
 
     private func logoutOverlay(_ account: TwitterAccountInfo) -> some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                VStack(spacing: 8) {
-                    Button {
-                        AppStore.shared.logout()
-                        self.account = nil
-                    } label: {
-                        Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                    .buttonStyle(.glass)
-                }
-                .padding(8)
-            }
-            .padding(.bottom, 60)
+        // 只放一个按钮（底部右侧），不做全屏覆盖层——
+        // 之前的全屏 overlay + allowsHitTesting(true) 会拦截 List 的点击，导致侧边栏无法切换
+        Button {
+            AppStore.shared.logout()
+            self.account = nil
+        } label: {
+            Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .allowsHitTesting(true)
+        .buttonStyle(.glass)
+        .padding(.trailing, 12)
+        .padding(.bottom, 24)
     }
 }
 
