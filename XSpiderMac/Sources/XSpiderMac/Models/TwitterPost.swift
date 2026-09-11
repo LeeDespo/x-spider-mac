@@ -1,6 +1,6 @@
 import Foundation
 
-struct TwitterPost: Codable, Sendable {
+struct TwitterPost: Sendable {
     let id: String
     let user: TwitterUser
     let createdAt: Date?

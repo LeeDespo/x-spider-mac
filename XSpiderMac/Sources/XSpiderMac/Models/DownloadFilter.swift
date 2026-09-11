@@ -1,11 +1,11 @@
 import Foundation
 
-struct DownloadFilter: Codable, Sendable {
-    enum Source: String, Codable, Sendable {
+struct DownloadFilter: Sendable {
+    enum Source: String, CaseIterable, Sendable {
         case medias, tweets
     }
 
-    struct DateRange: Codable, Sendable {
+    struct DateRange: Sendable {
         var start: Date
         var end: Date
     }

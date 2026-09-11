@@ -1,6 +1,6 @@
 import Foundation
 
-struct TwitterAccountInfo: Codable, Sendable {
+struct TwitterAccountInfo: Equatable, Codable, Sendable {
     let screenName: String
     let avatar: String
 }

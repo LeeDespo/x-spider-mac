@@ -1,8 +1,12 @@
 import Foundation
 
+/// 上游 ipc/network.ts 的移植：16 次重试、指数退避（100ms 起、16s 封顶）、代理三态。
 actor NetworkClient {
-    private let session: URLSession
+    private let maxRetryCount = 16
+    private let maxRetryDelay: TimeInterval = 16
+
     private var proxy: ProxySettings
+    private var session: URLSession
 
     init(proxy: ProxySettings = ProxySettings()) {
         self.proxy = proxy
@@ -11,17 +15,40 @@ actor NetworkClient {
         self.session = URLSession(configuration: config)
     }
 
-    func updateProxy(_ proxy: ProxySettings) {
-        self.proxy = proxy
-    }
-
     func request(
         method: String = "GET",
         url: URL,
         query: [String: String] = [:],
         headers: [String: String] = [:],
-        body: Data? = nil,
-        responseType: NetworkResponseType = .json
+        body: Data? = nil
+    ) async throws -> NetworkResponse {
+        var remainingRetryCount = maxRetryCount
+        var retryDelay: TimeInterval = 0.1
+        var lastError: Error?
+
+        while remainingRetryCount > 0 {
+            do {
+                return try await requestInternal(
+                    method: method, url: url, query: query,
+                    headers: headers, body: body
+                )
+            } catch {
+                lastError = error
+                try? await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                remainingRetryCount -= 1
+                retryDelay = min(retryDelay * 2, maxRetryDelay)
+            }
+        }
+
+        throw lastError ?? NetworkError.unknown
+    }
+
+    private func requestInternal(
+        method: String,
+        url: URL,
+        query: [String: String],
+        headers: [String: String],
+        body: Data?
     ) async throws -> NetworkResponse {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: true)!
         if !query.isEmpty {
@@ -45,8 +72,8 @@ actor NetworkClient {
     }
 }
 
-enum NetworkResponseType {
-    case json, text, binary
+enum NetworkError: Error {
+    case unknown
 }
 
 struct NetworkResponse: Sendable {
@@ -64,18 +91,19 @@ struct NetworkResponse: Sendable {
 }
 
 extension URLSessionConfiguration {
+    /// 代理三态：关闭 / 系统 / 手动（对应上游 proxy.enable + proxy.useSystem + proxy.url）
     func apply(proxy: ProxySettings) {
         if !proxy.enable {
-            self.connectionProxyDictionary = [:]
+            connectionProxyDictionary = [:]
             return
         }
         if proxy.useSystem {
-            self.connectionProxyDictionary = nil
+            connectionProxyDictionary = nil
             return
         }
         guard let url = URL(string: proxy.url), let host = url.host else { return }
         let port = url.port ?? 80
-        self.connectionProxyDictionary = [
+        connectionProxyDictionary = [
             kCFNetworkProxiesHTTPEnable: true,
             kCFNetworkProxiesHTTPProxy: host,
             kCFNetworkProxiesHTTPPort: port,

@@ -1,15 +1,6 @@
 import Foundation
 
-enum DownloadStatus: String, Codable, Sendable {
-    case waiting
-    case active
-    case paused
-    case error
-    case complete
-    case removed
-}
-
-struct DownloadTask: Codable, Identifiable, Sendable {
+struct DownloadTask: Identifiable, Sendable {
     var id: String { gid }
     var gid: String
     var post: TwitterPost
@@ -23,4 +14,13 @@ struct DownloadTask: Codable, Identifiable, Sendable {
     var updatedAt: Date
     var downloadUrl: String
     var retryCountRemains: Int
+}
+
+enum DownloadStatus: String, Sendable {
+    case waiting
+    case active
+    case paused
+    case error
+    case complete
+    case removed
 }

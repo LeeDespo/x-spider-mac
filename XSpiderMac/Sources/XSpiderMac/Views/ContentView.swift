@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var selection: NavigationItem? = .home
+    @State private var appStore = AppStore.shared
 
     var body: some View {
         NavigationSplitView {
@@ -13,6 +14,10 @@ struct ContentView: View {
                     FloatingDownloadBar()
                         .padding(20)
                 }
+        }
+        .task {
+            // 上游 App.tsx useMount：恢复会话（有 cookie 则静默重新验证）
+            await appStore.restoreSession()
         }
     }
 
