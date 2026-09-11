@@ -34,7 +34,7 @@ struct FloatingDownloadBar: View {
                                     .controlSize(.small)
                             }
                             if activeTasks.isEmpty {
-                                Text("暂无进行中任务")
+                                Text(L("暂无进行中任务"))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -43,10 +43,10 @@ struct FloatingDownloadBar: View {
 
                     HStack {
                         Image(systemName: "arrow.down.circle")
-                        Text("\(activeTasks.count) 进行中 · \(completedCount) 已完成")
+                        Text("\(activeTasks.count) " + L("进行中") + " · \(completedCount) " + L("已完成"))
                             .font(.caption)
                         Spacer()
-                        Button(isExpanded ? "收起" : "展开") { isExpanded.toggle() }
+                        Button(isExpanded ? L("收起") : L("展开")) { isExpanded.toggle() }
                             .buttonStyle(.glass)
                             .controlSize(.small)
                     }

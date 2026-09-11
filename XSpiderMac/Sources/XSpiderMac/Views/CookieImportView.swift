@@ -10,24 +10,24 @@ struct CookieImportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("登录 X 账号")
+            Text(L("登录 X 账号"))
                 .font(.headline)
 
-            Text("从浏览器复制 Cookie 中的 auth_token 和 ct0 两个值填入下方（浏览器 F12 → 应用/存储 → Cookie → https://x.com）")
+            Text(L("从浏览器复制 Cookie 中的 auth_token 和 ct0 两个值填入下方（浏览器 F12 → 应用/存储 → Cookie → https://x.com）"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("auth_token")
                     .font(.subheadline)
-                SecureField("auth_token（约 40 位十六进制）", text: $authToken)
+                SecureField(L("auth_token（约 40 位十六进制）"), text: $authToken)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("ct0")
                     .font(.subheadline)
-                SecureField("ct0（约 32 位以上十六进制）", text: $ct0)
+                SecureField(L("ct0（约 32 位以上十六进制）"), text: $ct0)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -39,9 +39,9 @@ struct CookieImportView: View {
 
             HStack {
                 Spacer()
-                Button("取消") { isPresented = false }
+                Button(L("取消")) { isPresented = false }
                     .buttonStyle(.glass)
-                Button(loading ? "验证中…" : "登录") {
+                Button(loading ? L("验证中…") : L("登录")) {
                     Task { await login() }
                 }
                 .buttonStyle(.glassProminent)
@@ -64,7 +64,7 @@ struct CookieImportView: View {
             _ = try await AppStore.shared.login(cookieString: cookieString)
             isPresented = false
         } catch {
-            errorMessage = "登录失败：\(error.localizedDescription)。请检查 auth_token 和 ct0 是否正确、是否过期。"
+            errorMessage = L("登录失败：") + "\(error.localizedDescription)" + L("。请检查 auth_token 和 ct0 是否正确、是否过期。")
         }
         loading = false
     }

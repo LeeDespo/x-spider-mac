@@ -79,26 +79,34 @@ enum AppLogger {
         return base.appendingPathComponent("Logs/XSpiderMac", isDirectory: true)
     }
 
+    /// 单一日志文件（用户要求不按天拆分）
     static var currentLogFile: URL {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "app-'yyyy-MM-dd'.log'"
-        return logDirectory.appendingPathComponent(f.string(from: Date()))
+        logDirectory.appendingPathComponent("xspider.log")
     }
 
     private static let writeQueue = DispatchQueue(label: "moe.keli.xspider.mac.logfile", qos: .utility)
+    /// 单文件上限 10MB，超出轮转为 xspider.log.1（只保留一份历史）
+    private static let maxLogSize: UInt64 = 10 * 1024 * 1024
 
     private static func writeFile(_ line: String) {
         writeQueue.async {
             let dir = logDirectory
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let logFile = currentLogFile
+            // 轮转：超过上限 → 改名为 .1（覆盖旧历史），重新开始写
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: logFile.path),
+               let size = attrs[.size] as? UInt64, size > maxLogSize {
+                let rotated = dir.appendingPathComponent("xspider.log.1")
+                try? FileManager.default.removeItem(at: rotated)
+                try? FileManager.default.moveItem(at: logFile, to: rotated)
+            }
             let data = (line + "\n").data(using: .utf8)!
-            if let handle = try? FileHandle(forWritingTo: currentLogFile) {
+            if let handle = try? FileHandle(forWritingTo: logFile) {
                 handle.seekToEndOfFile()
                 handle.write(data)
                 try? handle.close()
             } else {
-                try? data.write(to: currentLogFile)
+                try? data.write(to: logFile)
             }
         }
     }
@@ -111,7 +119,7 @@ enum AppLogger {
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let files = (try? fm.contentsOfDirectory(at: logDirectory, includingPropertiesForKeys: nil)) ?? []
         var exported: [URL] = []
-        for file in files where file.pathExtension == "log" {
+        for file in files where file.pathExtension.hasPrefix("log") {
             let dest = directory.appendingPathComponent(file.lastPathComponent)
             try? fm.removeItem(at: dest)
             try fm.copyItem(at: file, to: dest)
@@ -121,6 +129,7 @@ enum AppLogger {
     }
 
     static var logFileCount: Int {
-        (try? FileManager.default.contentsOfDirectory(atPath: logDirectory.path))?.filter { $0.hasSuffix(".log") }.count ?? 0
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: logDirectory.path)) ?? []
+        return names.filter { $0.hasPrefix("xspider.log") }.count
     }
 }

@@ -14,7 +14,7 @@ struct SettingsView: View {
             logSection
         }
         .formStyle(.grouped)
-        .navigationTitle("设置")
+        .navigationTitle(L("设置"))
         .frame(minWidth: 620)
     }
 
@@ -24,32 +24,32 @@ struct SettingsView: View {
         Section {
             // 保存路径
             HStack {
-                TextField("保存路径", text: Binding(
+                TextField(L("保存路径"), text: Binding(
                     get: { settingsStore.settings.download.saveDirBase },
                     set: { settingsStore.settings.download.saveDirBase = $0 }
                 ))
-                Button("选择…") { selectSaveDir() }
+                Button(L("选择…")) { selectSaveDir() }
                     .buttonStyle(.glass)
             }
 
             // 按账号建子目录（替代原"目录模板"）
-            Toggle("按账号创建子文件夹", isOn: Binding(
+            Toggle(L("按账号创建子文件夹"), isOn: Binding(
                 get: { settingsStore.settings.download.accountSubfolder },
                 set: { settingsStore.settings.download.accountSubfolder = $0 }
             ))
             if settingsStore.settings.download.accountSubfolder {
-                Text("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中，如：\(settingsStore.settings.download.saveDirBase)/abc-@123")
+                Text(L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中，如：") + "\(settingsStore.settings.download.saveDirBase)/abc-@123")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             // 文件名模板（单一输入 + 实时预览）
-            TextField("文件名模板", text: Binding(
+            TextField(L("文件名模板"), text: Binding(
                 get: { settingsStore.settings.download.fileNameTemplate },
                 set: { settingsStore.settings.download.fileNameTemplate = $0 }
             ))
 
-            LabeledContent("预览") {
+            LabeledContent(L("预览")) {
                 Text(FileNameTemplate.resolve(
                     template: settingsStore.settings.download.fileNameTemplate,
                     data: SettingsView.exampleTemplateData
@@ -63,12 +63,12 @@ struct SettingsView: View {
             TemplateVariablePicker()
 
             // 跳过相同文件
-            Toggle("跳过已存在的相同文件", isOn: Binding(
+            Toggle(L("跳过已存在的相同文件"), isOn: Binding(
                 get: { settingsStore.settings.download.sameFileSkip },
                 set: { settingsStore.settings.download.sameFileSkip = $0 }
             ))
         } header: {
-            Label("下载", systemImage: "arrow.down.circle")
+            Label(L("下载"), systemImage: "arrow.down.circle")
         }
     }
 
@@ -76,34 +76,35 @@ struct SettingsView: View {
 
     private var proxySection: some View {
         Section {
-            Toggle("启用代理", isOn: Binding(
+            Toggle(L("启用代理"), isOn: Binding(
                 get: { settingsStore.settings.proxy.enable },
                 set: { settingsStore.settings.proxy.enable = $0 }
             ))
 
             if settingsStore.settings.proxy.enable {
-                Toggle("使用系统代理", isOn: Binding(
+                Toggle(L("使用系统代理"), isOn: Binding(
                     get: { settingsStore.settings.proxy.useSystem },
                     set: { settingsStore.settings.proxy.useSystem = $0 }
                 ))
 
                 if !settingsStore.settings.proxy.useSystem {
-                    TextField("代理地址", text: Binding(
+                    TextField(L("代理地址"), text: Binding(
                         get: { settingsStore.settings.proxy.url },
                         set: { settingsStore.settings.proxy.url = $0 }
                     ))
                 }
             }
         } header: {
-            Label("代理", systemImage: "globe")
+            Label(L("代理"), systemImage: "globe")
         }
     }
 
     // MARK: - 外观（字体大小 + 语言）
 
+
     private var appearanceSection: some View {
         Section {
-            Picker("界面字体大小", selection: Binding(
+            Picker(L("界面字体大小"), selection: Binding(
                 get: { settingsStore.fontSize },
                 set: { settingsStore.fontSize = $0 }
             )) {
@@ -112,19 +113,20 @@ struct SettingsView: View {
                 }
             }
 
-            Picker("语言", selection: Binding(
+            Picker(L("语言/Language"), selection: Binding(
                 get: { settingsStore.language },
-                set: { settingsStore.language = $0 }
+                set: { newLang in
+                    guard newLang != settingsStore.language else { return }
+                    // 应用内字符串表即时生效，无需重启
+                    settingsStore.language = newLang
+                }
             )) {
                 ForEach(Settings.Language.allCases) { lang in
                     Text(lang.displayName).tag(lang)
                 }
             }
-            Text("语言切换将在应用重新启动后完全生效")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         } header: {
-            Label("外观", systemImage: "textformat")
+            Label(L("外观"), systemImage: "textformat")
         }
     }
 
@@ -132,15 +134,15 @@ struct SettingsView: View {
 
     private var powerSection: some View {
         Section {
-            Toggle("有下载任务时阻止系统休眠", isOn: Binding(
+            Toggle(L("有下载任务时阻止系统休眠"), isOn: Binding(
                 get: { settingsStore.settings.app.preventSleepDuringDownload },
                 set: { settingsStore.settings.app.preventSleepDuringDownload = $0 }
             ))
-            Text("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置")
+            Text(L("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
-            Label("电源", systemImage: "zzz")
+            Label(L("电源"), systemImage: "zzz")
         }
     }
 
@@ -148,15 +150,15 @@ struct SettingsView: View {
 
     private var logSection: some View {
         Section {
-            Toggle("开启日志记录", isOn: Binding(
+            Toggle(L("开启日志记录"), isOn: Binding(
                 get: { settingsStore.settings.app.writeLogs },
                 set: { settingsStore.settings.app.writeLogs = $0 }
             ))
-            Text("日志记录网络请求、下载任务、错误等信息，用于问题排查")
+            Text(L("日志记录网络请求、下载任务、错误等信息，用于问题排查"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            LabeledContent("日志位置") {
+            LabeledContent(L("日志位置")) {
                 Text(AppLogger.currentLogFile.path)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -164,12 +166,12 @@ struct SettingsView: View {
             }
 
             HStack {
-                Button("在 Finder 中显示") { showLogsInFinder() }
+                Button(L("在 Finder 中显示")) { showLogsInFinder() }
                     .buttonStyle(.glass)
-                Button("导出日志…") { exportLogs() }
+                Button(L("导出日志…")) { exportLogs() }
                     .buttonStyle(.glass)
                 if AppLogger.logFileCount > 0 {
-                    Text("\(AppLogger.logFileCount) 个日志文件")
+                    Text("\(AppLogger.logFileCount) " + L("个日志文件"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -180,7 +182,7 @@ struct SettingsView: View {
                     .foregroundStyle(.blue)
             }
         } header: {
-            Label("日志", systemImage: "doc.text")
+            Label(L("日志"), systemImage: "doc.text")
         }
     }
 
@@ -207,7 +209,7 @@ struct SettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let files = try AppLogger.exportLogs(to: url)
-                exportMessage = files.isEmpty ? "暂无日志文件可导出" : "已导出 \(files.count) 个文件到 \(url.path)"
+                exportMessage = files.isEmpty ? L("暂无日志文件可导出") : "已导出 \(files.count) 个文件到 \(url.path)"
             } catch {
                 exportMessage = "导出失败：\(error.localizedDescription)"
             }
@@ -219,7 +221,7 @@ struct SettingsView: View {
         let user = TwitterUser(
             screenName: "userscreenname",
             avatar: "",
-            name: "这是用户昵称",
+            name: L("这是用户昵称"),
             id: "1145141919",
             mediaCount: 8888,
             registerTime: nil
@@ -228,8 +230,8 @@ struct SettingsView: View {
             id: "1145141919810",
             user: user,
             createdAt: TwitterDate.parse("Sat Jan 20 15:15:36 +0000 2024"),
-            fullText: "这里是推文内容,这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容。",
-            tags: ["标签1", "标签2"],
+            fullText: L("这里是推文内容,这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容。"),
+            tags: [L("标签1"), L("标签2")],
             views: 13496,
             lang: "ja",
             retweeted: false,
@@ -262,7 +264,7 @@ struct TemplateVariablePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("可用变量（点击复制）")
+            Text(L("可用变量（点击复制）"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 6) {

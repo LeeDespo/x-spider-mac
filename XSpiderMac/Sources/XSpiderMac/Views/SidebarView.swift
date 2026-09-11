@@ -25,7 +25,7 @@ struct SidebarView: View {
             List(selection: $selection) {
                 Section {
                     ForEach(NavigationItem.allCases) { item in
-                        Label(item.rawValue, systemImage: item.icon)
+                        Label(navTitle(item), systemImage: item.icon)
                             .tag(item)
                     }
                 }
@@ -52,6 +52,15 @@ struct SidebarView: View {
         }
     }
 
+    private func navTitle(_ item: NavigationItem) -> String {
+        switch item {
+        case .home: return L("主页")
+        case .downloads: return L("下载管理")
+        case .settings: return L("设置")
+        case .about: return L("关于")
+        }
+    }
+
     // MARK: - 账户卡（上游 Account.tsx：头像 + 昵称 + screen_name，点击可登出）
 
     private var accountCard: some View {
@@ -73,9 +82,9 @@ struct SidebarView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("未登录")
+                    Text(L("未登录"))
                         .font(.headline)
-                    Text("点击导入 Cookie")
+                    Text(L("点击导入 Cookie"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -97,7 +106,7 @@ struct SidebarView: View {
                         AppStore.shared.logout()
                         self.account = nil
                     } label: {
-                        Label("登出", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .buttonStyle(.glass)
                 }

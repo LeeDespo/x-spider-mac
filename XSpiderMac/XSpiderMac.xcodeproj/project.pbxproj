@@ -14,6 +14,7 @@
 		2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */; };
 		3C0EA7AEE313B7BD2BE6BF5C /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */; };
 		3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A6494CC89C67122E3F3122 /* HomepageStore.swift */; };
+		4D84E5E91E214D3D3D8C8AFD /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4B91779185027CBBA49B18 /* L10n.swift */; };
 		5A10313AC85910D71F6B950B /* String+Path.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C71F4FE1A0AD871AA29345 /* String+Path.swift */; };
 		642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */; };
 		695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C93E6E46B4E05127C178B1C /* NetworkClient.swift */; };
@@ -32,6 +33,7 @@
 		B021AB66B3B7029A22C6D093 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC206AB57040EA940F7C8BC6 /* AppLogger.swift */; };
 		B6F79EF95045436E10971ED0 /* DownloadFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */; };
 		C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */; };
+		CE63FF9703F273846ED5CFEA /* XClientTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBBE72B5CC65256D2AE66924 /* XClientTransaction.swift */; };
 		D236BCE7DDFBA0790729E5EB /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B628263D9561601F809C4F8 /* AppStore.swift */; };
 		D93184638E9AB84916BF28F6 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */; };
 		E04E855AB238056433E1596E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1BBD226AD033835C037F4E7E /* Assets.xcassets */; };
@@ -80,7 +82,9 @@
 		B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		CBBE72B5CC65256D2AE66924 /* XClientTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XClientTransaction.swift; sourceTree = "<group>"; };
 		CC206AB57040EA940F7C8BC6 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
+		CC4B91779185027CBBA49B18 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
 		CD11699500B1791EFEAA1F95 /* CookieImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieImportView.swift; sourceTree = "<group>"; };
 		CF04B13606AE9D30B5392F7C /* XSpiderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XSpiderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplateTests.swift; sourceTree = "<group>"; };
@@ -149,6 +153,7 @@
 			children = (
 				82F18809605044A1B3F2B7A5 /* .gitkeep */,
 				CC206AB57040EA940F7C8BC6 /* AppLogger.swift */,
+				CC4B91779185027CBBA49B18 /* L10n.swift */,
 				E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */,
 				A2C71F4FE1A0AD871AA29345 /* String+Path.swift */,
 			);
@@ -170,6 +175,7 @@
 				81B2DDA1453BB065CBE42323 /* FileNameTemplate.swift */,
 				0C93E6E46B4E05127C178B1C /* NetworkClient.swift */,
 				0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */,
+				CBBE72B5CC65256D2AE66924 /* XClientTransaction.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -345,6 +351,7 @@
 				F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */,
 				D93184638E9AB84916BF28F6 /* HomeView.swift in Sources */,
 				3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */,
+				4D84E5E91E214D3D3D8C8AFD /* L10n.swift in Sources */,
 				1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */,
 				695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */,
 				A95AC0460DAA207A127EA14F /* Settings.swift in Sources */,
@@ -358,6 +365,7 @@
 				C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */,
 				75165C853F73A66A6AD0B6DF /* TwitterPost.swift in Sources */,
 				94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */,
+				CE63FF9703F273846ED5CFEA /* XClientTransaction.swift in Sources */,
 				7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -6,31 +6,52 @@ actor TwitterAPI {
     static let shared = TwitterAPI()
 
     private let host = "x.com"
-    private let bearer = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZzSnriE"
-    private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    /// twscrape/account.py TOKEN：X 轮换后的有效 Bearer（上游 2024 硬编码版已 401）
+    private let bearer = XClientTransaction.bearer
+    static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
     private var client = NetworkClient()
     private var cookieString: String = ""
+    /// XClId 密钥是否就绪（首次 GraphQL 请求前需要 loadKeys）
+    private var xclidReady = false
 
     /// 非持久状态：由 AppStore 每次 cookie 变更时推送
-    func configure(cookie: String, proxy: ProxySettings) {
+    func configure(cookie: String, proxy: ProxySettings) async {
         self.cookieString = cookie
         self.client = NetworkClient(proxy: proxy)
+        await XClientTransaction.shared.updateClient(client)
+        xclidReady = false
     }
 
     // MARK: - Headers
 
-    private func commonHeaders(withCredentials: Bool = true) -> [String: String] {
+    /// twscrape/account.py make_client 的头集合 + X 2025 交易 ID
+    private func commonHeaders(withCredentials: Bool = true, method: String = "GET", path: String? = nil) async -> [String: String] {
         var headers: [String: String] = [
-            "User-Agent": userAgent,
+            "User-Agent": Self.userAgent,
             "Referer": "https://\(host)",
         ]
         if withCredentials {
             headers["Authorization"] = bearer
             headers["Cookie"] = cookieString
             headers["X-Csrf-Token"] = Cookie.parse(cookieString)["ct0"] ?? ""
+            // twscrape 头集合（2025 校验必需）
+            headers["x-twitter-active-user"] = "yes"
+            headers["x-twitter-client-language"] = "en"
+            // X 新防护：每个 /i/api/ 请求都要交易 ID
+            let apiPath = path ?? ""
+            if let txid = await XClientTransaction.shared.transactionId(method: method, path: apiPath) {
+                headers["x-client-transaction-id"] = txid
+            }
         }
         return headers
+    }
+
+    /// 确保 XClId 密钥已加载（cookie 有效后调用一次）
+    private func ensureXClIdLoaded() async throws {
+        guard !xclidReady else { return }
+        try await XClientTransaction.shared.loadKeys(cookieString: cookieString)
+        xclidReady = true
     }
 
     // MARK: - 账户信息（登录验证）
@@ -39,7 +60,7 @@ actor TwitterAPI {
     /// 与上游一致：cookie 无效时页面不含这些字段 → 抛 missingScreenName。
     func getAccountInfo(cookieStringOverride: String? = nil) async throws -> TwitterAccountInfo {
         let url = URL(string: "https://\(host)")!
-        var headers = commonHeaders(withCredentials: false)
+        var headers = await commonHeaders(withCredentials: false)
         if let cookie = cookieStringOverride { headers["Cookie"] = cookie }
         let resp = try await client.request(url: url, headers: headers)
         let html = resp.text()
@@ -55,7 +76,9 @@ actor TwitterAPI {
     // MARK: - 用户查询
 
     func getUser(screenName: String) async throws -> TwitterUser {
-        let url = URL(string: "https://\(host)/i/api/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName")!
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName"
+        let url = URL(string: "https://\(host)\(path)")!
         let variables = """
         {"screen_name":"\(screenName)","withSafetyModeUserFields":true}
         """
@@ -66,7 +89,7 @@ actor TwitterAPI {
                 "fieldToggles": #"{"withAuxiliaryUserLabels":false}"#,
                 "variables": variables,
             ],
-            headers: commonHeaders()
+            headers: await commonHeaders(method: "GET", path: path)
         )
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any],
@@ -91,7 +114,9 @@ actor TwitterAPI {
     /// 上游 UserMedia（queryId cEjpJXA15Ok78yO4TUQPeQ）。
     /// 返回推文数组 + 下一页 cursor（Bottom cursor value），无更多页时 cursor 为 nil。
     func getUserMedias(userId: String, cursor: String? = nil, count: Int = 20) async throws -> (posts: [TwitterPost], cursor: String?) {
-        let url = URL(string: "https://\(host)/i/api/graphql/cEjpJXA15Ok78yO4TUQPeQ/UserMedia")!
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/cEjpJXA15Ok78yO4TUQPeQ/UserMedia"
+        let url = URL(string: "https://\(host)\(path)")!
         let variables = Self.encodeJSON([
             "userId": userId,
             "count": count,
@@ -109,7 +134,7 @@ actor TwitterAPI {
                 "features": Self.userMediaFeatures,
                 "variables": variables,
             ],
-            headers: commonHeaders()
+            headers: await commonHeaders(method: "GET", path: path)
         )
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else {
@@ -126,7 +151,9 @@ actor TwitterAPI {
     /// 上游 UserTweets（queryId 9zyyd1hebl7oNWIPdA8HRw）。
     /// 与 UserMedia 不同：entries 里 tweet-* 是单推文 entry，profile-conversation 是会话模块（其 items 里含多推文）。
     func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20) async throws -> (posts: [TwitterPost], cursor: String?) {
-        let url = URL(string: "https://\(host)/i/api/graphql/9zyyd1hebl7oNWIPdA8HRw/UserTweets")!
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/9zyyd1hebl7oNWIPdA8HRw/UserTweets"
+        let url = URL(string: "https://\(host)\(path)")!
         var variablesDict: [String: Any] = [
             "userId": userId,
             "count": count,
@@ -143,7 +170,7 @@ actor TwitterAPI {
                 "features": Self.userTweetsFeatures,
                 "variables": Self.encodeJSON(variablesDict) ?? "{}",
             ],
-            headers: commonHeaders()
+            headers: await commonHeaders(method: "GET", path: path)
         )
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else {

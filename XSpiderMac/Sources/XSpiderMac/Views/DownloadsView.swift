@@ -19,23 +19,23 @@ struct DownloadsView: View {
 
             // Tab 内容
             switch store.currentTab {
-            case "下载中": taskList(filter: { [.waiting, .active, .paused].contains($0.status) })
-            case "已完成": taskList(filter: { $0.status == .complete })
-            case "失败": taskList(filter: { $0.status == .error })
+            case L("下载中"): taskList(filter: { [.waiting, .active, .paused].contains($0.status) })
+            case L("已完成"): taskList(filter: { $0.status == .complete })
+            case L("失败"): taskList(filter: { $0.status == .error })
             default: EmptyView()
             }
 
             // 批量操作（上游 DownloadList batchActions）
             batchActionBar
         }
-        .navigationTitle("下载管理")
+        .navigationTitle(L("下载管理"))
     }
 
     // MARK: - Tab 栏
 
     private var tabBar: some View {
         HStack(spacing: 24) {
-            ForEach(["下载中", "已完成", "失败"], id: \.self) { tabName in
+            ForEach([L("下载中"), L("已完成"), L("失败")], id: \.self) { tabName in
                 let count = store.tasks.filter { statusFilter(tabName).contains($0.status) }.count
                 Button {
                     store.currentTab = tabName
@@ -66,9 +66,9 @@ struct DownloadsView: View {
 
     private func statusFilter(_ tab: String) -> [DownloadStatus] {
         switch tab {
-        case "下载中": return [.waiting, .active, .paused]
-        case "已完成": return [.complete]
-        case "失败": return [.error]
+        case L("下载中"): return [.waiting, .active, .paused]
+        case L("已完成"): return [.complete]
+        case L("失败"): return [.error]
         default: return []
         }
     }
@@ -77,19 +77,19 @@ struct DownloadsView: View {
 
     private var creationTaskBar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("共 \(creationStore.creationTasks.count) 个任务创建中")
+            Text(L("共") + " \(creationStore.creationTasks.count) " + L("个任务创建中"))
                 .font(.subheadline)
 
             ForEach(creationStore.creationTasks) { task in
                 HStack {
                     Text("\(task.user.name) @\(task.user.screenName)")
                     Spacer()
-                    Text("已发送：\(task.completeCount)")
+                    Text(L("已发送：") + "\(task.completeCount)")
                     if task.skipCount > 0 {
-                        Text("已跳过：\(task.skipCount)")
-                            .help("跳过原因：1. 相同文件名已存在且开启跳过相同文件；2. 爬取进度未到指定开始日期")
+                        Text(L("已跳过：") + "\(task.skipCount)")
+                            .help(L("跳过原因：1. 相同文件名已存在且开启跳过相同文件；2. 爬取进度未到指定开始日期"))
                     }
-                    Button("取消") {
+                    Button(L("取消")) {
                         creationStore.removeCreationTask(task.id)
                     }
                     .buttonStyle(.glass)
@@ -118,7 +118,7 @@ struct DownloadsView: View {
                     Image(systemName: "tray")
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
-                    Text("暂无任务")
+                    Text(L("暂无任务"))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -136,15 +136,15 @@ struct DownloadsView: View {
     private var batchActionBar: some View {
         HStack(spacing: 12) {
             switch store.currentTab {
-            case "下载中":
-                Button("全部暂停") { store.pauseAll() }
-                Button("全部恢复") { store.unpauseAll() }
-                Button("全部删除", role: .destructive) { store.removeAll(status: .waiting) }
-            case "已完成":
-                Button("全部删除", role: .destructive) { store.removeAll(status: .complete) }
-            case "失败":
-                Button("全部重试") { Task { await store.batchRedownload(store.tasks.filter { $0.status == .error }.map(\.gid)) } }
-                Button("全部删除", role: .destructive) { store.removeAll(status: .error) }
+            case L("下载中"):
+                Button(L("全部暂停")) { store.pauseAll() }
+                Button(L("全部恢复")) { store.unpauseAll() }
+                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .waiting) }
+            case L("已完成"):
+                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .complete) }
+            case L("失败"):
+                Button(L("全部重试")) { Task { await store.batchRedownload(store.tasks.filter { $0.status == .error }.map(\.gid)) } }
+                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .error) }
             default:
                 EmptyView()
             }
@@ -199,7 +199,7 @@ struct DownloadTaskRow: View {
                         .progressViewStyle(.linear)
                         .controlSize(.small)
                     HStack {
-                        Text("\(ByteCountFormatter.string(fromByteCount: task.completeSize, countStyle: .file)) / \(task.totalSize > 0 ? ByteCountFormatter.string(fromByteCount: task.totalSize, countStyle: .file) : "未知大小")")
+                        Text("\(ByteCountFormatter.string(fromByteCount: task.completeSize, countStyle: .file)) / \(task.totalSize > 0 ? ByteCountFormatter.string(fromByteCount: task.totalSize, countStyle: .file) : L("未知大小"))")
                         Spacer()
                         if let error = task.error {
                             Text(error)
@@ -222,19 +222,19 @@ struct DownloadTaskRow: View {
                         Image(systemName: "pause.circle")
                     }
                     .buttonStyle(.borderless)
-                    .help("暂停")
+                    .help(L("暂停"))
                 case .paused:
                     Button { DownloadStore.shared.unpause(task.gid) } label: {
                         Image(systemName: "play.circle")
                     }
                     .buttonStyle(.borderless)
-                    .help("恢复")
+                    .help(L("恢复"))
                 case .error:
                     Button { Task { await DownloadStore.shared.redownload(task.gid) } } label: {
                         Image(systemName: "arrow.clockwise.circle")
                     }
                     .buttonStyle(.borderless)
-                    .help("重试")
+                    .help(L("重试"))
                 default:
                     EmptyView()
                 }
@@ -244,19 +244,19 @@ struct DownloadTaskRow: View {
                         Image(systemName: "doc")
                     }
                     .buttonStyle(.borderless)
-                    .help("打开文件")
+                    .help(L("打开文件"))
                     Button { showInFolder(task) } label: {
                         Image(systemName: "folder")
                     }
                     .buttonStyle(.borderless)
-                    .help("在文件夹中显示")
+                    .help(L("在文件夹中显示"))
                 }
 
                 Button { DownloadStore.shared.remove(task.gid) } label: {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.borderless)
-                .help("删除")
+                .help(L("删除"))
             }
         }
         .padding(.vertical, 4)
@@ -265,12 +265,12 @@ struct DownloadTaskRow: View {
     private var statusText: some View {
         Group {
             switch task.status {
-            case .waiting: Text("等待中").foregroundStyle(.orange)
-            case .active: Text("下载中").foregroundStyle(.blue)
-            case .paused: Text("已暂停").foregroundStyle(.yellow)
-            case .error: Text("失败").foregroundStyle(.red)
-            case .complete: Text("完成").foregroundStyle(.green)
-            case .removed: Text("已移除").foregroundStyle(.secondary)
+            case .waiting: Text(L("等待中")).foregroundStyle(.orange)
+            case .active: Text(L("下载中")).foregroundStyle(.blue)
+            case .paused: Text(L("已暂停")).foregroundStyle(.yellow)
+            case .error: Text(L("失败")).foregroundStyle(.red)
+            case .complete: Text(L("完成")).foregroundStyle(.green)
+            case .removed: Text(L("已移除")).foregroundStyle(.secondary)
             }
         }
         .font(.caption)

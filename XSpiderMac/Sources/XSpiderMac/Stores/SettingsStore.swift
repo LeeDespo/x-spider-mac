@@ -40,12 +40,15 @@ final class SettingsStore {
         applyLanguage()
     }
 
-    /// 应用语言（UserDefaults AppleLanguages + 立即生效需要重启视图层）
+    /// 应用语言（应用内字符串表即时生效 + UserDefaults AppleLanguages 供系统级组件）
     private func applyLanguage() {
         let raw = settings.app.language
-        let code = raw == "system" ? nil : raw
-        if let code {
-            UserDefaults.standard.set([code], forKey: "AppleLanguages")
+        let lang = Settings.Language(rawValue: raw) ?? .zhHans
+        // 应用内字符串表（即时生效）
+        L10n.language = lang
+        // 系统级（WebView/格式化等），重启后生效
+        if raw != "system" {
+            UserDefaults.standard.set([raw], forKey: "AppleLanguages")
         } else {
             UserDefaults.standard.removeObject(forKey: "AppleLanguages")
         }

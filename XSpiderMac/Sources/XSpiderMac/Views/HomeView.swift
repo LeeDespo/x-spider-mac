@@ -29,7 +29,7 @@ struct HomeView: View {
                 loginPrompt
             }
         }
-        .navigationTitle("主页")
+        .navigationTitle(L("主页"))
         .frame(minWidth: 600)
     }
 
@@ -39,7 +39,7 @@ struct HomeView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("请输入用户 ID，如：shiratamacaron", text: Binding(
+            TextField(L("请输入用户 ID，如：shiratamacaron"), text: Binding(
                 get: { store.keyword },
                 set: { store.keyword = $0 }
             ))
@@ -55,7 +55,7 @@ struct HomeView: View {
                         }
                     }
                     Divider()
-                    Button("清空历史", role: .destructive) {
+                    Button(L("清空历史"), role: .destructive) {
                         appStore.clearSearchHistory()
                     }
                 } label: {
@@ -72,7 +72,7 @@ struct HomeView: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Text("搜索")
+                    Text(L("搜索"))
                 }
             }
             .buttonStyle(.glassProminent)
@@ -95,7 +95,7 @@ struct HomeView: View {
                     Text("@\(user.screenName)")
                         .foregroundStyle(.secondary)
                     if let mediaCount = user.mediaCount {
-                        Text("\(mediaCount) 媒体")
+                        Text("\(mediaCount) " + L("媒体"))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -105,13 +105,13 @@ struct HomeView: View {
             Spacer()
 
             if let registerTime = user.registerTime {
-                Text("注册于 \(registerTime.formatted(.dateTime.year()))")
+                Text(L("注册于") + " \(registerTime.formatted(.dateTime.year()))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Link(destination: URL(string: "https://x.com/\(user.screenName)")!) {
-                Label("打开主页", systemImage: "safari")
+                Label(L("打开主页"), systemImage: "safari")
             }
             .buttonStyle(.glass)
         }
@@ -125,13 +125,13 @@ struct HomeView: View {
 
     private var downloadController: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("下载配置")
+            Text(L("下载配置"))
                 .font(.headline)
 
             HStack(spacing: 16) {
                 // 日期范围（上游 DatePicker.RangePicker）
                 DatePicker(
-                    "从",
+                    L("从"),
                     selection: Binding(
                         get: { store.filter.dateRange?.start ?? Date(timeIntervalSince1970: 0) },
                         set: { store.setFilter(store.filter.withDateStart($0)) }
@@ -139,7 +139,7 @@ struct HomeView: View {
                     displayedComponents: .date
                 )
                 DatePicker(
-                    "至",
+                    L("至"),
                     selection: Binding(
                         get: { store.filter.dateRange?.end ?? Date() },
                         set: { store.setFilter(store.filter.withDateEnd($0)) }
@@ -149,7 +149,7 @@ struct HomeView: View {
 
                 Spacer()
 
-                Button("开始下载") {
+                Button(L("开始下载")) {
                     if let user = store.userInfo {
                         creationStore.createCreationTask(user: user, filter: store.filter)
                     }
@@ -172,12 +172,12 @@ struct HomeView: View {
                 Spacer()
 
                 // 数据源（上游 Radio：medias / tweets）
-                Picker("数据源", selection: Binding(
+                Picker(L("数据源"), selection: Binding(
                     get: { store.filter.source },
                     set: { store.setFilter(store.filter.withSource($0)) }
                 )) {
-                    Text("媒体时间线").tag(DownloadFilter.Source.medias)
-                    Text("推文时间线").tag(DownloadFilter.Source.tweets)
+                    Text(L("媒体时间线")).tag(DownloadFilter.Source.medias)
+                    Text(L("推文时间线")).tag(DownloadFilter.Source.tweets)
                 }
                 .pickerStyle(.radioGroup)
             }
@@ -197,7 +197,7 @@ struct HomeView: View {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
-                    Text("该用户没有媒体内容")
+                    Text(L("该用户没有媒体内容"))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -214,9 +214,9 @@ struct HomeView: View {
                     // 无限滚动：滚动到底自动加载下一页（上游 InfiniteScroll 组件）
                     HStack {
                         if store.postListLoading {
-                            ProgressView("加载中…")
+                            ProgressView(L("加载中…"))
                         } else if store.postListCursor != nil {
-                            Button("加载更多") {
+                            Button(L("加载更多")) {
                                 Task { await store.loadMorePostList() }
                             }
                             .buttonStyle(.glass)
@@ -238,7 +238,7 @@ struct HomeView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.large)
-            Text("正在加载用户…")
+            Text(L("正在加载用户…"))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -249,7 +249,7 @@ struct HomeView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text(store.lastError ?? "输入用户 screen_name 开始浏览媒体")
+            Text(store.lastError ?? L("输入用户 screen_name 开始浏览媒体"))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -260,9 +260,9 @@ struct HomeView: View {
             Image(systemName: "lock.circle")
                 .font(.system(size: 64))
                 .foregroundStyle(.secondary)
-            Text("请先登录")
+            Text(L("请先登录"))
                 .font(.title2)
-            Text("点击左侧账户卡导入 Cookie 后再搜索用户")
+            Text(L("点击左侧账户卡导入 Cookie 后再搜索用户"))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -321,14 +321,14 @@ struct MediaGridItem: View {
                     Button {
                         Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
                     } label: {
-                        Label("下载", systemImage: "arrow.down.circle")
+                        Label(L("下载"), systemImage: "arrow.down.circle")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.glass)
 
                     if let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") {
                         Link(destination: url) {
-                            Label("打开推文", systemImage: "safari")
+                            Label(L("打开推文"), systemImage: "safari")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.glass)
@@ -399,8 +399,8 @@ extension DownloadFilter {
 extension MediaType {
     var displayName: String {
         switch self {
-        case .photo: return "图片"
-        case .video: return "视频"
+        case .photo: return L("图片")
+        case .video: return L("视频")
         case .gif: return "GIF"
         }
     }
