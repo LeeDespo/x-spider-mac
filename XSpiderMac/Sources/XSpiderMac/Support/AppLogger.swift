@@ -74,10 +74,7 @@ enum AppLogger {
 
     // MARK: - 文件日志（按天滚动）
 
-    static var logDirectory: URL {
-        let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        return base.appendingPathComponent("Logs/XSpiderMac", isDirectory: true)
-    }
+    static var logDirectory: URL { AppDirectories.logs }
 
     /// 单一日志文件（用户要求不按天拆分）
     static var currentLogFile: URL {

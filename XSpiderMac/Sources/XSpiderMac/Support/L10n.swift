@@ -168,6 +168,20 @@ enum L10n {
         ("已下载", "已下載"),
         ("隐私", "隱私"),
 
+        ("下载引擎", "下載引擎"),
+        ("内置引擎", "內建引擎"),
+        ("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。", "aria2：多連線分塊下載，大檔案更快更穩（推薦）；內建引擎：系統原生 URLSession，單連線。切換引擎後新任務生效。"),
+        ("同时下载文件数", "同時下載檔案數"),
+        ("数据", "資料"),
+        ("清除所有应用数据…", "清除所有應用資料…"),
+        ("应用数据统一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下载的媒体文件不受影响。", "應用資料統一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下載的媒體檔案不受影響。"),
+        ("确定清除所有应用数据？", "確定清除所有應用資料？"),
+        ("删除并退出应用", "刪除並結束應用"),
+        ("将删除以下应用创建的目录（已下载的媒体文件不受影响）：\n", "將刪除以下應用建立的目錄（已下載的媒體檔案不受影響）：\n"),
+        ("应用数据（下载暂存、aria2 会话）", "應用資料（下載暫存、aria2 會話）"),
+        ("缓存（URL 缓存数据库）", "快取（URL 快取資料庫）"),
+        ("日志（xspider.log 及历史）", "日誌（xspider.log 及歷史）"),
+
     ])
 
     // MARK: - English
@@ -308,6 +322,20 @@ enum L10n {
         ("开启后，每次离开对应页面时自动清空相应历史记录。仅删除记录，不删除已下载的文件。", "When on, histories are cleared each time you leave the page. Only records are removed; downloaded files are kept."),
         ("已下载", "Downloaded"),
         ("隐私", "Privacy"),
+
+        ("下载引擎", "Download Engine"),
+        ("内置引擎", "Built-in"),
+        ("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。", "aria2: multi-connection chunked downloading, faster and more reliable for large files (recommended). Built-in: native URLSession, single connection. Applies to new tasks after switching."),
+        ("同时下载文件数", "Concurrent Downloads"),
+        ("数据", "Data"),
+        ("清除所有应用数据…", "Clear All App Data…"),
+        ("应用数据统一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下载的媒体文件不受影响。", "App data lives in Application Support/XSpiderMac, Caches/XSpiderMac and Logs/XSpiderMac. Downloaded media files are not affected."),
+        ("确定清除所有应用数据？", "Clear all app data?"),
+        ("删除并退出应用", "Delete and Quit"),
+        ("将删除以下应用创建的目录（已下载的媒体文件不受影响）：\n", "The following app-created directories will be deleted (downloaded media files are not affected):\n"),
+        ("应用数据（下载暂存、aria2 会话）", "App data (download staging, aria2 session)"),
+        ("缓存（URL 缓存数据库）", "Caches (URL cache database)"),
+        ("日志（xspider.log 及历史）", "Logs (xspider.log and rotated history)"),
 
     ])
 }

@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		000A80B75B44F4533CF03039 /* AppDirectories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */; };
 		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
 		1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */; };
+		1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247792FC3A5153BA109AB30B /* Aria2Engine.swift */; };
 		2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */; };
 		3C0EA7AEE313B7BD2BE6BF5C /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */; };
 		3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A6494CC89C67122E3F3122 /* HomepageStore.swift */; };
@@ -64,6 +66,7 @@
 		1544EECF1A89E6C5FC211279 /* TwitterUser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterUser.swift; sourceTree = "<group>"; };
 		184CF2D9F3C06EC179D10B36 /* CreationTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreationTask.swift; sourceTree = "<group>"; };
 		1BBD226AD033835C037F4E7E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		247792FC3A5153BA109AB30B /* Aria2Engine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Aria2Engine.swift; sourceTree = "<group>"; };
 		2B628263D9561601F809C4F8 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		2C67A4155E3A3ADB82010417 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
@@ -75,6 +78,7 @@
 		76D769C342F080744CE4324F /* FloatingDownloadBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingDownloadBar.swift; sourceTree = "<group>"; };
 		81B2DDA1453BB065CBE42323 /* FileNameTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplate.swift; sourceTree = "<group>"; };
 		82F18809605044A1B3F2B7A5 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDirectories.swift; sourceTree = "<group>"; };
 		93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAccountInfo.swift; sourceTree = "<group>"; };
 		9400B7A22AAE4F79E7F30449 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		9FBF3B6352EC01EFE8FF9BB3 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
@@ -154,6 +158,7 @@
 			isa = PBXGroup;
 			children = (
 				82F18809605044A1B3F2B7A5 /* .gitkeep */,
+				90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */,
 				CC206AB57040EA940F7C8BC6 /* AppLogger.swift */,
 				CC4B91779185027CBBA49B18 /* L10n.swift */,
 				E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */,
@@ -174,6 +179,7 @@
 			isa = PBXGroup;
 			children = (
 				FADCA961AD9D4F3C749F8A46 /* .gitkeep */,
+				247792FC3A5153BA109AB30B /* Aria2Engine.swift */,
 				81B2DDA1453BB065CBE42323 /* FileNameTemplate.swift */,
 				0C93E6E46B4E05127C178B1C /* NetworkClient.swift */,
 				0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */,
@@ -341,8 +347,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				6A861629F3AB6FF539C07D30 /* AboutView.swift in Sources */,
+				000A80B75B44F4533CF03039 /* AppDirectories.swift in Sources */,
 				B021AB66B3B7029A22C6D093 /* AppLogger.swift in Sources */,
 				D236BCE7DDFBA0790729E5EB /* AppStore.swift in Sources */,
+				1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */,
 				EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */,
 				EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */,
 				AF65BEB030CCF1A1B6A8CCA8 /* CreationTask.swift in Sources */,

@@ -4,6 +4,10 @@ import SwiftUI
 struct XSpiderMacApp: App {
     @State private var settingsStore = SettingsStore.shared
 
+    init() {
+        AppDirectories.ensureAll()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

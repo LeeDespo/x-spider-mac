@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var exportMessage: String?
+    @State private var showCleanupDialog = false
 
     var body: some View {
         Form {
@@ -14,6 +15,7 @@ struct SettingsView: View {
             privacySection
             powerSection
             logSection
+            dataSection
         }
         .formStyle(.grouped)
         .navigationTitle(L("设置"))
@@ -24,6 +26,28 @@ struct SettingsView: View {
 
     private var downloadSection: some View {
         Section {
+            // 下载引擎选择（aria2 多连接 / 内置 URLSession）
+            Picker(L("下载引擎"), selection: Binding(
+                get: { settingsStore.settings.download.engine },
+                set: { settingsStore.settings.download.engine = $0 }
+            )) {
+                ForEach(DownloadEngine.allCases, id: \.self) { engine in
+                    Text(engine.displayName).tag(engine)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // 同时并发下载数
+            Stepper(value: Binding(
+                get: { settingsStore.settings.maxConcurrentDownloads },
+                set: { settingsStore.settings.download.maxConcurrent = $0 }
+            ), in: 1...20) {
+                LabeledContent(L("同时下载文件数"), value: "\(settingsStore.settings.maxConcurrentDownloads)")
+            }
+
             // 保存路径
             HStack {
                 TextField(L("保存路径"), text: Binding(
@@ -44,15 +68,6 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            // 主页媒体自动加载（流量优化）——归入「主页」分区
-            Toggle(L("自动加载媒体"), isOn: Binding(
-                get: { settingsStore.settings.autoLoadMediaEnabled },
-                set: { settingsStore.settings.download.autoLoadMedia = $0 }
-            ))
-            Text(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             // 文件名模板（单一输入 + 实时预览）
             TextField(L("文件名模板"), text: Binding(
@@ -144,6 +159,40 @@ struct SettingsView: View {
         } header: {
             Label(L("代理"), systemImage: "globe")
         }
+    }
+
+    // MARK: - 数据（清理）
+
+    private var dataSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Button(L("清除所有应用数据…"), role: .destructive) { showCleanupDialog = true }
+                    .buttonStyle(.glass)
+                Text(L("应用数据统一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下载的媒体文件不受影响。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Label(L("数据"), systemImage: "externaldrive")
+        }
+        .confirmationDialog(
+            L("确定清除所有应用数据？"),
+            isPresented: $showCleanupDialog,
+            titleVisibility: .visible
+        ) {
+            Button(L("删除并退出应用"), role: .destructive) {
+                AppDirectories.cleanupAll()
+                exit(0)
+            }
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(cleanupTargetsDescription)
+        }
+    }
+
+    private var cleanupTargetsDescription: String {
+        let lines = AppDirectories.cleanupTargets.map { "• \($0.label)：\($0.url.path)" }
+        return L("将删除以下应用创建的目录（已下载的媒体文件不受影响）：\n") + lines.joined(separator: "\n")
     }
 
     // MARK: - 外观（字体大小 + 语言）
