@@ -151,6 +151,23 @@ enum L10n {
         ("macOS 原生版 X 媒体下载器", "macOS 原生版 X 媒體下載器"),
         ("关于", "關於"),
 
+        ("自动加载媒体", "自動載入媒體"),
+        ("主页", "主頁"),
+        ("按用户筛选", "按用戶篩選"),
+        ("显示全部", "顯示全部"),
+        ("选择用户", "選擇用戶"),
+        ("暂无记录", "暫無記錄"),
+        ("删除当前记录", "刪除目前記錄"),
+        ("删除所有日志", "刪除所有日誌"),
+        ("确定删除所有日志文件？", "確定刪除所有日誌檔案？"),
+        ("此操作不可撤销，当前日志与历史轮转文件都会被删除。", "此操作不可復原，目前日誌與歷史輪轉檔案都會被刪除。"),
+        ("日志已全部删除", "日誌已全部刪除"),
+        ("自动删除下载历史记录", "自動刪除下載歷史記錄"),
+        ("自动删除搜索记录", "自動刪除搜尋記錄"),
+        ("开启后，每次离开对应页面时自动清空相应历史记录。仅删除记录，不删除已下载的文件。", "開啟後，每次離開對應頁面時自動清空相應歷史記錄。僅刪除記錄，不刪除已下載的檔案。"),
+        ("已下载", "已下載"),
+        ("隐私", "隱私"),
+
     ])
 
     // MARK: - English
@@ -274,6 +291,23 @@ enum L10n {
         ("字号与语言修改已保存。部分界面元素将在重启后应用新设置。", "Font size and language changes are saved. Some UI elements apply after restart."),
         ("macOS 原生版 X 媒体下载器", "Native macOS media downloader for X"),
         ("关于", "About"),
+
+        ("自动加载媒体", "Auto-load media"),
+        ("主页", "Home"),
+        ("按用户筛选", "Filter by user"),
+        ("显示全部", "Show All"),
+        ("选择用户", "Select User"),
+        ("暂无记录", "No records"),
+        ("删除当前记录", "Delete Shown Records"),
+        ("删除所有日志", "Delete All Logs"),
+        ("确定删除所有日志文件？", "Delete all log files?"),
+        ("此操作不可撤销，当前日志与历史轮转文件都会被删除。", "This cannot be undone. The current log and rotated history will be deleted."),
+        ("日志已全部删除", "All logs deleted"),
+        ("自动删除下载历史记录", "Auto-delete download history"),
+        ("自动删除搜索记录", "Auto-delete search history"),
+        ("开启后，每次离开对应页面时自动清空相应历史记录。仅删除记录，不删除已下载的文件。", "When on, histories are cleared each time you leave the page. Only records are removed; downloaded files are kept."),
+        ("已下载", "Downloaded"),
+        ("隐私", "Privacy"),
 
     ])
 }

@@ -1,9 +1,12 @@
 import SwiftUI
 
 /// 上游 DownloadManagement.tsx 的移植：三 Tab（下载中/已完成/失败）+ 任务创建进度 + 任务列表。
+/// 新增：按推特用户名筛选历史（头像小窗）、显示全部、删除当前视图记录。
 struct DownloadsView: View {
     @State private var store = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var appearedOnce = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,16 +15,16 @@ struct DownloadsView: View {
                 creationTaskBar
             }
 
-            // Tab 栏（上游 Tabs：计数徽标）
+            // Tab 栏（上游 Tabs：计数徽标 + 用户筛选）
             tabBar
 
             Divider()
 
             // Tab 内容
             switch store.currentTab {
-            case L("下载中"): taskList(filter: { [.waiting, .active, .paused].contains($0.status) })
-            case L("已完成"): taskList(filter: { $0.status == .complete })
-            case L("失败"): taskList(filter: { $0.status == .error })
+            case L("下载中"): taskList(statuses: [.waiting, .active, .paused])
+            case L("已完成"): taskList(statuses: [.complete])
+            case L("失败"): taskList(statuses: [.error])
             default: EmptyView()
             }
 
@@ -29,14 +32,30 @@ struct DownloadsView: View {
             batchActionBar
         }
         .navigationTitle(L("下载管理"))
+        .onAppear {
+            // 隐私开关：进入页面时清空上一次会话的下载历史（仅记录不删文件）
+            if appearedOnce, SettingsStore.shared.settings.autoClearDownloadHistoryEnabled, !store.tasks.isEmpty {
+                store.removeAll()
+            }
+            appearedOnce = true
+        }
     }
 
-    // MARK: - Tab 栏
+    private var currentStatuses: [DownloadStatus] {
+        switch store.currentTab {
+        case L("下载中"): return [.waiting, .active, .paused]
+        case L("已完成"): return [.complete]
+        case L("失败"): return [.error]
+        default: return []
+        }
+    }
+
+    // MARK: - Tab 栏（含用户筛选）
 
     private var tabBar: some View {
         HStack(spacing: 24) {
             ForEach([L("下载中"), L("已完成"), L("失败")], id: \.self) { tabName in
-                let count = store.tasks.filter { statusFilter(tabName).contains($0.status) }.count
+                let count = store.tasksForCurrentTab(statuses: statusFilter(tabName)).count
                 Button {
                     store.currentTab = tabName
                 } label: {
@@ -59,9 +78,40 @@ struct DownloadsView: View {
                 }
             }
             Spacer()
+
+            // 用户筛选：按钮 + 显示全部
+            userFilterControls
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private var userFilterControls: some View {
+        HStack(spacing: 8) {
+            if store.userFilterScreenName != nil {
+                Button(L("显示全部")) {
+                    withAnimation(.spring(duration: 0.25)) { store.userFilterScreenName = nil }
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+            }
+
+            Button {
+                withAnimation(.spring(duration: 0.3)) { store.userFilterPickerVisible.toggle() }
+            } label: {
+                Label(store.userFilterScreenName.map { "@\($0)" } ?? L("按用户筛选"),
+                      systemImage: "person.crop.circle")
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+        }
+        .popover(isPresented: Binding(
+            get: { store.userFilterPickerVisible },
+            set: { store.userFilterPickerVisible = $0 }
+        ), arrowEdge: .top) {
+            UserFilterPicker(store: store)
+        }
     }
 
     private func statusFilter(_ tab: String) -> [DownloadStatus] {
@@ -106,8 +156,8 @@ struct DownloadsView: View {
 
     // MARK: - 任务列表（上游 DownloadList：缩略图 + 文件名 + 用户 + 进度 + 速度 + 操作）
 
-    private func taskList(filter: @escaping (DownloadTask) -> Bool) -> some View {
-        let filtered = store.tasks.filter(filter).sorted { a, b in
+    private func taskList(statuses: [DownloadStatus]) -> some View {
+        let filtered = store.tasksForCurrentTab(statuses: statuses).sorted { a, b in
             let order: [DownloadStatus: Int] = [.active: 0, .paused: 1, .waiting: 2, .error: 3, .complete: 4, .removed: 5]
             return (order[a.status] ?? 9) < (order[b.status] ?? 9)
         }
@@ -131,7 +181,7 @@ struct DownloadsView: View {
         }
     }
 
-    // MARK: - 批量操作
+    // MARK: - 批量操作（删除当前视图 = 当前 Tab + 当前用户筛选）
 
     private var batchActionBar: some View {
         HStack(spacing: 12) {
@@ -139,12 +189,18 @@ struct DownloadsView: View {
             case L("下载中"):
                 Button(L("全部暂停")) { store.pauseAll() }
                 Button(L("全部恢复")) { store.unpauseAll() }
-                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .waiting) }
+                Button(L("删除当前记录"), role: .destructive) {
+                    store.removeVisibleRecords(statuses: currentStatuses)
+                }
             case L("已完成"):
-                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .complete) }
+                Button(L("删除当前记录"), role: .destructive) {
+                    store.removeVisibleRecords(statuses: currentStatuses)
+                }
             case L("失败"):
-                Button(L("全部重试")) { Task { await store.batchRedownload(store.tasks.filter { $0.status == .error }.map(\.gid)) } }
-                Button(L("全部删除"), role: .destructive) { store.removeAll(status: .error) }
+                Button(L("全部重试")) { Task { await store.batchRedownload(store.tasksForCurrentTab(statuses: currentStatuses).map(\.gid)) } }
+                Button(L("删除当前记录"), role: .destructive) {
+                    store.removeVisibleRecords(statuses: currentStatuses)
+                }
             default:
                 EmptyView()
             }
@@ -152,6 +208,65 @@ struct DownloadsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+// MARK: - 用户筛选小窗（头像 + 加粗昵称 + 用户名，点击切换筛选）
+
+struct UserFilterPicker: View {
+    @Bindable var store: DownloadStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("选择用户"))
+                .font(.headline)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            if store.knownUsers.isEmpty {
+                Text(L("暂无记录"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(store.knownUsers, id: \.screenName) { user in
+                            Button {
+                                withAnimation(.spring(duration: 0.25)) {
+                                    store.userFilterScreenName = user.screenName
+                                    store.userFilterPickerVisible = false
+                                }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    AccountAvatarView(urlString: user.avatar, size: 32)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(user.name)
+                                            .font(.body.weight(.bold))
+                                            .foregroundStyle(.primary)
+                                        Text("@\(user.screenName)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if store.userFilterScreenName == user.screenName {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+                .frame(maxHeight: 300)
+            }
+        }
+        .frame(width: 260)
     }
 }
 

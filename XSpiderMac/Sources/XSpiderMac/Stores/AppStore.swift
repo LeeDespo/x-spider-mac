@@ -44,6 +44,10 @@ final class AppStore {
     // MARK: - 搜索历史（上游 addSearchHistory：小写化、去重、最新在前）
 
     func addSearchHistory(_ keyword: String) {
+        // 隐私开关：自动清空搜索记录后，本次搜索只保留当前项
+        if SettingsStore.shared.settings.autoClearSearchHistoryEnabled && !searchHistory.isEmpty {
+            searchHistory = []
+        }
         let lowered = keyword.lowercased()
         var history = searchHistory
         history.removeAll { $0 == lowered }

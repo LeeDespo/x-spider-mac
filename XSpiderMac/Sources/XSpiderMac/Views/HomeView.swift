@@ -21,15 +21,21 @@ struct HomeView: View {
                 } else if let user = store.userInfo {
                     userInfoCard(user)
                     downloadController
-                    // 「搜索后自动加载媒体」关闭时，只显示用户卡 + 下载配置，可手动加载
-                    if store.postList.isEmpty && !SettingsStore.shared.settings.autoLoadMediaEnabled {
-                        Button {
-                            Task { await store.loadMediaNow() }
-                        } label: {
-                            Label(L("加载媒体"), systemImage: "photo.stack")
+                    // 「自动加载媒体」关闭时，只显示用户卡 + 下载配置 + 手动加载按钮
+                    // （内容左上顶置布局，Spacer 占位，避免整页居中错乱）
+                    if store.postList.isEmpty && !store.postListLoading && !SettingsStore.shared.settings.autoLoadMediaEnabled {
+                        HStack {
+                            Button {
+                                Task { await store.loadMediaNow() }
+                            } label: {
+                                Label(L("加载媒体"), systemImage: "photo.stack")
+                            }
+                            .buttonStyle(.glass)
+                            Spacer()
                         }
-                        .buttonStyle(.glass)
-                        .padding(.top, 4)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        Spacer()
                     } else {
                         postListGrid
                     }
@@ -329,13 +335,23 @@ struct MediaGridItem: View {
             // hover 操作（上游 GridViewItemActions：下载 + 打开推文）
             if isHovering {
                 VStack(spacing: 8) {
-                    Button {
-                        Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
-                    } label: {
-                        Label(L("下载"), systemImage: "arrow.down.circle")
+                    // 已下载过同一媒体 → 禁用态「已下载」，不可重复下载
+                    if DownloadStore.shared.hasDownloaded(media: media) {
+                        Label(L("已下载"), systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                            .foregroundStyle(.secondary)
+                            .opacity(0.85)
+                    } else {
+                        Button {
+                            Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
+                        } label: {
+                            Label(L("下载"), systemImage: "arrow.down.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glass)
                     }
-                    .buttonStyle(.glass)
 
                     if let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") {
                         Link(destination: url) {

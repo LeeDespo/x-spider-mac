@@ -37,7 +37,10 @@ actor NetworkClient {
                     method: method, url: url, query: query,
                     headers: headers, body: body
                 )
-                AppLogger.perf("\(method) \(url.absoluteString)", category: "NET", ms: Date().timeIntervalSince(start) * 1000, ["status": "\(resp.status)"])
+                AppLogger.perf("\(method) \(url.path)", category: "NET", ms: Date().timeIntervalSince(start) * 1000, [
+                    "status": "\(resp.status)",
+                    "host": url.host ?? "?",
+                ])
                 if resp.status >= 400 {
                     throw NetworkError.httpStatus(resp.status)
                 }
@@ -45,7 +48,8 @@ actor NetworkClient {
             } catch {
                 lastError = error
                 AppLogger.warn("请求失败将重试", category: "NET", [
-                    "url": url.absoluteString,
+                    "method": method,
+                    "url": url.path.isEmpty ? url.absoluteString : url.path,
                     "error": error.localizedDescription,
                     "remains": "\(remainingRetryCount)",
                 ])

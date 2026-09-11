@@ -8,8 +8,10 @@ struct SettingsView: View {
     var body: some View {
         Form {
             downloadSection
+            homeSection
             proxySection
             appearanceSection
+            privacySection
             powerSection
             logSection
         }
@@ -43,8 +45,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // 主页媒体自动加载（流量优化）
-            Toggle(L("搜索后自动加载媒体时间线"), isOn: Binding(
+            // 主页媒体自动加载（流量优化）——归入「主页」分区
+            Toggle(L("自动加载媒体"), isOn: Binding(
                 get: { settingsStore.settings.autoLoadMediaEnabled },
                 set: { settingsStore.settings.download.autoLoadMedia = $0 }
             ))
@@ -78,6 +80,42 @@ struct SettingsView: View {
             ))
         } header: {
             Label(L("下载"), systemImage: "arrow.down.circle")
+        }
+    }
+
+    // MARK: - 主页设置
+
+    private var homeSection: some View {
+        Section {
+            Toggle(L("自动加载媒体"), isOn: Binding(
+                get: { settingsStore.settings.autoLoadMediaEnabled },
+                set: { settingsStore.settings.download.autoLoadMedia = $0 }
+            ))
+            Text(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Label(L("主页"), systemImage: "house")
+        }
+    }
+
+    // MARK: - 隐私设置
+
+    private var privacySection: some View {
+        Section {
+            Toggle(L("自动删除下载历史记录"), isOn: Binding(
+                get: { settingsStore.settings.autoClearDownloadHistoryEnabled },
+                set: { settingsStore.settings.app.autoClearDownloadHistory = $0 }
+            ))
+            Toggle(L("自动删除搜索记录"), isOn: Binding(
+                get: { settingsStore.settings.autoClearSearchHistoryEnabled },
+                set: { settingsStore.settings.app.autoClearSearchHistory = $0 }
+            ))
+            Text(L("开启后，每次离开对应页面时自动清空相应历史记录。仅删除记录，不删除已下载的文件。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Label(L("隐私"), systemImage: "hand.raised")
         }
     }
 
@@ -210,6 +248,8 @@ struct SettingsView: View {
                     .buttonStyle(.glass)
                 Button(L("导出日志…")) { exportLogs() }
                     .buttonStyle(.glass)
+                Button(L("删除所有日志"), role: .destructive) { confirmDeleteLogs = true }
+                    .buttonStyle(.glass)
                 if AppLogger.logFileCount > 0 {
                     Text("\(AppLogger.logFileCount) " + L("个日志文件"))
                         .font(.caption)
@@ -224,7 +264,23 @@ struct SettingsView: View {
         } header: {
             Label(L("日志"), systemImage: "doc.text")
         }
+        .confirmationDialog(
+            L("确定删除所有日志文件？"),
+            isPresented: $confirmDeleteLogs,
+            titleVisibility: .visible
+        ) {
+            Button(L("删除"), role: .destructive) {
+                AppLogger.deleteAllLogs()
+                AppLogger.info("日志已全部删除", category: "APP")
+                exportMessage = L("日志已全部删除")
+            }
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(L("此操作不可撤销，当前日志与历史轮转文件都会被删除。"))
+        }
     }
+
+    @State private var confirmDeleteLogs = false
 
     // MARK: - 辅助
 

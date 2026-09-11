@@ -40,6 +40,10 @@ struct AppSettings: Codable, Sendable {
     var preventSleepDuringDownload: Bool = true
     /// 界面字号（12–18），进可观察状态以即时生效
     var fontSize: Double?
+    /// 退出/切换页面时自动清空下载历史记录（仅记录，不删文件）
+    var autoClearDownloadHistory: Bool?
+    /// 退出/切换页面时自动清空搜索历史
+    var autoClearSearchHistory: Bool?
 }
 
 struct Settings: Codable, Sendable {
@@ -53,6 +57,9 @@ struct Settings: Codable, Sendable {
     var accountSubfolderEnabled: Bool { download.accountSubfolder ?? true }
     /// 有效的媒体自动加载开关
     var autoLoadMediaEnabled: Bool { download.autoLoadMedia ?? true }
+    /// 有效的隐私开关（默认关）
+    var autoClearDownloadHistoryEnabled: Bool { app.autoClearDownloadHistory ?? false }
+    var autoClearSearchHistoryEnabled: Bool { app.autoClearSearchHistory ?? false }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

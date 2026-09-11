@@ -13,6 +13,45 @@ final class DownloadStore {
     var tasks: [DownloadTask] = []
     var currentTab: String = "下载中"
     var creationTasks: [CreationTask] = []
+    /// 历史记录筛选：nil = 全部；否则仅显示该 screen_name 的任务
+    var userFilterScreenName: String?
+    /// 用户筛选小窗是否弹出（DownloadsView 用）
+    var userFilterPickerVisible = false
+
+    /// 出现过的账号（昵称 + screenName + 头像），按最近任务时间排序
+    var knownUsers: [(name: String, screenName: String, avatar: String)] {
+        var seen: [String: (String, Date)] = [:]  // screenName -> (name, latestUpdated)
+        var avatars: [String: String] = [:]
+        for task in tasks {
+            let sn = task.post.user.screenName
+            let prev = seen[sn]
+            if prev == nil || task.updatedAt > prev!.1 {
+                seen[sn] = (task.post.user.name, task.updatedAt)
+            }
+            if avatars[sn] == nil { avatars[sn] = task.post.user.avatar }
+        }
+        return seen
+            .sorted { $0.value.1 > $1.value.1 }
+            .map { (name: $0.value.0, screenName: $0.key, avatar: avatars[$0.key] ?? "") }
+    }
+
+    /// 按当前 Tab + 用户筛选后的任务
+    func tasksForCurrentTab(statuses: [DownloadStatus]) -> [DownloadTask] {
+        tasks.filter { task in
+            statuses.contains(task.status) &&
+            (userFilterScreenName == nil || task.post.user.screenName == userFilterScreenName)
+        }
+    }
+
+    /// 删除当前 Tab + 用户筛选范围内的记录（不动已下载文件）
+    func removeVisibleRecords(statuses: [DownloadStatus]) {
+        let targets = tasksForCurrentTab(statuses: statuses).map(\.gid)
+        for gid in targets { remove(gid) }
+        AppLogger.info("删除历史记录", category: "DL", [
+            "count": "\(targets.count)",
+            "user": userFilterScreenName ?? "all",
+        ])
+    }
 
     /// 引擎内部状态（resumeData、进行中的 URLSession 任务）
     private var sessionTasks: [String: URLSessionDownloadTask] = [:]
@@ -74,7 +113,7 @@ final class DownloadStore {
             }
         }
 
-        AppLogger.info("创建下载任务", category: "DL", ["file": fileName, "dir": dir, "url": downloadUrl])
+        AppLogger.info("创建下载任务", category: "DL", ["file": fileName, "dir": dir, "url": downloadUrl, "mediaId": media.id ?? "?"])
         tasks.append(task)
         start(task)
         SleepPreventer.shared.update(activeDownloadCount: tasks.count { $0.status == .active || $0.status == .waiting })
@@ -162,6 +201,12 @@ final class DownloadStore {
         for task in toRemove { remove(task.gid) }
     }
 
+    /// 是否已下载过同一媒体（同 URL 且状态完成）——用于主页网格「已下载」禁用态
+    func hasDownloaded(media: TwitterMedia) -> Bool {
+        guard let url = downloadURL(for: media) else { return false }
+        return tasks.contains { $0.downloadUrl == url && $0.status == .complete }
+    }
+
     func redownload(_ gid: String) async {
         guard let task = tasks.first(where: { $0.gid == gid }) else { return }
         remove(gid)
@@ -224,6 +269,7 @@ final class DownloadStore {
                     $0.status = .error
                     $0.error = error.localizedDescription
                 }
+                AppLogger.error("任务下载失败(重试耗尽)", category: "DL", ["file": task.fileName, "user": task.post.user.screenName, "error": error.localizedDescription])
                 notify(title: "任务下载失败", body: "\(task.fileName)\n\(error.localizedDescription)")
             }
             return
@@ -247,7 +293,7 @@ final class DownloadStore {
                 $0.totalSize = size ?? 0
                 $0.error = nil
             }
-            AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)"])
+            AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
             refreshSleepAssertion()
         } catch {
             // 临时文件即将被系统删除：move 失败时先拷贝兜底，仍失败才报错
@@ -255,13 +301,7 @@ final class DownloadStore {
                 try? fm.removeItem(at: destURL)
                 try fm.copyItem(at: localURL, to: destURL)
                 let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
-                update(gid: gid) {
-                    $0.status = .complete
-                    $0.completeSize = size ?? 0
-                    $0.totalSize = size ?? 0
-                    $0.error = nil
-                }
-                AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)"])
+                AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
                 refreshSleepAssertion()
             } catch {
                 update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }

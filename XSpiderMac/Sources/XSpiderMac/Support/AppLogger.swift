@@ -132,4 +132,15 @@ enum AppLogger {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: logDirectory.path)) ?? []
         return names.filter { $0.hasPrefix("xspider.log") }.count
     }
+
+    /// 删除全部日志文件（含轮转历史），下一个日志行会重建文件
+    static func deleteAllLogs() {
+        writeQueue.async {
+            let fm = FileManager.default
+            let names = (try? fm.contentsOfDirectory(atPath: logDirectory.path)) ?? []
+            for name in names where name.hasPrefix("xspider.log") {
+                try? fm.removeItem(atPath: logDirectory.appendingPathComponent(name).path)
+            }
+        }
+    }
 }
