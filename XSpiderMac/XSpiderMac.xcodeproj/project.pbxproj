@@ -14,6 +14,7 @@
 		2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */; };
 		3C0EA7AEE313B7BD2BE6BF5C /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */; };
 		3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A6494CC89C67122E3F3122 /* HomepageStore.swift */; };
+		5A10313AC85910D71F6B950B /* String+Path.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C71F4FE1A0AD871AA29345 /* String+Path.swift */; };
 		642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */; };
 		695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C93E6E46B4E05127C178B1C /* NetworkClient.swift */; };
 		6A861629F3AB6FF539C07D30 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AD8E0566B641889F9C73FB /* AboutView.swift */; };
@@ -24,9 +25,11 @@
 		7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */; };
 		89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */; };
 		94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1544EECF1A89E6C5FC211279 /* TwitterUser.swift */; };
+		9DE45F14785C82B9348ABC18 /* SleepPreventer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */; };
 		A95AC0460DAA207A127EA14F /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */; };
 		AC227416870F9297A4DBB582 /* DownloadTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C99C4BFC75F391787FD663 /* DownloadTask.swift */; };
 		AF65BEB030CCF1A1B6A8CCA8 /* CreationTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 184CF2D9F3C06EC179D10B36 /* CreationTask.swift */; };
+		B021AB66B3B7029A22C6D093 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC206AB57040EA940F7C8BC6 /* AppLogger.swift */; };
 		B6F79EF95045436E10971ED0 /* DownloadFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */; };
 		C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */; };
 		D236BCE7DDFBA0790729E5EB /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B628263D9561601F809C4F8 /* AppStore.swift */; };
@@ -72,15 +75,18 @@
 		93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAccountInfo.swift; sourceTree = "<group>"; };
 		9400B7A22AAE4F79E7F30449 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		9FBF3B6352EC01EFE8FF9BB3 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		A2C71F4FE1A0AD871AA29345 /* String+Path.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+Path.swift"; sourceTree = "<group>"; };
 		A9FF2B6963D0CB232CB5947E /* XSpiderMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = XSpiderMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		CC206AB57040EA940F7C8BC6 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
 		CD11699500B1791EFEAA1F95 /* CookieImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieImportView.swift; sourceTree = "<group>"; };
 		CF04B13606AE9D30B5392F7C /* XSpiderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XSpiderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplateTests.swift; sourceTree = "<group>"; };
 		DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineTests.swift; sourceTree = "<group>"; };
 		E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationItem.swift; sourceTree = "<group>"; };
+		E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepPreventer.swift; sourceTree = "<group>"; };
 		EA025EF3ECBDC3FAB302A622 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadFilter.swift; sourceTree = "<group>"; };
 		F1A6494CC89C67122E3F3122 /* HomepageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomepageStore.swift; sourceTree = "<group>"; };
@@ -142,6 +148,9 @@
 			isa = PBXGroup;
 			children = (
 				82F18809605044A1B3F2B7A5 /* .gitkeep */,
+				CC206AB57040EA940F7C8BC6 /* AppLogger.swift */,
+				E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */,
+				A2C71F4FE1A0AD871AA29345 /* String+Path.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -322,6 +331,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6A861629F3AB6FF539C07D30 /* AboutView.swift in Sources */,
+				B021AB66B3B7029A22C6D093 /* AppLogger.swift in Sources */,
 				D236BCE7DDFBA0790729E5EB /* AppStore.swift in Sources */,
 				EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */,
 				EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */,
@@ -341,6 +351,8 @@
 				3C0EA7AEE313B7BD2BE6BF5C /* SettingsStore.swift in Sources */,
 				091318096325BDC05BC87AFE /* SettingsView.swift in Sources */,
 				72D3CDEF62F5C4B830171189 /* SidebarView.swift in Sources */,
+				9DE45F14785C82B9348ABC18 /* SleepPreventer.swift in Sources */,
+				5A10313AC85910D71F6B950B /* String+Path.swift in Sources */,
 				EA5C133940AF31C444504ADE /* TwitterAPI.swift in Sources */,
 				89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */,
 				C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */,

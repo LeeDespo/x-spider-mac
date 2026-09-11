@@ -17,7 +17,12 @@ final class DownloadStore {
     /// 引擎内部状态（resumeData、进行中的 URLSession 任务）
     private var sessionTasks: [String: URLSessionDownloadTask] = [:]
     private var resumeDataMap: [String: Data] = [:]
-    private var session = URLSession(configuration: .default)
+    private var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        return URLSession(configuration: config)
+    }()
 
     private var settings: Settings { SettingsStore.shared.settings }
     private let fm = FileManager.default
@@ -27,15 +32,17 @@ final class DownloadStore {
     /// 上游 prepareDownloadTask + createDownloadTask：解析模板 → 检查 sameFileSkip → 启动下载
     func createDownloadTask(post: TwitterPost, media: TwitterMedia) async -> DownloadTask? {
         guard let downloadUrl = downloadURL(for: media) else {
-            NSLog("媒体没有下载链接: \(media)")
+            AppLogger.warn("媒体没有下载链接", category: "DL", ["mediaId": media.id ?? "nil", "type": media.type.rawValue])
             return nil
         }
 
         let templateData = FileNameTemplateData(post: post, media: media)
-        let dirName = settings.download.dirTemplate.isEmpty
-            ? ""
-            : FileNameTemplate.resolve(template: settings.download.dirTemplate, data: templateData)
-        let dir = (settings.download.saveDirBase as NSString).appendingPathComponent(dirName)
+        // 目录规则：accountSubfolder 开启时 → 保存路径/昵称-@用户名（如 ~/Download/abc-@123）
+        var dir = settings.download.saveDirBase
+        if settings.download.accountSubfolder {
+            let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
+            dir = (dir as NSString).appendingPathComponent(folderName)
+        }
         let fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
 
         let task = DownloadTask(
@@ -57,13 +64,15 @@ final class DownloadStore {
         if settings.download.sameFileSkip {
             let filePath = (dir as NSString).appendingPathComponent(fileName)
             if fm.fileExists(atPath: filePath) {
-                NSLog("sameFileSkip 跳过已存在文件: \(filePath)")
+                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": filePath])
                 return nil
             }
         }
 
+        AppLogger.info("创建下载任务", category: "DL", ["file": fileName, "dir": dir, "url": downloadUrl])
         tasks.append(task)
         start(task)
+        SleepPreventer.shared.update(activeDownloadCount: tasks.count { $0.status == .active || $0.status == .waiting })
         return task
     }
 
@@ -74,6 +83,10 @@ final class DownloadStore {
     }
 
     // MARK: - 任务控制
+
+    private func refreshSleepAssertion() {
+        SleepPreventer.shared.update(activeDownloadCount: tasks.count { $0.status == .active || $0.status == .waiting })
+    }
 
     func start(_ task: DownloadTask) {
         guard let url = URL(string: task.downloadUrl) else { return }
@@ -124,6 +137,7 @@ final class DownloadStore {
         sessionTasks.removeValue(forKey: gid)
         resumeDataMap.removeValue(forKey: gid)
         tasks.removeAll { $0.gid == gid }
+        refreshSleepAssertion()
     }
 
     func pauseAll() {
@@ -177,7 +191,11 @@ final class DownloadStore {
         if let error {
             // 上游逻辑：重试次数未用尽 → 重新入队；用尽 → error 状态 + 通知
             if task.retryCountRemains > 0 {
-                NSLog("Task \(task.fileName) failed, retry. Remains: \(task.retryCountRemains)")
+                AppLogger.warn("任务失败将重试", category: "DL", [
+                    "file": task.fileName,
+                    "remains": "\(task.retryCountRemains)",
+                    "error": error.localizedDescription,
+                ])
                 update(gid: gid) {
                     $0.status = .waiting
                     $0.retryCountRemains -= 1
@@ -219,6 +237,8 @@ final class DownloadStore {
                 $0.totalSize = size ?? 0
                 $0.error = nil
             }
+            AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)"])
+            refreshSleepAssertion()
         } catch {
             update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }
         }

@@ -11,6 +11,10 @@ actor NetworkClient {
     init(proxy: ProxySettings = ProxySettings()) {
         self.proxy = proxy
         let config = URLSessionConfiguration.default
+        // 401 根因修复：禁用共享 Cookie 存储，防止系统自动注入的 guest cookie
+        // 覆盖请求头里手动设置的 auth_token/ct0 Cookie
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
         config.apply(proxy: proxy)
         self.session = URLSession(configuration: config)
     }
@@ -28,12 +32,23 @@ actor NetworkClient {
 
         while remainingRetryCount > 0 {
             do {
-                return try await requestInternal(
+                let start = Date()
+                let resp = try await requestInternal(
                     method: method, url: url, query: query,
                     headers: headers, body: body
                 )
+                AppLogger.perf("\(method) \(url.absoluteString)", category: "NET", ms: Date().timeIntervalSince(start) * 1000, ["status": "\(resp.status)"])
+                if resp.status >= 400 {
+                    throw NetworkError.httpStatus(resp.status)
+                }
+                return resp
             } catch {
                 lastError = error
+                AppLogger.warn("请求失败将重试", category: "NET", [
+                    "url": url.absoluteString,
+                    "error": error.localizedDescription,
+                    "remains": "\(remainingRetryCount)",
+                ])
                 try? await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                 remainingRetryCount -= 1
                 retryDelay = min(retryDelay * 2, maxRetryDelay)
@@ -72,8 +87,16 @@ actor NetworkClient {
     }
 }
 
-enum NetworkError: Error {
+enum NetworkError: LocalizedError {
     case unknown
+    case httpStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .unknown: return "未知网络错误"
+        case .httpStatus(let code): return "HTTP \(code)"
+        }
+    }
 }
 
 struct NetworkResponse: Sendable {
