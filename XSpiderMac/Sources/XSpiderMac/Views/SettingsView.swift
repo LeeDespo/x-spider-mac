@@ -314,7 +314,7 @@ struct SettingsView: View {
                         set: { settingsStore.settings.app.glassBlur = Int($0) }
                     ), in: 0...100, step: 5)
                 }
-                Text(L("调整玻璃材质的模糊与透光度，实时生效。"))
+                Text(L("调整应用背景的模糊强度：与边栏同款效果，拉满最清晰易读，拉到最低为完全透明。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

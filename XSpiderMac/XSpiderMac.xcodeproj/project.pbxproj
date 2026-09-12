@@ -11,6 +11,7 @@
 		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
+		19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */; };
 		1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */; };
 		1C52D12FA380F2CEC29BB661 /* WindowConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491496E19FE861DE65FB5614 /* WindowConfig.swift */; };
 		1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247792FC3A5153BA109AB30B /* Aria2Engine.swift */; };
@@ -83,6 +84,7 @@
 		644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweetDetailUserTests.swift; sourceTree = "<group>"; };
 		65114E0D2408F2AD861228F0 /* DownloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadStore.swift; sourceTree = "<group>"; };
 		65CBC9960CB839075452DECD /* TwitterPost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterPost.swift; sourceTree = "<group>"; };
+		69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassBackground.swift; sourceTree = "<group>"; };
 		6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterMedia.swift; sourceTree = "<group>"; };
 		72BF360634AFA8E3C4715248 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
 		76D769C342F080744CE4324F /* FloatingDownloadBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingDownloadBar.swift; sourceTree = "<group>"; };
@@ -176,6 +178,7 @@
 				82F18809605044A1B3F2B7A5 /* .gitkeep */,
 				90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */,
 				CC206AB57040EA940F7C8BC6 /* AppLogger.swift */,
+				69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */,
 				9A721BC7BC346461F850A948 /* GlassCompat.swift */,
 				72BF360634AFA8E3C4715248 /* ImageCache.swift */,
 				CC4B91779185027CBBA49B18 /* L10n.swift */,
@@ -383,6 +386,7 @@
 				FDB03CDFF7F2C83FA65C4297 /* DownloadsView.swift in Sources */,
 				7B23E6A11881F0FEC654415F /* FileNameTemplate.swift in Sources */,
 				F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */,
+				19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */,
 				28FD816424E84727DEABCCA7 /* GlassCompat.swift in Sources */,
 				D93184638E9AB84916BF28F6 /* HomeView.swift in Sources */,
 				3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */,

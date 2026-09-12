@@ -405,7 +405,7 @@ enum L10n {
         ("已清理", "Cleared"),
         ("缓存", "Cache"),
         ("模糊度", "Blur"),
-        ("调整玻璃材质的模糊与透光度，实时生效。", "Adjust the blur and translucency of glass materials. Applies instantly."),
+        ("调整应用背景的模糊强度：与边栏同款效果，拉满最清晰易读，拉到最低为完全透明。", "Adjust the background blur intensity: same effect as the sidebar. Higher for readability, zero for fully transparent."),
         ("该媒体已下载过", "This media has already been downloaded"),
         ("已下载", "Downloaded"),
 
