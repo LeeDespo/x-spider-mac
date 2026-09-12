@@ -7,6 +7,8 @@ final class Aria2Engine: @unchecked Sendable {
     static let shared = Aria2Engine()
 
     private var processes: [String: Process] = [:]
+    /// 每任务输出缓冲（aria2c summary 用 \r 覆盖刷新，需累积后正则提取）
+    private var outputBuffers: [String: String] = [:]
     private let lock = NSLock()
 
     /// aria2c 可执行文件路径（bundle 内置优先，其次 homebrew）
@@ -125,17 +127,25 @@ final class Aria2Engine: @unchecked Sendable {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        // aria2c 的 summary 用 \r 覆盖刷新，不能按行 split——累积缓冲后用正则提取进度
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            for line in text.components(separatedBy: CharacterSet(charactersIn: "\n\r")) where !line.isEmpty {
-                self?.parseProgressLine(line, gid: gid)
-            }
+            guard let self else { return }
+            self.lock.lock()
+            var buf = self.outputBuffers[gid] ?? ""
+            buf += text
+            // 只保留尾部（进度行是覆盖式的，旧数据无意义），避免无限增长
+            if buf.count > 8192 { buf = String(buf.suffix(4096)) }
+            self.outputBuffers[gid] = buf
+            self.lock.unlock()
+            self.extractProgress(from: buf, gid: gid)
         }
 
         p.terminationHandler = { [weak self] process in
             self?.lock.lock()
             self?.processes.removeValue(forKey: gid)
+            self?.outputBuffers.removeValue(forKey: gid)
             self?.lock.unlock()
 
             let succeeded = process.terminationStatus == 0 && FileManager.default.fileExists(atPath: destPath)
@@ -161,32 +171,29 @@ final class Aria2Engine: @unchecked Sendable {
 
     // MARK: - 进度解析
 
-    private func parseProgressLine(_ line: String, gid: String) {
-        // 形如: [#a1b2c3 4.2MiB/12MiB(35%) 1.2MiB/sec]（首段是 #gid，要跳过）
-        guard let open = line.firstIndex(of: "["), let close = line.lastIndex(of: "]") else { return }
-        let body = line[line.index(after: open)..<close]
-        let parts = body.split(separator: " ").map(String.init)
-        // 至少 [#gid done/total]
-        guard parts.count >= 3, parts[0].hasPrefix("#") else { return }
-        let sizeParts = Array(parts.dropFirst())
-        func bytes(_ s: String) -> Int64? {
-            let units: [(String, Int64)] = [("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10), ("B", 1)]
-            for (suffix, mult) in units where s.hasSuffix(suffix) {
-                guard let v = Double(s.dropLast(suffix.count)) else { return nil }
-                return Int64(v * Double(mult))
+    /// 从输出缓冲提取 aria2 进度（\r 覆盖式输出 → 正则匹配最后一个 `[#gid done/total(%) CN:x DL:speed]`）
+    private func extractProgress(from text: String, gid: String) {
+        // done/total 形如 640KiB/52MiB；GiB/MiB/KiB/B
+        let regex = try? NSRegularExpression(pattern: #"\[#\w+ ([\d.]+)(GiB|MiB|KiB|B)/([\d.]+)(GiB|MiB|KiB|B)\("#)
+        guard let regex else { return }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard let last = matches.last, last.numberOfRanges >= 4 else { return }
+
+        func bytes(_ value: String, _ unit: String) -> Int64 {
+            let v = Double(value) ?? 0
+            let mult: Double
+            switch unit {
+            case "GiB": mult = 1_073_741_824
+            case "MiB": mult = 1_048_576
+            case "KiB": mult = 1024
+            default: mult = 1
             }
-            return Int64(s)
+            return Int64(v * mult)
         }
-        guard let done = bytes(sizeParts[0]) else { return }
-        var total: Int64 = 0
-        if sizeParts[1].contains("/") {
-            let seg = sizeParts[1].split(separator: "/").last.map(String.init) ?? ""
-            let num = seg.prefix { $0.isNumber || $0 == "." || $0 == "%" }
-            let trimmed = num.trimmingCharacters(in: CharacterSet(charactersIn: "%"))
-            if !trimmed.isEmpty, let t = bytes(trimmed + "B") {
-                total = t
-            }
-        }
+
+        let done = bytes(ns.substring(with: last.range(at: 1)), ns.substring(with: last.range(at: 2)))
+        let total = bytes(ns.substring(with: last.range(at: 3)), ns.substring(with: last.range(at: 4)))
         progressHandler?(gid, done, total)
     }
 

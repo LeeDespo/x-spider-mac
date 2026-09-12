@@ -14,8 +14,8 @@ final class AppStore {
         }
     }
 
-    var searchHistory: [String] = [] {
-        didSet { UserDefaults.standard.set(searchHistory, forKey: "app.searchHistory") }
+    var searchHistory: [SearchHistoryItem] = [] {
+        didSet { persistSearchHistory() }
     }
 
     /// 当前登录账户（由 getAccountInfo 验证后填充）
@@ -33,7 +33,7 @@ final class AppStore {
 
     init() {
         cookieString = UserDefaults.standard.string(forKey: "app.cookieString") ?? ""
-        searchHistory = UserDefaults.standard.stringArray(forKey: "app.searchHistory") ?? []
+        searchHistory = Self.loadSearchHistory()
         if let data = UserDefaults.standard.data(forKey: "app.account"),
            let decoded = try? JSONDecoder().decode(TwitterAccountInfo.self, from: data) {
             account = decoded
@@ -41,7 +41,7 @@ final class AppStore {
         systemProxyUrl = UserDefaults.standard.string(forKey: "app.systemProxyUrl") ?? ""
     }
 
-    // MARK: - 搜索历史（上游 addSearchHistory：小写化、去重、最新在前）
+    // MARK: - 搜索历史（用户 / 推文两类；最新在前，去重）
 
     func addSearchHistory(_ keyword: String) {
         // 隐私开关：自动清空搜索记录后，本次搜索只保留当前项
@@ -50,12 +50,52 @@ final class AppStore {
         }
         let lowered = keyword.lowercased()
         var history = searchHistory
-        history.removeAll { $0 == lowered }
-        history.insert(lowered, at: 0)
+        history.removeAll { $0.keyword == lowered }
+        history.insert(SearchHistoryItem(keyword: lowered, kind: .user, displayName: nil, imageURL: nil), at: 0)
         searchHistory = history
     }
 
+    /// 推文搜索历史：带推文 id、作者名、缩略图（多图堆叠用 thumbnailURLs）
+    func addTweetSearchHistory(tweetID: String, authorName: String, authorScreenName: String, thumbnailURLs: [String]) {
+        let kw = tweetID
+        var history = searchHistory
+        history.removeAll { $0.keyword == kw }
+        history.insert(SearchHistoryItem(
+            keyword: kw, kind: .tweet,
+            displayName: authorScreenName.isEmpty ? nil : "\(authorName) @\(authorScreenName)",
+            imageURL: thumbnailURLs.first, extraImageURLs: Array(thumbnailURLs.dropFirst().prefix(3))
+        ), at: 0)
+        searchHistory = history
+    }
+
+    func removeSearchHistory(keyword: String) {
+        searchHistory.removeAll { $0.keyword == keyword }
+    }
+
     func clearSearchHistory() { searchHistory = [] }
+
+    /// 隐私开关：离开主页时清空搜索记录
+    func clearSearchHistoryIfEnabled() {
+        guard SettingsStore.shared.settings.autoClearSearchHistoryEnabled, !searchHistory.isEmpty else { return }
+        searchHistory = []
+        AppLogger.info("自动清空搜索记录", category: "APP")
+    }
+
+    private func persistSearchHistory() {
+        if let data = try? JSONEncoder().encode(searchHistory) {
+            UserDefaults.standard.set(data, forKey: "app.searchHistory.v2")
+        }
+    }
+
+    private static func loadSearchHistory() -> [SearchHistoryItem] {
+        if let data = UserDefaults.standard.data(forKey: "app.searchHistory.v2"),
+           let items = try? JSONDecoder().decode([SearchHistoryItem].self, from: data) {
+            return items
+        }
+        // 旧版纯字符串迁移
+        let legacy = UserDefaults.standard.stringArray(forKey: "app.searchHistory") ?? []
+        return legacy.map { SearchHistoryItem(keyword: $0, kind: .user, displayName: nil, imageURL: nil) }
+    }
 
     // MARK: - Cookie 登录（上游 Account.tsx handleSubmit：验证 + 更新账户卡）
 

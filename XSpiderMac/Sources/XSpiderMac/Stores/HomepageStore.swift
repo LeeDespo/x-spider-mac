@@ -117,6 +117,23 @@ final class HomepageStore {
             AppLogger.info("推文媒体加载完成", category: "HOME", [
                 "tweetId": tweetID, "medias": "\(post.medias?.count ?? 0)",
             ])
+            // 记录推文搜索历史：作者 + 媒体缩略图（最多 4 张用于堆叠）
+            let thumbs = (post.medias ?? []).compactMap { m -> String? in
+                guard var s = m.url else { return nil }
+                if s.contains("/media/"), var comps = URLComponents(string: s) {
+                    var items = comps.queryItems?.filter { $0.name != "name" } ?? []
+                    items.append(URLQueryItem(name: "name", value: "small"))
+                    comps.queryItems = items
+                    if let u = comps.url { s = u.absoluteString }
+                }
+                return s
+            }
+            AppStore.shared.addTweetSearchHistory(
+                tweetID: tweetID,
+                authorName: post.user.name,
+                authorScreenName: post.user.screenName,
+                thumbnailURLs: Array(thumbs.prefix(4))
+            )
         } catch {
             if error is CancellationError { return }
             guard generation == userGeneration else { return }

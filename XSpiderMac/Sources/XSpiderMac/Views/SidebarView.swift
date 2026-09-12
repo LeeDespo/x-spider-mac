@@ -66,7 +66,7 @@ struct SidebarView: View {
     private var accountCard: some View {
         HStack(spacing: 12) {
             if let account {
-                AccountAvatarView(urlString: account.avatar, size: 40)
+                CachedAvatarView(urlString: account.avatar, size: 40)
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()

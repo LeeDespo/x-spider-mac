@@ -17,6 +17,7 @@ struct SettingsView: View {
             privacySection
             powerSection
             logSection
+            cacheSection
             dataSection
         }
         .formStyle(.grouped)
@@ -206,6 +207,53 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 缓存设置
+
+    private var cacheSection: some View {
+        Section {
+            Toggle(L("启用图片缓存"), isOn: Binding(
+                get: { settingsStore.settings.cachingEnabled },
+                set: { settingsStore.settings.app.cachingEnabled = $0 }
+            ))
+
+            if settingsStore.settings.cachingEnabled {
+                ForEach(ImageCache.Category.allCases, id: \.self) { cat in
+                    Toggle(L(cat.displayName), isOn: Binding(
+                        get: { UserDefaults.standard.object(forKey: cat.settingKey) as? Bool ?? true },
+                        set: { UserDefaults.standard.set($0, forKey: cat.settingKey) }
+                    ))
+                }
+
+                Picker(L("缓存上限"), selection: Binding(
+                    get: { settingsStore.settings.cacheLimitMB },
+                    set: { settingsStore.settings.app.cacheLimitMB = $0 }
+                )) {
+                    ForEach([50, 100, 200, 300, 500], id: \.self) { mb in
+                        Text("\(mb) MB").tag(mb)
+                    }
+                }
+                Text(L("超出上限后自动清理最旧的缓存文件。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button(L("立即清理缓存")) {
+                    ImageCache.shared.clearAll()
+                    cacheUsageText = L("已清理")
+                }
+                .buttonStyle(.glass)
+                Text(cacheUsageText ?? ByteCountFormatter.string(fromByteCount: ImageCache.shared.currentBytes(), countStyle: .file))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Label(L("缓存"), systemImage: "square.stack.3d.down.forward")
+        }
+    }
+
+    @State private var cacheUsageText: String?
+
     // MARK: - 数据（清理）
 
     private var dataSection: some View {
@@ -249,6 +297,25 @@ struct SettingsView: View {
                 set: { settingsStore.settings.app.liquidGlass = $0; restartDialogVisible = true }
             ))
             .disabled(!GlassCompat.supportsLiquidGlass)
+
+            if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(L("液态玻璃模糊度"))
+                        Spacer()
+                        Text("\(settingsStore.settings.glassBlur)%")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                    Slider(value: Binding(
+                        get: { Double(settingsStore.settings.glassBlur) },
+                        set: { settingsStore.settings.app.glassBlur = Int($0) }
+                    ), in: 0...100, step: 5)
+                }
+                Text(L("调整玻璃材质的模糊与透光度，实时生效。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if !GlassCompat.supportsLiquidGlass {
                 Text(L("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。"))
                     .font(.caption)

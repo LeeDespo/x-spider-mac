@@ -32,6 +32,11 @@ enum AppDirectories {
         return base.appendingPathComponent("XSpiderMac", isDirectory: true)
     }
 
+    /// 图片缓存目录（Application Support/XSpiderMac/Cache/images，便于与媒体数据一起管理）
+    static var cacheRoot: URL {
+        supportRoot.appendingPathComponent("Cache", isDirectory: true)
+    }
+
     static var logs: URL {
         let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("Logs/XSpiderMac", isDirectory: true)
@@ -39,7 +44,7 @@ enum AppDirectories {
 
     /// 确保目录存在（应用启动时调用）
     static func ensureAll() {
-        for dir in [supportRoot, staging, aria2] {
+        for dir in [supportRoot, staging, aria2, cacheRoot] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }
@@ -48,7 +53,7 @@ enum AppDirectories {
     /// 只包含应用自己创建的目录，绝不含用户媒体保存位置和系统目录
     static var cleanupTargets: [(url: URL, label: String)] {
         [
-            (supportRoot, "应用数据（下载暂存、aria2 会话）"),
+            (supportRoot, "应用数据（下载暂存、aria2 会话、图片缓存）"),
             (caches, "缓存（URL 缓存数据库）"),
             (logs, "日志（xspider.log 及历史）"),
         ]

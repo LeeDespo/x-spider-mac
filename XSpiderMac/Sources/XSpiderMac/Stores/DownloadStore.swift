@@ -76,6 +76,13 @@ final class DownloadStore {
         restoreTasks()
     }
 
+    /// 隐私开关：离开下载页时清空下载历史（仅记录，不删文件）
+    func clearHistoryIfEnabled() {
+        guard SettingsStore.shared.settings.autoClearDownloadHistoryEnabled, !tasks.isEmpty else { return }
+        removeAll()
+        AppLogger.info("自动清空下载历史", category: "DL")
+    }
+
     // MARK: - 创建任务
 
     /// 上游 prepareDownloadTask + createDownloadTask：解析模板 → 检查 sameFileSkip → 启动下载

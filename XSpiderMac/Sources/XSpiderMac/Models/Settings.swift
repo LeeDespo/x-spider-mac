@@ -80,6 +80,12 @@ struct AppSettings: Codable, Sendable {
     var autoClearSearchHistory: Bool?
     /// 液态玻璃外观（macOS 26+；低版本强制关闭）
     var liquidGlass: Bool?
+    /// 图片缓存总开关（分类开关在 ImageCache.Category）
+    var cachingEnabled: Bool?
+    /// 图片缓存上限 MB（50–500）
+    var cacheLimitMB: Int?
+    /// 液态玻璃模糊强度（0–100，仅 macOS 26+ 有效）
+    var glassBlur: Int?
 }
 
 struct Settings: Codable, Sendable {
@@ -108,6 +114,12 @@ struct Settings: Codable, Sendable {
     var aria2FileAllocation: String { download.aria2FileAllocation ?? "none" }
     /// 液态玻璃开关（默认开；仅在 macOS 26+ 有效）
     var liquidGlassEnabled: Bool { app.liquidGlass ?? true }
+    /// 图片缓存开关（默认开）
+    var cachingEnabled: Bool { app.cachingEnabled ?? true }
+    /// 缓存上限 MB（默认 200，钳制 50–500）
+    var cacheLimitMB: Int { min(500, max(50, app.cacheLimitMB ?? 200)) }
+    /// 玻璃模糊强度（0–100，默认 60）
+    var glassBlur: Int { min(100, max(0, app.glassBlur ?? 60)) }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

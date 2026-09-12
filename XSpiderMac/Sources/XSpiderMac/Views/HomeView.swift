@@ -86,6 +86,8 @@ struct HomeView: View {
 
     // MARK: - 搜索栏（上游 Space.Compact：输入 + 搜索按钮 + 历史下拉）
 
+    @State private var showSearchHistory = false
+
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -97,21 +99,20 @@ struct HomeView: View {
             .onSubmit { submitSearch() }
 
             if !appStore.searchHistory.isEmpty {
-                Menu {
-                    ForEach(appStore.searchHistory, id: \.self) { history in
-                        Button(history) {
-                            submitSearch(keyword: history)
-                        }
-                    }
-                    Divider()
-                    Button(L("清空历史"), role: .destructive) {
-                        appStore.clearSearchHistory()
-                    }
+                Button {
+                    showSearchHistory = true
                 } label: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 28)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .popover(isPresented: $showSearchHistory, arrowEdge: .bottom) {
+                    SearchHistoryPopover(appStore: appStore) { keyword in
+                        showSearchHistory = false
+                        store.keyword = keyword
+                        submitSearch(keyword: keyword)
+                    }
+                }
             }
 
             Button { submitSearch() } label: {
@@ -133,7 +134,7 @@ struct HomeView: View {
 
     private func userInfoCard(_ user: TwitterUser) -> some View {
         HStack(spacing: 12) {
-            AccountAvatarView(urlString: user.avatar, size: 48)
+            CachedAvatarView(urlString: user.avatar, size: 48)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(user.name)
@@ -365,14 +366,24 @@ struct MediaGridItem: View {
             // hover 操作（上游 GridViewItemActions：下载 + 打开推文）
             if isHovering {
                 VStack(spacing: 8) {
-                    // 已下载过同一媒体 → 禁用态「已下载」，不可重复下载
+                    // 已下载过同一媒体 → 禁用态「已下载」，实底色保证在缩略图上清晰可读
                     if DownloadStore.shared.hasDownloaded(media: media) {
-                        Label(L("已下载"), systemImage: "checkmark.circle.fill")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                            .foregroundStyle(.secondary)
-                            .opacity(0.85)
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text(L("已下载"))
+                                .font(.callout.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.green.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(.white.opacity(0.6), lineWidth: 1)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityHint(L("该媒体已下载过"))
                     } else {
                         Button {
                             Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
@@ -409,9 +420,12 @@ struct MediaGridItem: View {
     }
 
     private func loadThumbnail() async {
-        guard let urlString = media.url, let url = URL(string: urlString) else { return }
+        guard let urlString = media.url, let url = URL(string: urlString) else {
+            AppLogger.debug("媒体缺缩略图 URL", category: "HOME", ["mediaId": media.id ?? "?", "type": media.type.rawValue])
+            return
+        }
         // 缩略图优先：pbs.twimg.com 图片 URL 加 name=small（约 120px 宽）省流量；
-        // 网格展示用缩略图，下载时才取 name=orig 原图
+        // 网格展示用缩略图，下载时才取 name=orig 原图。视频封面路径不带 /media/，不加 query
         var smallURL = url
         if url.path.contains("/media/") {
             var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -421,9 +435,21 @@ struct MediaGridItem: View {
             if let u = comps.url { smallURL = u }
         }
         do {
-            let (data, _) = try await URLSession.shared.data(from: smallURL)
-            thumbnail = NSImage(data: data)
-        } catch {}
+            let (data, resp) = try await URLSession.shared.data(from: smallURL)
+            if let img = NSImage(data: data) {
+                thumbnail = img
+            } else {
+                AppLogger.debug("缩略图解码失败", category: "HOME", [
+                    "mediaId": media.id ?? "?",
+                    "bytes": "\(data.count)",
+                    "status": "\((resp as? HTTPURLResponse)?.statusCode ?? 0)",
+                ])
+            }
+        } catch {
+            AppLogger.warn("缩略图加载失败", category: "HOME", [
+                "mediaId": media.id ?? "?", "url": smallURL.path, "error": error.localizedDescription,
+            ])
+        }
     }
 
     private func durationMsToClock(_ ms: Int) -> String {

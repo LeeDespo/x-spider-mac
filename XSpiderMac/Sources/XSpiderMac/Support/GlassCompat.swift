@@ -22,6 +22,16 @@ struct GlassCompat: ViewModifier {
                     content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
                 }
             }
+        } else if GlassCompat.supportsLiquidGlass {
+            // 关闭液态玻璃但系统 26+：按模糊度滑块选材质，保留可调的"玻璃感"
+            let blur = settingsStore.settings.glassBlur
+            let material: Material = blur >= 67 ? .thickMaterial : (blur >= 34 ? .regularMaterial : .ultraThinMaterial)
+            content
+                .background(material, in: .rect(cornerRadius: cornerRadius))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(.quaternary, lineWidth: 1)
+                }
         } else {
             content
                 .background(.background, in: .rect(cornerRadius: cornerRadius))

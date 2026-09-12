@@ -239,7 +239,7 @@ struct UserFilterPicker: View {
                                 }
                             } label: {
                                 HStack(spacing: 10) {
-                                    AccountAvatarView(urlString: user.avatar, size: 32)
+                                    CachedAvatarView(urlString: user.avatar, size: 32)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(user.name)
                                             .font(.body.weight(.bold))

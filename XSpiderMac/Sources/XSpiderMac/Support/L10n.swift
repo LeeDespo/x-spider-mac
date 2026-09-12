@@ -201,6 +201,23 @@ enum L10n {
 
         ("正在加载推文…", "正在載入推文…"),
 
+        ("搜索历史", "搜尋歷史"),
+        ("暂无搜索历史", "暫無搜尋歷史"),
+        ("删除该条记录", "刪除該條記錄"),
+        ("推文", "推文"),
+        ("启用图片缓存", "啟用圖片快取"),
+        ("用户头像", "用戶頭像"),
+        ("媒体缩略图", "媒體縮圖"),
+        ("缓存上限", "快取上限"),
+        ("超出上限后自动清理最旧的缓存文件。", "超出上限後自動清理最舊的快取檔案。"),
+        ("立即清理缓存", "立即清理快取"),
+        ("已清理", "已清理"),
+        ("缓存", "快取"),
+        ("液态玻璃模糊度", "液態玻璃模糊度"),
+        ("调整玻璃材质的模糊与透光度，实时生效。", "調整玻璃材質的模糊與透光度，即時生效。"),
+        ("该媒体已下载过", "該媒體已下載過"),
+        ("已下载", "已下載"),
+
     ])
 
     // MARK: - English
@@ -374,6 +391,23 @@ enum L10n {
         ("推文加载失败", "Failed to load tweet"),
 
         ("正在加载推文…", "Loading tweet…"),
+
+        ("搜索历史", "Search history"),
+        ("暂无搜索历史", "No search history"),
+        ("删除该条记录", "Remove this entry"),
+        ("推文", "Tweet"),
+        ("启用图片缓存", "Enable image caching"),
+        ("用户头像", "User avatars"),
+        ("媒体缩略图", "Media thumbnails"),
+        ("缓存上限", "Cache limit"),
+        ("超出上限后自动清理最旧的缓存文件。", "Oldest cached files are purged automatically when over the limit."),
+        ("立即清理缓存", "Clear cache now"),
+        ("已清理", "Cleared"),
+        ("缓存", "Cache"),
+        ("液态玻璃模糊度", "Liquid Glass blur"),
+        ("调整玻璃材质的模糊与透光度，实时生效。", "Adjust the blur and translucency of glass materials. Applies instantly."),
+        ("该媒体已下载过", "This media has already been downloaded"),
+        ("已下载", "Downloaded"),
 
     ])
 }
