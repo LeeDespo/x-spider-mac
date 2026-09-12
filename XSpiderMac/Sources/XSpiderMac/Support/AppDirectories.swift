@@ -14,6 +14,9 @@ enum AppDirectories {
         return base.appendingPathComponent("XSpiderMac", isDirectory: true)
     }
 
+    /// 数据文件（下载历史 JSON 等小文件）
+    static var support: URL { supportRoot }
+
     /// 下载暂存目录（暂存完成文件再落盘）
     static var staging: URL {
         supportRoot.appendingPathComponent("Temp", isDirectory: true)

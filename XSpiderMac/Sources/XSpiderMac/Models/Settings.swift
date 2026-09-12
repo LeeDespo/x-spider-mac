@@ -33,12 +33,22 @@ struct DownloadSettings: Codable, Sendable {
     var engine: DownloadEngine?
     /// 同时并发下载文件数（1–20，默认 5）
     var maxConcurrent: Int?
+    // aria2 参数
+    /// 单文件分块连接数（--split，1–16，默认 8）
+    var aria2Split: Int?
+    /// 最小分块大小 MB（--min-split-size，1–20，默认 1）
+    var aria2MinSplitSize: Int?
+    /// aria2 文件分配方式：none / prealloc / falloc
+    var aria2FileAllocation: String?
 
     init() {
         accountSubfolder = true
         autoLoadMedia = true
         engine = .aria2
         maxConcurrent = 5
+        aria2Split = 8
+        aria2MinSplitSize = 1
+        aria2FileAllocation = "none"
     }
 
     // 自定义解码：新字段缺失时用新默认值而不是整体 decode 失败
@@ -52,6 +62,9 @@ struct DownloadSettings: Codable, Sendable {
         autoLoadMedia = try c.decodeIfPresent(Bool.self, forKey: .autoLoadMedia) ?? true
         engine = try c.decodeIfPresent(DownloadEngine.self, forKey: .engine) ?? .aria2
         maxConcurrent = try c.decodeIfPresent(Int.self, forKey: .maxConcurrent) ?? 5
+        aria2Split = try c.decodeIfPresent(Int.self, forKey: .aria2Split) ?? 8
+        aria2MinSplitSize = try c.decodeIfPresent(Int.self, forKey: .aria2MinSplitSize) ?? 1
+        aria2FileAllocation = try c.decodeIfPresent(String.self, forKey: .aria2FileAllocation) ?? "none"
     }
 }
 
@@ -65,6 +78,8 @@ struct AppSettings: Codable, Sendable {
     var autoClearDownloadHistory: Bool?
     /// 退出/切换页面时自动清空搜索历史
     var autoClearSearchHistory: Bool?
+    /// 液态玻璃外观（macOS 26+；低版本强制关闭）
+    var liquidGlass: Bool?
 }
 
 struct Settings: Codable, Sendable {
@@ -85,6 +100,14 @@ struct Settings: Codable, Sendable {
     var engine: DownloadEngine { download.engine ?? .aria2 }
     /// 并发下载数（默认 5，1–20 钳制）
     var maxConcurrentDownloads: Int { min(20, max(1, download.maxConcurrent ?? 5)) }
+    /// aria2 单文件连接数（1–16 钳制）
+    var aria2Split: Int { min(16, max(1, download.aria2Split ?? 8)) }
+    /// aria2 最小分块大小 MB（1–20）
+    var aria2MinSplitSize: Int { min(20, max(1, download.aria2MinSplitSize ?? 1)) }
+    /// aria2 文件分配方式
+    var aria2FileAllocation: String { download.aria2FileAllocation ?? "none" }
+    /// 液态玻璃开关（默认开；仅在 macOS 26+ 有效）
+    var liquidGlassEnabled: Bool { app.liquidGlass ?? true }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

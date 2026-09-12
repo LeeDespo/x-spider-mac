@@ -93,7 +93,7 @@ struct DownloadsView: View {
                 Button(L("显示全部")) {
                     withAnimation(.spring(duration: 0.25)) { store.userFilterScreenName = nil }
                 }
-                .buttonStyle(.glass)
+                .compatGlassButton()
                 .controlSize(.small)
             }
 
@@ -103,7 +103,7 @@ struct DownloadsView: View {
                 Label(store.userFilterScreenName.map { "@\($0)" } ?? L("按用户筛选"),
                       systemImage: "person.crop.circle")
             }
-            .buttonStyle(.glass)
+            .compatGlassButton()
             .controlSize(.small)
         }
         .popover(isPresented: Binding(
@@ -142,14 +142,14 @@ struct DownloadsView: View {
                     Button(L("取消")) {
                         creationStore.removeCreationTask(task.id)
                     }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                     .controlSize(.small)
                 }
                 .font(.caption)
             }
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .liquidGlass(cornerRadius: 12)
         .padding(.horizontal, 16)
         .padding(.top, 12)
     }

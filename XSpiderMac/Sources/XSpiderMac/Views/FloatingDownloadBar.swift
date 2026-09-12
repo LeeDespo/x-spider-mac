@@ -53,13 +53,13 @@ struct FloatingDownloadBar: View {
                             .font(.caption)
                         Spacer()
                         Button(isExpanded ? L("收起") : L("展开")) { isExpanded.toggle() }
-                            .buttonStyle(.glass)
+                            .compatGlassButton()
                             .controlSize(.small)
                     }
                 }
                 .padding(12)
                 .frame(width: 280)
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
+                .liquidGlass(interactive: true, cornerRadius: 20)
                 .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottomTrailing)).combined(with: .move(edge: .bottom)))
             }
         }

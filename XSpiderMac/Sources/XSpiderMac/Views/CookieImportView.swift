@@ -40,11 +40,11 @@ struct CookieImportView: View {
             HStack {
                 Spacer()
                 Button(L("取消")) { isPresented = false }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                 Button(loading ? L("验证中…") : L("登录")) {
                     Task { await login() }
                 }
-                .buttonStyle(.glassProminent)
+                .compatGlassProminentButton()
                 .disabled(authToken.isEmpty || ct0.isEmpty || loading)
             }
         }

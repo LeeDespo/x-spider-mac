@@ -182,6 +182,19 @@ enum L10n {
         ("缓存（URL 缓存数据库）", "快取（URL 快取資料庫）"),
         ("日志（xspider.log 及历史）", "日誌（xspider.log 及歷史）"),
 
+        ("引擎", "引擎"),
+        ("内置引擎", "內建引擎"),
+        ("未找到 aria2c（brew install aria2 安装后重启应用，或改用内置引擎）", "未找到 aria2c（brew install aria2 安裝後重啟應用，或改用內建引擎）"),
+        ("同时下载文件数", "同時下載檔案數"),
+        ("单文件连接数", "單檔案連接數"),
+        ("最小分块大小 (MB)", "最小分塊大小 (MB)"),
+        ("文件分配方式", "檔案分配方式"),
+        ("预分配（推荐 HDD）", "預分配（建議 HDD）"),
+        ("快速分配（推荐 SSD）", "快速分配（建議 SSD）"),
+        ("不分配", "不分配"),
+        ("液态玻璃外观", "液態玻璃外觀"),
+        ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "當前 macOS 版本低於 26（Tahoe），不支援液態玻璃，已自動使用標準材質。"),
+
     ])
 
     // MARK: - English
@@ -336,6 +349,19 @@ enum L10n {
         ("应用数据（下载暂存、aria2 会话）", "App data (download staging, aria2 session)"),
         ("缓存（URL 缓存数据库）", "Caches (URL cache database)"),
         ("日志（xspider.log 及历史）", "Logs (xspider.log and rotated history)"),
+
+        ("引擎", "Engine"),
+        ("内置引擎", "Built-in"),
+        ("未找到 aria2c（brew install aria2 安装后重启应用，或改用内置引擎）", "aria2c not found (install with brew install aria2 and relaunch, or switch to Built-in engine)"),
+        ("同时下载文件数", "Concurrent downloads"),
+        ("单文件连接数", "Connections per file"),
+        ("最小分块大小 (MB)", "Min split size (MB)"),
+        ("文件分配方式", "File allocation"),
+        ("预分配（推荐 HDD）", "Preallocate (HDD)"),
+        ("快速分配（推荐 SSD）", "Fallocate (SSD)"),
+        ("不分配", "None"),
+        ("液态玻璃外观", "Liquid Glass appearance"),
+        ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "macOS below 26 (Tahoe) does not support Liquid Glass; standard materials are used."),
 
     ])
 }

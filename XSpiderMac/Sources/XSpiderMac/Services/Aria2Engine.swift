@@ -22,6 +22,27 @@ final class Aria2Engine: @unchecked Sendable {
 
     static var isAvailable: Bool { binaryURL() != nil }
 
+    /// 读取 macOS 系统代理（aria2c 是独立进程，不会自动继承系统代理）
+    static func systemProxy() -> String? {
+        guard let dict = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else { return nil }
+        if let httpsEnable = dict["kCFNetworkProxiesHTTPSEnable"] as? Bool ?? (dict["kCFNetworkProxiesHTTPSEnable"] as? Int).map({ $0 != 0 }), httpsEnable,
+           let host = dict["kCFNetworkProxiesHTTPSProxy"] as? String,
+           let port = dict["kCFNetworkProxiesHTTPSPort"] as? Int {
+            return "http://\(host):\(port)"
+        }
+        if let httpEnable = dict["kCFNetworkProxiesHTTPEnable"] as? Bool ?? (dict["kCFNetworkProxiesHTTPEnable"] as? Int).map({ $0 != 0 }), httpEnable,
+           let host = dict["kCFNetworkProxiesHTTPProxy"] as? String,
+           let port = dict["kCFNetworkProxiesHTTPPort"] as? Int {
+            return "http://\(host):\(port)"
+        }
+        if let socksEnable = dict["kCFNetworkProxiesSOCKSEnable"] as? Bool ?? (dict["kCFNetworkProxiesSOCKSEnable"] as? Int).map({ $0 != 0 }), socksEnable,
+           let host = dict["kCFNetworkProxiesSOCKSProxy"] as? String,
+           let port = dict["kCFNetworkProxiesSOCKSPort"] as? Int {
+            return "socks5://\(host):\(port)"
+        }
+        return nil
+    }
+
     var progressHandler: ((String, Int64, Int64) -> Void)?
     var completionHandler: ((String, Result<URL, Error>) -> Void)?
 
@@ -33,7 +54,7 @@ final class Aria2Engine: @unchecked Sendable {
     ///   - fileName: 目标文件名
     ///   - proxy: 代理地址（可选，如 http://127.0.0.1:7897）
     ///   - connections: 单文件分块连接数（aria2 --split）
-    func start(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int = 8) {
+    func start(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int = 8, minSplitSizeMB: Int = 1, fileAllocation: String = "none") {
         lock.lock()
         if processes[gid] != nil { lock.unlock(); return }
         lock.unlock()
@@ -56,17 +77,23 @@ final class Aria2Engine: @unchecked Sendable {
             "--out=\(fileName)",
             "--split=\(max(1, connections))",
             "--max-connection-per-server=\(max(1, connections))",
-            "--min-split-size=1M",
+            "--min-split-size=\(max(1, minSplitSizeMB))M",
             "--continue=true",
             "--summary-interval=1",
             "--console-log-level=warn",
-            "--file-allocation=none",
+            "--file-allocation=\(fileAllocation)",
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
             "--referer=https://x.com/",
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
             "--stop-with-process=\(ProcessInfo.processInfo.processIdentifier)",
         ]
+        // 每服务器连接上限是 aria2 硬顶（16），split 不应超过它
+        let perServer = min(16, max(1, connections))
+        if let idx = p.arguments?.firstIndex(of: "--max-connection-per-server=\(max(1, connections))") {
+            p.arguments?[idx] = "--max-connection-per-server=\(perServer)"
+        }
+        // proxy 参数由调用方解析（系统代理/手动代理），aria2c 进程不继承系统代理
         if let proxy, !proxy.isEmpty {
             p.arguments?.append("--all-proxy=\(proxy)")
         }

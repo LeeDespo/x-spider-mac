@@ -8,9 +8,11 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            engineSection
             downloadSection
             homeSection
             proxySection
+            uiSection
             appearanceSection
             privacySection
             powerSection
@@ -26,28 +28,6 @@ struct SettingsView: View {
 
     private var downloadSection: some View {
         Section {
-            // 下载引擎选择（aria2 多连接 / 内置 URLSession）
-            Picker(L("下载引擎"), selection: Binding(
-                get: { settingsStore.settings.download.engine },
-                set: { settingsStore.settings.download.engine = $0 }
-            )) {
-                ForEach(DownloadEngine.allCases, id: \.self) { engine in
-                    Text(engine.displayName).tag(engine)
-                }
-            }
-            .pickerStyle(.segmented)
-            Text(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            // 同时并发下载数
-            Stepper(value: Binding(
-                get: { settingsStore.settings.maxConcurrentDownloads },
-                set: { settingsStore.settings.download.maxConcurrent = $0 }
-            ), in: 1...20) {
-                LabeledContent(L("同时下载文件数"), value: "\(settingsStore.settings.maxConcurrentDownloads)")
-            }
-
             // 保存路径
             HStack {
                 TextField(L("保存路径"), text: Binding(
@@ -55,7 +35,7 @@ struct SettingsView: View {
                     set: { settingsStore.settings.download.saveDirBase = $0 }
                 ))
                 Button(L("选择…")) { selectSaveDir() }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
             }
 
             // 按账号建子目录（替代原"目录模板"）
@@ -95,6 +75,71 @@ struct SettingsView: View {
             ))
         } header: {
             Label(L("下载"), systemImage: "arrow.down.circle")
+        }
+    }
+
+    // MARK: - 引擎设置
+
+    private var engineSection: some View {
+        Section {
+            // 下载引擎选择
+            Picker(L("下载引擎"), selection: Binding(
+                get: { settingsStore.settings.download.engine ?? .aria2 },
+                set: { settingsStore.settings.download.engine = $0 }
+            )) {
+                ForEach(DownloadEngine.allCases, id: \.self) { engine in
+                    Text(engine.displayName).tag(engine)
+                }
+            }
+            .pickerStyle(.segmented)
+            if settingsStore.settings.engine == .aria2 && !Aria2Engine.isAvailable {
+                Text(L("未找到 aria2c（brew install aria2 安装后重启应用，或改用内置引擎）"))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            Text(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // 同时并发下载数（− 数字 +，数字可点击输入）
+            NumberStepperField(
+                title: L("同时下载文件数"),
+                value: Binding(
+                    get: { settingsStore.settings.maxConcurrentDownloads },
+                    set: { settingsStore.settings.download.maxConcurrent = $0 }
+                ),
+                range: 1...20
+            )
+
+            // aria2 专属参数
+            if settingsStore.settings.engine == .aria2 {
+                NumberStepperField(
+                    title: L("单文件连接数"),
+                    value: Binding(
+                        get: { settingsStore.settings.aria2Split },
+                        set: { settingsStore.settings.download.aria2Split = $0 }
+                    ),
+                    range: 1...16
+                )
+                NumberStepperField(
+                    title: L("最小分块大小 (MB)"),
+                    value: Binding(
+                        get: { settingsStore.settings.aria2MinSplitSize },
+                        set: { settingsStore.settings.download.aria2MinSplitSize = $0 }
+                    ),
+                    range: 1...20
+                )
+                Picker(L("文件分配方式"), selection: Binding(
+                    get: { settingsStore.settings.aria2FileAllocation },
+                    set: { settingsStore.settings.download.aria2FileAllocation = $0 }
+                )) {
+                    Text(L("预分配（推荐 HDD）")).tag("prealloc")
+                    Text(L("快速分配（推荐 SSD）")).tag("falloc")
+                    Text(L("不分配")).tag("none")
+                }
+            }
+        } header: {
+            Label(L("引擎"), systemImage: "cpu")
         }
     }
 
@@ -167,7 +212,7 @@ struct SettingsView: View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Button(L("清除所有应用数据…"), role: .destructive) { showCleanupDialog = true }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                 Text(L("应用数据统一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下载的媒体文件不受影响。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -193,6 +238,25 @@ struct SettingsView: View {
     private var cleanupTargetsDescription: String {
         let lines = AppDirectories.cleanupTargets.map { "• \($0.label)：\($0.url.path)" }
         return L("将删除以下应用创建的目录（已下载的媒体文件不受影响）：\n") + lines.joined(separator: "\n")
+    }
+
+    // MARK: - UI（液态玻璃）
+
+    private var uiSection: some View {
+        Section {
+            Toggle(L("液态玻璃外观"), isOn: Binding(
+                get: { settingsStore.settings.liquidGlassEnabled },
+                set: { settingsStore.settings.app.liquidGlass = $0; restartDialogVisible = true }
+            ))
+            .disabled(!GlassCompat.supportsLiquidGlass)
+            if !GlassCompat.supportsLiquidGlass {
+                Text(L("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Label(L("UI"), systemImage: "aqi.medium")
+        }
     }
 
     // MARK: - 外观（字体大小 + 语言）
@@ -294,11 +358,11 @@ struct SettingsView: View {
 
             HStack {
                 Button(L("在 Finder 中显示")) { showLogsInFinder() }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                 Button(L("导出日志…")) { exportLogs() }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                 Button(L("删除所有日志"), role: .destructive) { confirmDeleteLogs = true }
-                    .buttonStyle(.glass)
+                    .compatGlassButton()
                 if AppLogger.logFileCount > 0 {
                     Text("\(AppLogger.logFileCount) " + L("个日志文件"))
                         .font(.caption)

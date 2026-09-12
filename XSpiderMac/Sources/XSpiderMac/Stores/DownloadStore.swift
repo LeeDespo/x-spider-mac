@@ -10,7 +10,9 @@ final class DownloadStore {
 
     // MARK: - 状态
 
-    var tasks: [DownloadTask] = []
+    var tasks: [DownloadTask] = [] {
+        didSet { persistTasks() }
+    }
     var currentTab: String = "下载中"
     var creationTasks: [CreationTask] = []
     /// 历史记录筛选：nil = 全部；否则仅显示该 screen_name 的任务
@@ -67,6 +69,10 @@ final class DownloadStore {
 
     private var settings: Settings { SettingsStore.shared.settings }
     private let fm = FileManager.default
+
+    private init() {
+        restoreTasks()
+    }
 
     // MARK: - 创建任务
 
@@ -125,6 +131,53 @@ final class DownloadStore {
     func batchCreateDownloadTasks(_ paramsList: [(post: TwitterPost, media: TwitterMedia)]) async {
         for params in paramsList {
             _ = await createDownloadTask(post: params.post, media: params.media)
+        }
+    }
+
+    // MARK: - 历史持久化（重启后恢复记录；进行中的任务恢复为等待态，用户手动继续）
+
+    private static let historyURL = AppDirectories.support
+        .appendingPathComponent("download-history.json")
+
+    private struct PersistedTask: Codable {
+        var gid: String
+        var post: TwitterPost
+        var media: TwitterMedia
+        var fileName: String
+        var dir: String
+        var totalSize: Int64
+        var completeSize: Int64
+        var statusRaw: String
+        var error: String?
+        var updatedAt: Date
+        var downloadUrl: String
+        var retryCountRemains: Int
+    }
+
+    private func persistTasks() {
+        let items = tasks.map {
+            PersistedTask(gid: $0.gid, post: $0.post, media: $0.media, fileName: $0.fileName,
+                          dir: $0.dir, totalSize: $0.totalSize, completeSize: $0.completeSize,
+                          statusRaw: $0.status.rawValue, error: $0.error, updatedAt: $0.updatedAt,
+                          downloadUrl: $0.downloadUrl, retryCountRemains: $0.retryCountRemains)
+        }
+        guard let data = try? JSONEncoder().encode(items) else { return }
+        try? data.write(to: Self.historyURL, options: .atomic)
+    }
+
+    private func restoreTasks() {
+        guard let data = try? Data(contentsOf: Self.historyURL),
+              let items = try? JSONDecoder().decode([PersistedTask].self, from: data) else { return }
+        tasks = items.map { item in
+            var status = DownloadStatus(rawValue: item.statusRaw) ?? .error
+            // 上次退出时还在下载中的任务：恢复为等待态（不自动重启，防止意外流量）
+            if status == .active || status == .waiting { status = .paused }
+            return DownloadTask(
+                gid: item.gid, post: item.post, media: item.media, fileName: item.fileName,
+                dir: item.dir, totalSize: item.totalSize, completeSize: item.completeSize,
+                status: status, error: item.error, updatedAt: item.updatedAt,
+                downloadUrl: item.downloadUrl, retryCountRemains: item.retryCountRemains
+            )
         }
     }
 
@@ -188,11 +241,21 @@ final class DownloadStore {
                     }
                 }
             }
+            let proxyArg: String?
+            if settings.proxy.enable, !settings.proxy.useSystem, !settings.proxy.url.isEmpty {
+                proxyArg = settings.proxy.url          // 手动代理
+            } else if settings.proxy.useSystem {
+                proxyArg = Aria2Engine.systemProxy()   // 系统代理显式读取（aria2c 不继承）
+            } else {
+                proxyArg = nil
+            }
             aria2.start(
                 gid: task.gid, urlString: task.downloadUrl,
                 destDir: task.dir, fileName: task.fileName,
-                proxy: settings.proxy.useSystem ? nil : settings.proxy.enable ? settings.proxy.url : nil,
-                connections: 8
+                proxy: proxyArg,
+                connections: settings.aria2Split,
+                minSplitSizeMB: settings.aria2MinSplitSize,
+                fileAllocation: settings.aria2FileAllocation
             )
             return
         }

@@ -93,7 +93,7 @@ struct SidebarView: View {
             Spacer()
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .liquidGlass(cornerRadius: 16)
     }
 
     private func logoutOverlay(_ account: TwitterAccountInfo) -> some View {
@@ -105,7 +105,7 @@ struct SidebarView: View {
         } label: {
             Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
         }
-        .buttonStyle(.glass)
+        .compatGlassButton()
         .padding(.trailing, 12)
         .padding(.bottom, 24)
     }

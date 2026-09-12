@@ -27,7 +27,7 @@ struct AboutView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .padding(20)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .liquidGlass(cornerRadius: 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(L("关于"))

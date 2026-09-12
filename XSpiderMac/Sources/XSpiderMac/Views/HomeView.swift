@@ -30,7 +30,7 @@ struct HomeView: View {
                             } label: {
                                 Label(L("加载媒体"), systemImage: "photo.stack")
                             }
-                            .buttonStyle(.glass)
+                            .compatGlassButton()
                             Spacer()
                         }
                         .padding(.horizontal, 16)
@@ -92,11 +92,11 @@ struct HomeView: View {
                     Text(L("搜索"))
                 }
             }
-            .buttonStyle(.glassProminent)
+            .compatGlassProminentButton()
             .disabled(store.keyword.trimmingCharacters(in: .whitespaces).isEmpty || store.userInfoLoading)
         }
         .padding(10)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+        .liquidGlass(interactive: true, cornerRadius: 16)
     }
 
     // MARK: - 用户信息卡（上游 PageHeader 下方的用户行：头像+昵称+screen_name+媒体数+链接）
@@ -130,10 +130,10 @@ struct HomeView: View {
             Link(destination: URL(string: "https://x.com/\(user.screenName)")!) {
                 Label(L("打开主页"), systemImage: "safari")
             }
-            .buttonStyle(.glass)
+            .compatGlassButton()
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .liquidGlass(cornerRadius: 16)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
@@ -171,7 +171,7 @@ struct HomeView: View {
                         creationStore.createCreationTask(user: user, filter: store.filter)
                     }
                 }
-                .buttonStyle(.glassProminent)
+                .compatGlassProminentButton()
             }
 
             HStack(spacing: 16) {
@@ -200,7 +200,7 @@ struct HomeView: View {
             }
         }
         .padding(16)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .liquidGlass(cornerRadius: 16)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
@@ -236,7 +236,7 @@ struct HomeView: View {
                             Button(L("加载更多")) {
                                 Task { await store.loadMorePostList() }
                             }
-                            .buttonStyle(.glass)
+                            .compatGlassButton()
                             .onAppear {
                                 Task { await store.loadMorePostList() }
                             }
@@ -350,7 +350,7 @@ struct MediaGridItem: View {
                             Label(L("下载"), systemImage: "arrow.down.circle")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.glass)
+                        .compatGlassButton()
                     }
 
                     if let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") {
@@ -358,7 +358,7 @@ struct MediaGridItem: View {
                             Label(L("打开推文"), systemImage: "safari")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.glass)
+                        .compatGlassButton()
                     }
                 }
                 .padding(12)
