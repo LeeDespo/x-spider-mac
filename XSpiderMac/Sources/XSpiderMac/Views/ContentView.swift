@@ -52,6 +52,7 @@ struct ContentView: View {
     private func detailView(for item: NavigationItem) -> some View {
         switch item {
         case .home: HomeView()
+        case .sync: SyncView()
         case .downloads: DownloadsView()
         case .settings: SettingsView()
         case .about: AboutView()

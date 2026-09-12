@@ -46,6 +46,7 @@ struct SidebarView: View {
     private func navTitle(_ item: NavigationItem) -> String {
         switch item {
         case .home: return L("主页")
+        case .sync: return L("同步")
         case .downloads: return L("下载管理")
         case .settings: return L("设置")
         case .about: return L("关于")
