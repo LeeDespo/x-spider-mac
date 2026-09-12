@@ -74,6 +74,29 @@ final class DownloadStore {
 
     private init() {
         restoreTasks()
+        loadRecordCaches()
+    }
+
+    /// 启动时扫描各用户文件夹的记录文件到内存缓存（避免覆盖旧记录）
+    private func loadRecordCaches() {
+        let base = settings.download.saveDirBase
+        guard !base.isEmpty, fm.fileExists(atPath: base) else { return }
+        let recordName = settings.recordFileNameValue
+        let enumerator = fm.enumerator(atPath: base)
+        var loaded = 0
+        while let sub = enumerator?.nextObject() as? String {
+            guard sub.hasSuffix(recordName) || sub.contains("/" + recordName) || sub == recordName else { continue }
+            let full = (base as NSString).appendingPathComponent(sub)
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: full)),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let list = obj["downloaded"] as? [String] {
+                Self.recordCache[full] = Set(list)
+                loaded += 1
+            }
+        }
+        if loaded > 0 {
+            AppLogger.info("已载入下载记录", category: "DL", ["files": "\(loaded)"])
+        }
     }
 
     /// 隐私开关：离开下载页时清空下载历史（仅记录，不删文件）
@@ -93,18 +116,12 @@ final class DownloadStore {
         }
 
         let templateData = FileNameTemplateData(post: post, media: media)
-        // 目录规则：accountSubfolder 开启时 → 保存路径/昵称-@用户名（如 ~/Download/abc-@123）
-        var dir = settings.download.saveDirBase
-        if dir.isEmpty {
-            if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
-                dir = downloads.path
-            }
+        let dir = targetDir(for: post)
+        var fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
+        // recordFile 模式：文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 则不重复）
+        if settings.sameFileCheckModeValue == .recordFile {
+            fileName = lockedFileName(fileName, mediaId: media.id)
         }
-        if settings.accountSubfolderEnabled {
-            let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
-            dir = (dir as NSString).appendingPathComponent(folderName)
-        }
-        let fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
 
         let task = DownloadTask(
             gid: UUID().uuidString,
@@ -121,11 +138,9 @@ final class DownloadStore {
             retryCountRemains: 5
         )
 
-        // sameFileSkip：目标文件已存在则跳过（上游 fs.exists 检查）
+        // sameFileSkip：按当前判定依据决定跳过
         if settings.download.sameFileSkip {
-            let filePath = (dir as NSString).appendingPathComponent(fileName)
-            if fm.fileExists(atPath: filePath) {
-                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": filePath])
+            if isDuplicate(media: media, fileName: fileName, dir: dir) {
                 return nil
             }
         }
@@ -141,6 +156,88 @@ final class DownloadStore {
         for params in paramsList {
             _ = await createDownloadTask(post: params.post, media: params.media)
         }
+    }
+
+    // MARK: - 跳过相同文件判定
+
+    /// 判定依据（设置里可选）：
+    /// - fileName：目标文件已存在（文件系统检查）
+    /// - recordFile：用户文件夹下的记录文件里已有该媒体 ID（跨文件名模板改动仍然有效）
+    /// - recordFile 模式下文件名强制追加媒体 ID 锁定段（模板里已有 %MEDIA_ID% 时不重复）
+    private func isDuplicate(media: TwitterMedia, fileName: String, dir: String) -> Bool {
+        switch settings.sameFileCheckModeValue {
+        case .recordFile:
+            guard let mediaId = media.id, !mediaId.isEmpty else { return false }
+            let recordURL = recordFileURL(dir: dir)
+            if let ids = Self.recordCache[recordURL.path], ids.contains(mediaId) {
+                AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
+                return true
+            }
+            return false
+        case .fileName:
+            let filePath = (dir as NSString).appendingPathComponent(fileName)
+            if fm.fileExists(atPath: filePath) {
+                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": filePath])
+                return true
+            }
+            return false
+        }
+    }
+
+    /// 记录文件路径（每用户文件夹一份）
+    private func recordFileURL(dir: String) -> URL {
+        URL(fileURLWithPath: dir).appendingPathComponent(settings.recordFileNameValue)
+    }
+
+    /// 各记录文件的媒体 ID 缓存（内存态，进程内有效）
+    private static var recordCache: [String: Set<String>] = [:]
+
+    /// 下载成功后写入记录文件（recordFile 模式）
+    private func recordDownloaded(mediaId: String?, dir: String) {
+        guard settings.sameFileCheckModeValue == .recordFile,
+              let mediaId, !mediaId.isEmpty else { return }
+        let url = recordFileURL(dir: dir)
+        var ids = Self.recordCache[url.path] ?? []
+        guard !ids.contains(mediaId) else { return }
+        ids.insert(mediaId)
+        Self.recordCache[url.path] = ids
+        do {
+            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: ["downloaded": Array(ids).sorted()])
+            try data.write(to: url, options: .atomic)
+        } catch {
+            AppLogger.warn("下载记录写入失败", category: "DL", ["dir": dir, "error": error.localizedDescription])
+        }
+    }
+
+    /// 某推文媒体应保存的目标目录（主页"已下载"判定用）
+    func targetDir(for post: TwitterPost) -> String {
+        var dir = settings.download.saveDirBase
+        if dir.isEmpty,
+           let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            dir = downloads.path
+        }
+        if settings.accountSubfolderEnabled {
+            let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
+            dir = (dir as NSString).appendingPathComponent(folderName)
+        }
+        return dir
+    }
+
+    /// 文件名是否已包含 %MEDIA_ID% 模板变量
+    private func templateHasMediaId() -> Bool {
+        settings.download.fileNameTemplate.contains("%MEDIA_ID%")
+    }
+
+    /// recordFile 模式下给文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 时保持原样）
+    private func lockedFileName(_ fileName: String, mediaId: String?) -> String {
+        guard settings.sameFileCheckModeValue == .recordFile,
+              !templateHasMediaId(),
+              let mediaId, !mediaId.isEmpty else { return fileName }
+        let stem = (fileName as NSString).deletingPathExtension
+        let ext = (fileName as NSString).pathExtension
+        let locked = ext.isEmpty ? "\(stem) [\(mediaId)]" : "\(stem) [\(mediaId)].\(ext)"
+        return locked
     }
 
     // MARK: - 历史持久化（重启后恢复记录；进行中的任务恢复为等待态，用户手动继续）
@@ -357,8 +454,16 @@ final class DownloadStore {
         for task in toRemove { remove(task.gid) }
     }
 
-    /// 是否已下载过同一媒体（同 URL 且状态完成）——用于主页网格「已下载」禁用态
-    func hasDownloaded(media: TwitterMedia) -> Bool {
+    /// 是否已下载过同一媒体——用于主页网格「已下载」禁用态。
+    /// recordFile 模式：查目标文件夹记录文件里的媒体 ID；
+    /// fileName 模式：下载历史里有同 URL 且完成的任务。
+    func hasDownloaded(media: TwitterMedia, dir: String? = nil) -> Bool {
+        if settings.sameFileCheckModeValue == .recordFile {
+            guard let mediaId = media.id, !mediaId.isEmpty else { return false }
+            let targetDir = dir ?? settings.download.saveDirBase
+            let recordPath = recordFileURL(dir: targetDir).path
+            return Self.recordCache[recordPath]?.contains(mediaId) ?? false
+        }
         guard let url = downloadURL(for: media) else { return false }
         return tasks.contains { $0.downloadUrl == url && $0.status == .complete }
     }
@@ -469,6 +574,7 @@ final class DownloadStore {
                 $0.error = nil
             }
             AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
+            recordDownloaded(mediaId: task.media.id, dir: task.dir)
             pump()
             refreshSleepAssertion()
         } catch {
@@ -478,6 +584,7 @@ final class DownloadStore {
                 try fm.copyItem(at: stagedFile, to: destURL)
                 let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
                 AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
+            recordDownloaded(mediaId: task.media.id, dir: task.dir)
                 refreshSleepAssertion()
             } catch {
                 update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }

@@ -25,6 +25,10 @@ struct SettingsView: View {
         .background(.clear)
         .navigationTitle(L("设置"))
         .frame(minWidth: 620)
+        // 底部留白：悬浮下载提示框可能遮挡最后一个设置项
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 72)
+        }
     }
 
     // MARK: - 下载设置
@@ -76,6 +80,25 @@ struct SettingsView: View {
                 get: { settingsStore.settings.download.sameFileSkip },
                 set: { settingsStore.settings.download.sameFileSkip = $0 }
             ))
+
+            // 判定依据（跳过相同文件的子选项，类似代理的"手动/系统"联动）
+            if settingsStore.settings.download.sameFileSkip {
+                Picker(L("判定依据"), selection: Binding(
+                    get: { settingsStore.settings.sameFileCheckModeValue },
+                    set: { settingsStore.settings.download.sameFileCheckMode = $0.rawValue }
+                )) {
+                    ForEach(SameFileCheckMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .padding(.leading, 16)
+
+                Text(L("按文件名：目标文件已存在则跳过。按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定，且文件名会自动追加 [媒体ID] 锁定段。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 16)
+            }
         } header: {
             Label(L("下载"), systemImage: "arrow.down.circle")
         }

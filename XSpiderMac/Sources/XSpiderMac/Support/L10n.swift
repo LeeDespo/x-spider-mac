@@ -218,6 +218,18 @@ enum L10n {
         ("该媒体已下载过", "該媒體已下載過"),
         ("已下载", "已下載"),
 
+        ("判定依据", "判定依據"),
+        ("按文件名", "按檔名"),
+        ("按下载记录文件", "按下載記錄檔案"),
+        ("按文件名：目标文件已存在则跳过。按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定，且文件名会自动追加 [媒体ID] 锁定段。", "按檔名：目標檔案已存在則跳過。按下載記錄檔案：在每個資料夾裡維護 .downloaded.json 記錄媒體 ID，改檔名模板也不影響判定，且檔名會自動追加 [媒體ID] 鎖定段。"),
+        ("切换账号", "切換帳號"),
+        ("开发者", "開發者"),
+        ("项目地址", "專案地址"),
+        ("开源协议", "開源協議"),
+        ("上游项目", "上游專案"),
+        ("鸣谢", "鳴謝"),
+        ("点击访问", "點擊訪問"),
+
     ])
 
     // MARK: - English
@@ -408,6 +420,18 @@ enum L10n {
         ("调整应用背景的模糊强度：约 20%（最低档）时与边栏观感最接近，拉满则最不透。", "Adjust the background blur intensity: the minimum step (around 20%) matches the sidebar, maximum is the least transparent."),
         ("该媒体已下载过", "This media has already been downloaded"),
         ("已下载", "Downloaded"),
+
+        ("判定依据", "Check method"),
+        ("按文件名", "By file name"),
+        ("按下载记录文件", "By download record file"),
+        ("按文件名：目标文件已存在则跳过。按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定，且文件名会自动追加 [媒体ID] 锁定段。", "By file name: skip if the target file exists. By record file: maintains a .downloaded.json with media IDs in each folder; renaming templates don't affect detection, and file names get a [mediaId] suffix."),
+        ("切换账号", "Switch account"),
+        ("开发者", "Developer"),
+        ("项目地址", "Project"),
+        ("开源协议", "License"),
+        ("上游项目", "Upstream"),
+        ("鸣谢", "Acknowledgements"),
+        ("点击访问", "Click to open"),
 
     ])
 }

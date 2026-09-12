@@ -367,7 +367,7 @@ struct MediaGridItem: View {
             if isHovering {
                 VStack(spacing: 8) {
                     // 已下载过同一媒体 → 禁用态「已下载」，实底色保证在缩略图上清晰可读
-                    if DownloadStore.shared.hasDownloaded(media: media) {
+                    if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
                         HStack(spacing: 5) {
                             Image(systemName: "checkmark.circle.fill")
                             Text(L("已下载"))

@@ -25,6 +25,10 @@ struct DownloadSettings: Codable, Sendable {
     var dirTemplate: String = ""
     var fileNameTemplate: String = "%POST_TIME% %USER_SCREEN_NAME% %POST_ID%-%MEDIA_INDEX%%EXT%"
     var sameFileSkip: Bool = true
+    /// 跳过相同文件的判定依据：fileName / recordFile
+    var sameFileCheckMode: String?
+    /// 下载记录文件名（recordFile 模式下创建在每个用户文件夹里）
+    var recordFileName: String?
     /// 按账号建子目录：昵称-@用户名（如 ~/Download/abc-@123）
     var accountSubfolder: Bool?
     /// 主页搜索后是否自动加载媒体时间线（关闭省流量，只显示用户卡与下载配置）
@@ -42,6 +46,8 @@ struct DownloadSettings: Codable, Sendable {
     var aria2FileAllocation: String?
 
     init() {
+        sameFileCheckMode = "fileName"
+        recordFileName = ".downloaded.json"
         accountSubfolder = true
         autoLoadMedia = true
         engine = .aria2
@@ -58,6 +64,8 @@ struct DownloadSettings: Codable, Sendable {
         dirTemplate = try c.decodeIfPresent(String.self, forKey: .dirTemplate) ?? ""
         fileNameTemplate = try c.decodeIfPresent(String.self, forKey: .fileNameTemplate) ?? "%POST_TIME% %USER_SCREEN_NAME% %POST_ID%-%MEDIA_INDEX%%EXT%"
         sameFileSkip = try c.decodeIfPresent(Bool.self, forKey: .sameFileSkip) ?? true
+        sameFileCheckMode = try c.decodeIfPresent(String.self, forKey: .sameFileCheckMode)
+        recordFileName = try c.decodeIfPresent(String.self, forKey: .recordFileName)
         accountSubfolder = try c.decodeIfPresent(Bool.self, forKey: .accountSubfolder) ?? true
         autoLoadMedia = try c.decodeIfPresent(Bool.self, forKey: .autoLoadMedia) ?? true
         engine = try c.decodeIfPresent(DownloadEngine.self, forKey: .engine) ?? .aria2
@@ -114,6 +122,12 @@ struct Settings: Codable, Sendable {
     var aria2FileAllocation: String { download.aria2FileAllocation ?? "none" }
     /// 液态玻璃开关（默认开；仅在 macOS 26+ 有效）
     var liquidGlassEnabled: Bool { app.liquidGlass ?? true }
+    /// 跳过相同文件判定依据（默认按文件名）
+    var sameFileCheckModeValue: SameFileCheckMode {
+        SameFileCheckMode(rawValue: download.sameFileCheckMode ?? "") ?? .fileName
+    }
+    /// 下载记录文件名（默认 .downloaded.json）
+    var recordFileNameValue: String { download.recordFileName ?? ".downloaded.json" }
     /// 图片缓存开关（默认开）
     var cachingEnabled: Bool { app.cachingEnabled ?? true }
     /// 缓存上限 MB（默认 200，钳制 50–500）
@@ -141,6 +155,20 @@ struct Settings: Codable, Sendable {
             case .en: return "English"
             case .system: return "跟随系统"
             }
+        }
+    }
+}
+
+
+/// 跳过相同文件的判定依据
+enum SameFileCheckMode: String, CaseIterable, Sendable {
+    case fileName
+    case recordFile
+
+    var displayName: String {
+        switch self {
+        case .fileName: return L("按文件名")
+        case .recordFile: return L("按下载记录文件")
         }
     }
 }

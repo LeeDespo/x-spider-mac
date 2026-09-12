@@ -9,11 +9,6 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             accountCard
-                .onTapGesture {
-                    if AppStore.shared.account == nil {
-                        showCookieSheet = true
-                    }
-                }
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -46,11 +41,6 @@ struct SidebarView: View {
         .onChange(of: AppStore.shared.account) { _, newAccount in
             account = newAccount
         }
-        .overlay {
-            if let account {
-                logoutOverlay(account)
-            }
-        }
     }
 
     private func navTitle(_ item: NavigationItem) -> String {
@@ -63,6 +53,8 @@ struct SidebarView: View {
     }
 
     // MARK: - 账户卡（上游 Account.tsx：头像 + 昵称 + screen_name，点击可登出）
+
+    @State private var accountMenuVisible = false
 
     private var accountCard: some View {
         HStack(spacing: 12) {
@@ -95,20 +87,48 @@ struct SidebarView: View {
         }
         .padding(12)
         .liquidGlass(cornerRadius: 16)
-    }
-
-    private func logoutOverlay(_ account: TwitterAccountInfo) -> some View {
-        // 只放一个按钮（底部右侧），不做全屏覆盖层——
-        // 之前的全屏 overlay + allowsHitTesting(true) 会拦截 List 的点击，导致侧边栏无法切换
-        Button {
-            AppStore.shared.logout()
-            self.account = nil
-        } label: {
-            Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if AppStore.shared.account == nil {
+                showCookieSheet = true
+            } else {
+                accountMenuVisible = true
+            }
         }
-        .compatGlassButton()
-        .padding(.trailing, 12)
-        .padding(.bottom, 24)
+        // 已登录：点击弹菜单（切换账号 / 登出）；未登录：点击导入 Cookie
+        .popover(isPresented: $accountMenuVisible, arrowEdge: .bottom) {
+            VStack(spacing: 2) {
+                Button {
+                    accountMenuVisible = false
+                    showCookieSheet = true
+                } label: {
+                    Label(L("切换账号"), systemImage: "person.crop.circle.badge.plus")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+                Divider()
+
+                Button(role: .destructive) {
+                    accountMenuVisible = false
+                    AppStore.shared.logout()
+                    self.account = nil
+                } label: {
+                    Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+            }
+            .padding(.vertical, 6)
+            .frame(width: 180)
+        }
     }
 }
 
