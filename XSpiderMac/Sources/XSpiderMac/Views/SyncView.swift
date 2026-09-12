@@ -1,168 +1,300 @@
 import SwiftUI
 
-/// 同步页：watchOS 式头像圈选要同步的用户，底部居中「立即同步」。
+/// 同步页：watchOS 蜂窝头像布局（FlowLayout 环绕 + 外围淡化），
+/// 中心加号添加用户；底部进度框 + 状态机圆形按钮。
 struct SyncView: View {
-    @State private var store = SyncStore()
-    @Environment(\.scenePhase) private var scenePhase
+    @State private var store = SyncStore.shared
+    @State private var showAddSheet = false
+    @State private var input = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            if store.candidateUsers.isEmpty {
+        VStack(spacing: 20) {
+            if store.users.isEmpty && store.phase != .syncing {
                 emptyState
             } else {
-                avatarCloud
-                Spacer(minLength: 24)
-                syncButton
+                honeycomb
+                progressBar
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(L("同步"))
-        // 底部留白：避免悬浮下载条遮挡
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: 72)
+        .sheet(isPresented: $showAddSheet) { addSheet }
+        .task {
+            // 打开应用自动同步（设置开启时）
+            store.syncOnLaunchIfNeeded()
         }
     }
 
-    // MARK: - 头像云（watchOS 表盘布局：多行环形排列，越居中行越长）
-
-    private var avatarCloud: some View {
-        ScrollView {
-            FlowLayout(spacing: 18) {
-                ForEach(store.candidateUsers) { user in
-                    AvatarPickCell(
-                        user: user,
-                        isSelected: store.selected.contains(user.screenName),
-                        progress: store.progress.first { $0.screenName == user.screenName }
-                    ) {
-                        store.toggle(user)
-                    }
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
+    // MARK: - 空态
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "person.2.crop.square.badge.plus")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            Button {
+                showAddSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 84, height: 84)
+                    .background(.quinary, in: Circle())
+            }
+            .buttonStyle(.plain)
             Text(L("暂无可同步的用户"))
-                .font(.headline)
+                .foregroundStyle(.secondary)
             Text(L("先在主页浏览或下载过用户媒体，再回到这里同步。"))
                 .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var syncButton: some View {
-        VStack(spacing: 8) {
-            Button {
-                Task { await store.startSync() }
-            } label: {
-                HStack(spacing: 8) {
-                    if store.running {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                    }
-                    Text(store.running ? L("同步中…") : L("立即同步"))
-                        .font(.headline)
+    // MARK: - 蜂窝头像
+
+    private var honeycomb: some View {
+        ScrollView {
+            FlowLayout(spacing: 18) {
+                ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
+                    honeycombCell(user, index: idx)
                 }
-                .frame(minWidth: 160)
-                .padding(.vertical, 8)
+                // 中心加号按钮
+                addCenterButton
             }
-            .compatGlassProminentButton()
-            .disabled(store.selected.isEmpty || store.running)
-
-            if !store.selected.isEmpty, !store.running {
-                Text(L("已选择 ") + "\(store.selected.count)" + L(" 个用户"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            .padding(28)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
+        .scrollIndicators(.hidden)
     }
-}
 
-// MARK: - 单个头像单元
-
-private struct AvatarPickCell: View {
-    let user: SyncStore.TargetUser
-    let isSelected: Bool
-    let progress: SyncStore.UserProgress?
-    let onTap: () -> Void
-
-    @State private var hovering = false
-
-    private var ringColor: Color {
-        switch progress?.status {
-        case .loading: return .accentColor
-        case .done: return .green
-        case .failed: return .red
-        default: return isSelected ? Color.accentColor : Color.clear
+    @ViewBuilder
+    private func honeycombCell(_ user: SyncUser, index: Int) -> some View {
+        let isActive = store.phase == .syncing && store.currentUserIndex == index
+        let isDone = store.phase == .syncing && index < store.currentUserIndex
+        HoneycombCell(user: user, isActive: isActive, isDone: isDone, cellOpacity: opacity(for: index)) {
+            withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
         }
     }
 
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 6) {
-                ZStack {
-                    CachedAvatarView(urlString: user.avatar, size: 56)
+    /// 外围淡化：按离中心的索引距离衰减（20+ 用户时外圈 0.35 起）
+    private func opacity(for index: Int) -> Double {
+        let total = store.users.count
+        guard total > 12 else { return 1.0 }
+        let distance = abs(index - total / 2)
+        let maxD = Double(max(total - total / 2, 1))
+        let t = Double(distance) / maxD
+        return 1.0 - t * 0.55
+    }
 
-                    if progress?.status == .loading {
-                        ProgressView()
-                            .controlSize(.regular)
-                    } else if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(.white, Color.accentColor)
-                            .offset(x: 20, y: -20)
-                    }
-                }
-                .frame(width: 60, height: 60)
-                .background(Circle().strokeBorder(ringColor, lineWidth: isSelected || progress != nil ? 2.5 : 1))
-
-                Text(user.name)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .frame(width: 76)
-
-                if let progress, let message = progress.message {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(progress.status == .failed ? .red : .secondary)
-                        .lineLimit(1)
-                        .frame(width: 96)
-                }
-            }
-            .padding(6)
-            .background {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(hovering ? AnyShapeStyle(.quinary) : AnyShapeStyle(Color.clear))
-            }
-            .scaleEffect(hovering ? 1.04 : 1)
-            .animation(.spring(duration: 0.2), value: hovering)
+    private var addCenterButton: some View {
+        Button {
+            showAddSheet = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 68, height: 68)
+                .background(.quinary, in: Circle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("@\(user.screenName)")
+        .help(L("添加同步用户"))
+    }
+
+    // MARK: - 进度框
+
+    private var progressBar: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(phaseLabel)
+                    .font(.callout.weight(.medium))
+                if store.phase == .syncing {
+                    let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
+                    ProgressView(value: progress)
+                    Text(currentUserText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if store.phase == .done {
+                    Text(summaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            primaryButton
+        }
+        .padding(16)
+        .liquidGlass(cornerRadius: 16)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    private var phaseLabel: String {
+        var text = store.phase.label
+        if store.phase == .syncing, store.currentUserIndex >= 0, store.currentUserIndex < store.users.count {
+            text += " · " + store.users[store.currentUserIndex].name
+        }
+        return text
+    }
+
+    private var currentUserText: String {
+        guard store.currentUserIndex >= 0, store.currentUserIndex < store.users.count else { return "" }
+        let user = store.users[store.currentUserIndex]
+        return store.userMessages[user.screenName] ?? ""
+    }
+
+    private var summaryText: String {
+        store.userMessages.values.joined(separator: " · ")
+    }
+
+    // MARK: - 状态机圆形按钮（无文字，图标随状态变化 + 动画）
+
+    @ViewBuilder
+    private var primaryButton: some View {
+        let (symbol, color): (String, Color) = {
+            switch store.phase {
+            case .idle: return ("arrow.triangle.2.circlepath", Color.accentColor)
+            case .syncing: return ("pause.fill", .red)
+            case .done: return ("checkmark", .green)
+            case .interrupted: return ("arrow.triangle.2.circlepath", Color.accentColor)
+            }
+        }()
+        Button {
+            withAnimation(.spring(duration: 0.35)) { store.primaryAction() }
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 52, height: 52)
+                .background(.quinary, in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(color.opacity(0.35), lineWidth: 2)
+                }
+                // syncing 时旋转动画
+                .rotationEffect(.degrees(store.phase == .syncing ? 360 : 0))
+                .animation(store.phase == .syncing ? .linear(duration: 1.6).repeatForever(autoreverses: false) : .spring(duration: 0.35), value: store.phase)
+        }
+        .buttonStyle(.plain)
+        .disabled(store.users.isEmpty && store.phase == .idle)
+    }
+
+    // MARK: - 添加弹窗
+
+    private var addSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L("添加同步用户"))
+                .font(.headline)
+            TextField(L("输入用户名，多个用逗号分隔"), text: $input)
+                .textFieldStyle(.roundedBorder)
+            if !appStore.searchHistory.isEmpty {
+                Text(L("搜索历史"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(appStore.searchHistory.filter { $0.kind == .user }) { item in
+                            Button {
+                                input = input.isEmpty ? item.keyword : input + "," + item.keyword
+                            } label: {
+                                HStack(spacing: 8) {
+                                    CachedAvatarView(urlString: item.imageURL ?? "", size: 24)
+                                    Text(item.keyword)
+                                        .font(.callout)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+            }
+            HStack {
+                Spacer()
+                Button(L("取消")) { showAddSheet = false }
+                Button(L("添加")) {
+                    _ = store.addUsers(fromInput: input)
+                    input = ""
+                    showAddSheet = false
+                }
+                .buttonStyle(.glassProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    @State private var appStore = AppStore.shared
+}
+
+// MARK: - FlowLayout（环绕布局，watchOS 蜂窝用）
+
+/// 蜂窝单元：头像 + 圆环 + 悬停删除按钮
+private struct HoneycombCell: View {
+    let user: SyncUser
+    let isActive: Bool
+    let isDone: Bool
+    let cellOpacity: Double
+    let onDelete: () -> Void
+    @State private var showDelete = false
+    @State private var isPressed = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    Circle()
+                        .strokeBorder(ringColor, lineWidth: 3)
+                        .frame(width: 62, height: 62)
+                    CachedAvatarView(urlString: user.avatar, size: 54)
+                }
+                if showDelete {
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.red, .white)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 6, y: -6)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            Text(user.name)
+                .font(.caption2)
+                .lineLimit(1)
+                .frame(width: 72)
+        }
+        .opacity(cellOpacity)
+        .scaleEffect(isActive ? 1.08 : (isPressed ? 0.95 : 1.0))
+        .animation(.spring(duration: 0.3), value: isActive)
+        .animation(.spring(duration: 0.2), value: isPressed)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) { showDelete = hovering }
+        }
+        .onLongPressGesture(minimumDuration: 0.25, pressing: { pressing in
+            isPressed = pressing
+            if pressing {
+                withAnimation(.spring(duration: 0.25)) { showDelete = true }
+            }
+        }, perform: {})
+    }
+
+    private var ringColor: Color {
+        if isActive { return Color.accentColor }
+        if isDone { return .green }
+        return Color.clear
     }
 }
 
-// MARK: - 流式布局（自动换行的头像云）
-
+/// 自适应流式布局：子视图按行排列，放不下换行（居中对齐）
 struct FlowLayout: Layout {
-    var spacing: CGFloat = 16
+    var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 600
+        let maxWidth = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
@@ -174,21 +306,46 @@ struct FlowLayout: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
-        return CGSize(width: maxWidth, height: y + rowHeight)
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX, x > bounds.minX {
-                x = bounds.minX
-                y += rowHeight + spacing
-                rowHeight = 0
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        var rowViews: [(Int, CGSize)] = []
+        var rowStart = 0
+
+        func flushRow() {
+            guard !rowViews.isEmpty else { return }
+            let totalWidth = rowViews.reduce(0) { $0 + $1.1.width } + CGFloat(rowViews.count - 1) * spacing
+            var cx = bounds.minX + (bounds.width - totalWidth) / 2  // 居中
+            for (idx, size) in rowViews {
+                let sub = subviews[idx]
+                let vSize = sub.sizeThatFits(.unspecified)
+                sub.place(at: CGPoint(x: cx, y: y + (rowHeight - vSize.height) / 2),
+                          proposal: ProposedViewSize(size))
+                cx += size.width + spacing
             }
-            view.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: .unspecified)
+            y += rowHeight + spacing
+            rowViews.removeAll()
+            rowStart = 0
+        }
+
+        for (idx, view) in subviews.enumerated() {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, !rowViews.isEmpty {
+                flushRow()
+                x = bounds.minX
+            }
+            rowViews.append((idx, size))
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+        flushRow()
     }
+}
+
+#Preview {
+    SyncView()
 }

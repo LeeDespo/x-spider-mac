@@ -17,6 +17,7 @@ struct SettingsView: View {
             privacySection
             powerSection
             logSection
+            syncSection
             cacheSection
             dataSection
         }
@@ -50,11 +51,7 @@ struct SettingsView: View {
                 get: { settingsStore.settings.accountSubfolderEnabled },
                 set: { settingsStore.settings.download.accountSubfolder = $0 }
             ))
-            if settingsStore.settings.accountSubfolderEnabled {
-                Text(L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中，如：") + "\(settingsStore.settings.download.saveDirBase)/abc-@123")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            .infoHint(L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中。"))
 
             // 文件名模板（单一输入 + 实时预览）
             TextField(L("文件名模板"), text: Binding(
@@ -68,7 +65,6 @@ struct SettingsView: View {
                     data: SettingsView.exampleTemplateData
                 ))
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             }
 
@@ -93,10 +89,8 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .padding(.leading, 16)
+                .infoHint(L("按文件名：目标文件已存在则跳过。\n按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定。"))
 
-                Text(L("按文件名：目标文件已存在则跳过。按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定，且文件名会自动追加 [媒体ID] 锁定段。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                     .padding(.leading, 16)
             }
         } header: {
@@ -118,14 +112,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            if settingsStore.settings.engine == .aria2 && !Aria2Engine.isAvailable {
-                Text(L("未找到 aria2c（brew install aria2 安装后重启应用，或改用内置引擎）"))
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-            Text(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .infoHint(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
 
             // 同时并发下载数（− 数字 +，数字可点击输入）
             NumberStepperField(
@@ -177,9 +164,7 @@ struct SettingsView: View {
                 get: { settingsStore.settings.autoLoadMediaEnabled },
                 set: { settingsStore.settings.download.autoLoadMedia = $0 }
             ))
-            Text(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。媒体网格始终使用缩略图展示，下载原图不受影响。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .infoHint(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。"))
         } header: {
             Label(L("主页"), systemImage: "house")
         }
@@ -193,13 +178,12 @@ struct SettingsView: View {
                 get: { settingsStore.settings.autoClearDownloadHistoryEnabled },
                 set: { settingsStore.settings.app.autoClearDownloadHistory = $0 }
             ))
+            .infoHint(L("开启后，每次离开对应页面时自动清空下载历史记录。仅删除记录，不删除已下载的文件。"))
             Toggle(L("自动删除搜索记录"), isOn: Binding(
                 get: { settingsStore.settings.autoClearSearchHistoryEnabled },
                 set: { settingsStore.settings.app.autoClearSearchHistory = $0 }
             ))
-            Text(L("开启后，每次离开对应页面时自动清空相应历史记录。仅删除记录，不删除已下载的文件。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .infoHint(L("开启后，每次离开对应页面时自动清空搜索记录。仅删除记录。"))
         } header: {
             Label(L("隐私"), systemImage: "hand.raised")
         }
@@ -234,12 +218,27 @@ struct SettingsView: View {
 
     // MARK: - 缓存设置
 
+    // MARK: - 同步设置
+
+    private var syncSection: some View {
+        Section {
+            Toggle(L("打开应用时自动同步"), isOn: Binding(
+                get: { settingsStore.settings.autoSyncOnLaunchEnabled },
+                set: { settingsStore.settings.sync.autoSyncOnLaunch = $0 }
+            ))
+            .infoHint(L("启动应用后自动开始同步清单内所有用户的最新媒体，同「同步」页的判定规则跳过已下载。"))
+        } header: {
+            Label(L("同步"), systemImage: "arrow.triangle.2.circlepath")
+        }
+    }
+
     private var cacheSection: some View {
         Section {
             Toggle(L("启用图片缓存"), isOn: Binding(
                 get: { settingsStore.settings.cachingEnabled },
                 set: { settingsStore.settings.app.cachingEnabled = $0 }
             ))
+            .infoHint(L("缓存头像与媒体缩略图，重复加载时直接读本地，节省流量并加快刷新。"))
 
             if settingsStore.settings.cachingEnabled {
                 ForEach(ImageCache.Category.allCases, id: \.self) { cat in
@@ -257,9 +256,6 @@ struct SettingsView: View {
                         Text("\(mb) MB").tag(mb)
                     }
                 }
-                Text(L("超出上限后自动清理最旧的缓存文件。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             HStack {
@@ -270,7 +266,6 @@ struct SettingsView: View {
                 .buttonStyle(.glass)
                 Text(cacheUsageText ?? ByteCountFormatter.string(fromByteCount: ImageCache.shared.currentBytes(), countStyle: .file))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         } header: {
             Label(L("缓存"), systemImage: "square.stack.3d.down.forward")
@@ -286,9 +281,6 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Button(L("清除所有应用数据…"), role: .destructive) { showCleanupDialog = true }
                     .compatGlassButton()
-                Text(L("应用数据统一存放在 Application Support/XSpiderMac、Caches/XSpiderMac 和 Logs/XSpiderMac，已下载的媒体文件不受影响。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         } header: {
             Label(L("数据"), systemImage: "externaldrive")
@@ -337,14 +329,6 @@ struct SettingsView: View {
                         set: { settingsStore.settings.app.glassBlur = Int($0) }
                     ), in: 20...100, step: 5)
                 }
-                Text(L("调整应用背景的模糊强度：约 20%（最低档）时与边栏观感最接近，拉满则最不透。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if !GlassCompat.supportsLiquidGlass {
-                Text(L("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         } header: {
             Label(L("UI"), systemImage: "aqi.medium")
@@ -421,9 +405,7 @@ struct SettingsView: View {
                 get: { settingsStore.settings.app.preventSleepDuringDownload },
                 set: { settingsStore.settings.app.preventSleepDuringDownload = $0 }
             ))
-            Text(L("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .infoHint(L("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置。"))
         } header: {
             Label(L("电源"), systemImage: "zzz")
         }
@@ -437,14 +419,11 @@ struct SettingsView: View {
                 get: { settingsStore.settings.app.writeLogs },
                 set: { settingsStore.settings.app.writeLogs = $0 }
             ))
-            Text(L("日志记录网络请求、下载任务、错误等信息，用于问题排查"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .infoHint(L("日志记录网络请求、下载任务、错误等信息，用于问题排查。"))
 
             LabeledContent(L("日志位置")) {
                 Text(AppLogger.currentLogFile.path)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
 
@@ -458,7 +437,6 @@ struct SettingsView: View {
                 if AppLogger.logFileCount > 0 {
                     Text("\(AppLogger.logFileCount) " + L("个日志文件"))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
             if let exportMessage {
@@ -567,7 +545,6 @@ struct TemplateVariablePicker: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(L("可用变量（点击复制）"))
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 6) {
                 ForEach(FileNameTemplate.variableDescriptions, id: \.name) { variable in
                     Button {
@@ -591,7 +568,6 @@ struct TemplateVariablePicker: View {
                             }
                             Text(variable.desc)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)

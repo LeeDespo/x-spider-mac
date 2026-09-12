@@ -76,6 +76,16 @@ struct DownloadSettings: Codable, Sendable {
     }
 }
 
+struct SyncSettings: Codable, Sendable {
+    /// 打开应用自动开始同步
+    var autoSyncOnLaunch: Bool?
+    init() { autoSyncOnLaunch = false }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        autoSyncOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? false
+    }
+}
+
 struct AppSettings: Codable, Sendable {
     var writeLogs: Bool = false
     var language: String = "zh-Hans"
@@ -100,6 +110,7 @@ struct Settings: Codable, Sendable {
     var proxy: ProxySettings = ProxySettings()
     var download: DownloadSettings = DownloadSettings()
     var app: AppSettings = AppSettings()
+    var sync: SyncSettings = SyncSettings()
 
     static let currentVersion = 3
 
@@ -134,6 +145,8 @@ struct Settings: Codable, Sendable {
     var cacheLimitMB: Int { min(500, max(50, app.cacheLimitMB ?? 200)) }
     /// 玻璃模糊强度（0–100，默认 60）
     var glassBlur: Int { min(100, max(20, app.glassBlur ?? 60)) }
+    /// 打开应用自动同步（默认关）
+    var autoSyncOnLaunchEnabled: Bool { sync.autoSyncOnLaunch ?? false }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

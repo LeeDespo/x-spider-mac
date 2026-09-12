@@ -204,8 +204,17 @@ final class HomepageStore {
                 AppLogger.debug("丢弃过期的翻页响应", category: "HOME", ["userId": userId])
                 return
             }
-            postList.append(contentsOf: posts)
-            postListCursor = nextCursor
+            // 按推文 ID 去重：Twitter 偶发返回重复页；重复内容会导致无限加载
+            let existing = Set(postList.map(\.id))
+            let fresh = posts.filter { !existing.contains($0.id) }
+            if posts.isEmpty || (fresh.isEmpty && nextCursor == cursor) {
+                // 服务端没给新内容也不给新 cursor → 到底了，停止翻页
+                postListCursor = nil
+                AppLogger.info("媒体时间线已到底", category: "HOME", ["screenName": userInfo?.screenName ?? "?"])
+                return
+            }
+            postList.append(contentsOf: fresh)
+            postListCursor = nextCursor != cursor ? nextCursor : nil
             AppLogger.debug("媒体时间线追加翻页", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?",
                 "posts": "\(posts.count)",

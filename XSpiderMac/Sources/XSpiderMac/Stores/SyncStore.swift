@@ -1,144 +1,189 @@
 import Foundation
-import AppKit
+import SwiftUI
 
-/// 同步页状态：选择若干用户 → 一键拉取各自媒体时间线并入队下载（跳过已下载）。
+/// 同步清单条目
+struct SyncUser: Codable, Identifiable, Equatable, Sendable {
+    var screenName: String
+    var name: String
+    var avatar: String
+
+    var id: String { screenName }
+}
+
+/// 同步状态机：idle（等待）→ syncing（同步中）→ done（完成）→ idle…
+/// syncing 时点击 = 意外中断（取消）→ 显示 interrupted，下次点击回 idle
+enum SyncPhase: Equatable, Sendable {
+    case idle
+    case syncing
+    case done
+    case interrupted
+
+    var label: String {
+        switch self {
+        case .idle: return L("等待同步")
+        case .syncing: return L("同步中…")
+        case .done: return L("完成同步")
+        case .interrupted: return L("意外中断")
+        }
+    }
+}
+
+@Observable
 @MainActor
-final class SyncStore: ObservableObject {
-    struct TargetUser: Identifiable, Hashable {
-        let screenName: String
-        let name: String
-        let avatar: String
-        var id: String { screenName }
+final class SyncStore {
+    static let shared = SyncStore()
+
+    /// 同步清单（持久化）
+    @ObservationIgnored private(set) var users: [SyncUser] = [] {
+        didSet { persistUsers() }
     }
 
-    struct UserProgress: Identifiable {
-        let screenName: String
-        var status: Status = .pending
-        var fetchedPosts = 0
-        var enqueued = 0
-        var skipped = 0
-        var message: String?
-        var id: String { screenName }
-
-        enum Status { case pending, loading, done, failed }
+    var phase: SyncPhase = .idle
+    /// 当前正在同步的用户下标（-1 = 无）
+    var currentUserIndex: Int = -1
+    /// 每用户状态文本（如 "新任务 3，跳过 12"）
+    var userMessages: [String: String] = [:]
+    var autoSyncOnLaunch: Bool {
+        get { SettingsStore.shared.settings.autoSyncOnLaunchEnabled }
+        set { SettingsStore.shared.settings.sync.autoSyncOnLaunch = newValue }
     }
+    private(set) var syncTask: Task<Void, Never>?
 
-    @Published var selected: Set<String> = []
-    @Published var progress: [UserProgress] = []
-    @Published var running = false
-    /// 每个用户最多回溯多少页（20 条/页）
-    @Published var maxPages: Int = 5 {
-        didSet { UserDefaults.standard.set(maxPages, forKey: "sync.maxPages") }
-    }
-
-    init() {
-        maxPages = UserDefaults.standard.object(forKey: "sync.maxPages") as? Int ?? 5
-    }
-
-    // MARK: - 候选用户（下载历史里出现过的账号 + 主页看过的账号）
-
-    var candidateUsers: [TargetUser] {
-        var byName: [String: TargetUser] = [:]
-        for user in DownloadStore.shared.knownUsers {
-            byName[user.screenName] = TargetUser(screenName: user.screenName, name: user.name, avatar: user.avatar)
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: "sync.users"),
+           let list = try? JSONDecoder().decode([SyncUser].self, from: data) {
+            users = list
         }
-        return byName.values.sorted { $0.name < $1.name }
     }
 
-    func toggle(_ user: TargetUser) {
-        if selected.contains(user.screenName) {
-            selected.remove(user.screenName)
-        } else {
-            selected.insert(user.screenName)
+    func persistUsers() {
+        if let data = try? JSONEncoder().encode(users) {
+            UserDefaults.standard.set(data, forKey: "sync.users")
         }
+    }
+
+    // MARK: - 清单管理
+
+    /// 输入框添加：支持中英文逗号分隔多个用户名
+    func addUsers(fromInput input: String) -> Int {
+        let parts = input
+            .replacingOccurrences(of: "，", with: ",")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@")) }
+            .filter { !$0.isEmpty }
+        var added = 0
+        for sn in parts {
+            let lowered = sn.lowercased()
+            guard !users.contains(where: { $0.screenName.lowercased() == lowered }) else { continue }
+            // 名称/头像：先查下载历史，再查 TwitterAPI（异步补全）
+            if let known = DownloadStore.shared.knownUsers.first(where: { $0.screenName.lowercased() == lowered }) {
+                users.append(SyncUser(screenName: known.screenName, name: known.name, avatar: known.avatar))
+            } else {
+                users.append(SyncUser(screenName: sn, name: sn, avatar: ""))
+                Task { await resolveUserInfo(screenName: sn) }
+            }
+            added += 1
+        }
+        return added
+    }
+
+    /// 异步补全用户昵称头像
+    private func resolveUserInfo(screenName: String) async {
+        guard let user = try? await TwitterAPI.shared.getUser(screenName: screenName) else { return }
+        if let idx = users.firstIndex(where: { $0.screenName.lowercased() == screenName.lowercased() }) {
+            users[idx].name = user.name
+            users[idx].avatar = user.avatar
+        }
+    }
+
+    func removeUser(_ screenName: String) {
+        users.removeAll { $0.screenName == screenName }
+        userMessages.removeValue(forKey: screenName)
     }
 
     // MARK: - 同步执行
 
-    func startSync() async {
-        guard !running, !selected.isEmpty else { return }
-        running = true
-        defer { running = false }
-
-        let targets = candidateUsers.filter { selected.contains($0.screenName) }
-        progress = targets.map { UserProgress(screenName: $0.screenName, status: .pending) }
-
-        for target in targets {
-            await syncUser(target)
+    func startSync() {
+        guard phase != .syncing else { return }
+        guard !users.isEmpty else { return }
+        phase = .syncing
+        userMessages = [:]
+        syncTask = Task { [weak self] in
+            await self?.runSync()
         }
     }
 
-    private func syncUser(_ target: TargetUser) async {
-        updateProgress(target.screenName) { $0.status = .loading }
+    /// 同步中点击圆形按钮 = 中断
+    func interrupt() {
+        guard phase == .syncing else { return }
+        syncTask?.cancel()
+        syncTask = nil
+        phase = .interrupted
+        currentUserIndex = -1
+    }
 
-        do {
-            // 用户 ID：优先用已知历史的 post.user.id；否则现查
-            let userId = try await resolveUserId(target)
+    /// done/interrupted 状态点击 → 回到 idle 可再次同步
+    func resetPhase() {
+        phase = .idle
+        currentUserIndex = -1
+    }
 
-            var cursor: String? = nil
-            var enqueued = 0
-            var skipped = 0
-            var pages = 0
+    /// 圆形按钮动作分发
+    func primaryAction() {
+        switch phase {
+        case .idle: startSync()
+        case .syncing: interrupt()
+        case .done, .interrupted: resetPhase()
+        }
+    }
 
-            while pages < max(maxPages, 1) {
-                let (posts, next) = try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: cursor, count: 20)
-                pages += 1
-
-                var pageMedias: [(post: TwitterPost, media: TwitterMedia)] = []
-                for post in posts {
-                    for media in post.medias ?? [] {
-                        if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
-                            skipped += 1
-                        } else {
-                            pageMedias.append((post, media))
+    private func runSync() async {
+        for (idx, user) in users.enumerated() {
+            if Task.isCancelled { return }
+            currentUserIndex = idx
+            do {
+                guard let info = try? await TwitterAPI.shared.getUser(screenName: user.screenName), !info.id.isEmpty else {
+                    userMessages[user.screenName] = L("用户不存在")
+                    continue
+                }
+                var newTasks = 0
+                var skipped = 0
+                var cursor: String? = nil
+                let maxPages = 5
+                var page = 0
+                repeat {
+                    if Task.isCancelled { return }
+                    let (posts, next) = try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursor)
+                    for post in posts {
+                        for media in post.medias ?? [] {
+                            if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
+                                skipped += 1
+                            } else {
+                                if await DownloadStore.shared.createDownloadTask(post: post, media: media) != nil {
+                                    newTasks += 1
+                                } else {
+                                    skipped += 1
+                                }
+                            }
                         }
                     }
-                }
-                enqueued += pageMedias.count
-                if !pageMedias.isEmpty {
-                    await DownloadStore.shared.batchCreateDownloadTasks(pageMedias)
-                }
-                updateProgress(target.screenName) {
-                    $0.fetchedPosts += posts.count
-                    $0.enqueued = enqueued
-                    $0.skipped = skipped
-                }
-
-                guard let next, pages < maxPages else { break }
-                cursor = next
+                    cursor = next
+                    page += 1
+                } while cursor != nil && page < maxPages
+                userMessages[user.screenName] = L("新任务 ") + "\(newTasks)" + L("，跳过 ") + "\(skipped)"
+            } catch {
+                userMessages[user.screenName] = error.localizedDescription
             }
-
-            updateProgress(target.screenName) {
-                $0.status = .done
-                $0.message = L("新任务 ") + "\(enqueued)" + L("，跳过 ") + "\(skipped)"
-            }
-            AppLogger.info("同步完成", category: "SYNC", [
-                "user": target.screenName, "enqueued": "\(enqueued)", "skipped": "\(skipped)", "pages": "\(pages)",
-            ])
-        } catch is CancellationError {
-            updateProgress(target.screenName) { $0.status = .failed; $0.message = L("已取消") }
-        } catch {
-            updateProgress(target.screenName) {
-                $0.status = .failed
-                $0.message = error.localizedDescription
-            }
-            AppLogger.warn("同步失败", category: "SYNC", ["user": target.screenName, "error": error.localizedDescription])
+        }
+        if !Task.isCancelled {
+            currentUserIndex = -1
+            phase = .done
         }
     }
 
-    /// 从下载历史找该用户的 post.user.id；找不到再调 getUser
-    private func resolveUserId(_ target: TargetUser) async throws -> String {
-        if let known = DownloadStore.shared.tasks.first(where: { $0.post.user.screenName == target.screenName })?.post.user.id,
-           !known.isEmpty {
-            return known
-        }
-        let user = try await TwitterAPI.shared.getUser(screenName: target.screenName)
-        return user.id
-    }
-
-    private func updateProgress(_ screenName: String, _ mutation: (inout UserProgress) -> Void) {
-        if let idx = progress.firstIndex(where: { $0.screenName == screenName }) {
-            mutation(&progress[idx])
-        }
+    /// 打开应用自动同步（设置开关）
+    func syncOnLaunchIfNeeded() {
+        guard autoSyncOnLaunch, phase == .idle, !users.isEmpty else { return }
+        startSync()
     }
 }

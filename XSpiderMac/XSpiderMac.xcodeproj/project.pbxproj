@@ -35,6 +35,7 @@
 		89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */; };
 		94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1544EECF1A89E6C5FC211279 /* TwitterUser.swift */; };
 		98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */; };
+		9B123F8E30E1936E0AF7F83F /* InfoHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = B56F6F176179CCA68531F16C /* InfoHint.swift */; };
 		9DE45F14785C82B9348ABC18 /* SleepPreventer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */; };
 		9EFAD365062561FEB3E4076E /* SyncView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E39372895FAA6B9A4C468E94 /* SyncView.swift */; };
 		A95AC0460DAA207A127EA14F /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */; };
@@ -100,6 +101,7 @@
 		9FBF3B6352EC01EFE8FF9BB3 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		A2C71F4FE1A0AD871AA29345 /* String+Path.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+Path.swift"; sourceTree = "<group>"; };
 		A9FF2B6963D0CB232CB5947E /* XSpiderMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = XSpiderMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B56F6F176179CCA68531F16C /* InfoHint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoHint.swift; sourceTree = "<group>"; };
 		B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
@@ -186,6 +188,7 @@
 				69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */,
 				9A721BC7BC346461F850A948 /* GlassCompat.swift */,
 				72BF360634AFA8E3C4715248 /* ImageCache.swift */,
+				B56F6F176179CCA68531F16C /* InfoHint.swift */,
 				CC4B91779185027CBBA49B18 /* L10n.swift */,
 				E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */,
 				A2C71F4FE1A0AD871AA29345 /* String+Path.swift */,
@@ -397,6 +400,7 @@
 				D93184638E9AB84916BF28F6 /* HomeView.swift in Sources */,
 				3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */,
 				87F8660898BCC8A8DFB5AEED /* ImageCache.swift in Sources */,
+				9B123F8E30E1936E0AF7F83F /* InfoHint.swift in Sources */,
 				4D84E5E91E214D3D3D8C8AFD /* L10n.swift in Sources */,
 				1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */,
 				695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */,

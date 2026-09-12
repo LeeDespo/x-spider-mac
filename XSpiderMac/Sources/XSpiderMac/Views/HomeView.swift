@@ -330,13 +330,17 @@ struct MediaGridItem: View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .fill(.quaternary)
-                .aspectRatio(media.type == .photo ? nil : 16/9, contentMode: .fit)
 
             if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                GeometryReader { geo in
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.width * 3 / 4)
+                        .clipped()
+                }
+                .aspectRatio(4/3, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 Image(systemName: media.type == .photo ? "photo" : "video.fill")
                     .font(.title)

@@ -352,11 +352,11 @@ actor TwitterAPI {
             favoriteCount: legacy["favorite_count"] as? Int,
             bookmarkCount: legacy["bookmark_count"] as? Int,
             bookmarked: legacy["bookmarked"] as? Bool,
-            medias: Self.mapTwitterMedias(entities["media"] as? [[String: Any]])
+            medias: Self.mapTwitterMedias(entities["media"] as? [[String: Any]], createdAt: TwitterDate.parse(legacy["created_at"] as? String))
         )
     }
 
-    static func mapTwitterMedias(_ medias: [[String: Any]]?) -> [TwitterMedia]? {
+    static func mapTwitterMedias(_ medias: [[String: Any]]?, createdAt: Date? = nil) -> [TwitterMedia]? {
         guard let medias, !medias.isEmpty else { return nil }
         var result: [TwitterMedia] = []
         for m in medias {
@@ -373,7 +373,7 @@ actor TwitterAPI {
             case "photo":
                 result.append(TwitterMedia(
                     id: base.id, url: base.url, width: base.width, height: base.height,
-                    type: .photo, videoInfo: nil
+                    type: .photo, videoInfo: nil, createdTime: createdAt
                 ))
             case "video":
                 let videoInfo = m["video_info"] as? [String: Any] ?? [:]
@@ -392,7 +392,8 @@ actor TwitterAPI {
                         duration: videoInfo["duration_millis"] as? Double,
                         variants: variants,
                         aspectRatio: videoInfo["aspect_ratio"] as? [Int]
-                    )
+                    ),
+                    createdTime: createdAt
                 ))
             case "animated_gif":
                 let videoInfo = m["video_info"] as? [String: Any] ?? [:]
@@ -405,7 +406,8 @@ actor TwitterAPI {
                         duration: nil,
                         variants: nil,
                         aspectRatio: videoInfo["aspect_ratio"] as? [Int]
-                    )
+                    ),
+                    createdTime: createdAt
                 ))
             default:
                 continue

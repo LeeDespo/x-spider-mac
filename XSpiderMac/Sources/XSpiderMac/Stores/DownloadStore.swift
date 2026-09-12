@@ -88,10 +88,15 @@ final class DownloadStore {
             guard sub.hasSuffix(recordName) || sub.contains("/" + recordName) || sub == recordName else { continue }
             let full = (base as NSString).appendingPathComponent(sub)
             if let data = try? Data(contentsOf: URL(fileURLWithPath: full)),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let list = obj["downloaded"] as? [String] {
-                Self.recordCache[full] = Set(list)
-                loaded += 1
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // 新格式 { anchorDay, dayIds }；兼容旧格式 { downloaded: [...] }（按无锚点处理）
+                if let day = obj["anchorDay"] as? String, let list = obj["dayIds"] as? [String] {
+                    Self.recordCache[full] = RecordEntry(anchorDay: day, dayIds: list)
+                    loaded += 1
+                } else if let list = obj["downloaded"] as? [String] {
+                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list)
+                    loaded += 1
+                }
             }
         }
         if loaded > 0 {
@@ -118,8 +123,8 @@ final class DownloadStore {
         let templateData = FileNameTemplateData(post: post, media: media)
         let dir = targetDir(for: post)
         var fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
-        // recordFile 模式：文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 则不重复）
-        if settings.sameFileCheckModeValue == .recordFile {
+        // sameFileSkip 开启时：文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 则不重复）
+        if settings.download.sameFileSkip {
             fileName = lockedFileName(fileName, mediaId: media.id)
         }
 
@@ -169,10 +174,22 @@ final class DownloadStore {
         case .recordFile:
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let recordURL = recordFileURL(dir: dir)
-            if let ids = Self.recordCache[recordURL.path], ids.contains(mediaId) {
+            guard let entry = Self.recordCache[recordURL.path] else { return false }
+            // 时间锚定判定：
+            // 1) 媒体发布时间晚于上次同步锚点 → 新媒体，需要下载
+            // 2) 当天（锚点日）媒体 → 查 dayIds 决定
+            if let created = media.createdTime, let anchor = Self.parseAnchorDay(entry.anchorDay),
+               created > anchor {
+                return false  // 锚点之后发布的新媒体
+            }
+            if entry.dayIds.contains(mediaId) {
                 AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
                 return true
             }
+            if entry.dayIds.isEmpty {
+                return false
+            }
+            // 锚点日或更早、但不在记录里 → 更早的历史媒体,视为未下载(回溯场景)
             return false
         case .fileName:
             let filePath = (dir as NSString).appendingPathComponent(fileName)
@@ -189,25 +206,63 @@ final class DownloadStore {
         URL(fileURLWithPath: dir).appendingPathComponent(settings.recordFileNameValue)
     }
 
-    /// 各记录文件的媒体 ID 缓存（内存态，进程内有效）
-    private static var recordCache: [String: Set<String>] = [:]
+    /// 时间锚定的记录条目：锚点日期 + 当天媒体 ID 集合
+    struct RecordEntry: Codable, Sendable {
+        var anchorDay: String        // "yyyy-MM-dd"
+        var dayIds: [String]
+    }
 
-    /// 下载成功后写入记录文件（recordFile 模式）
-    private func recordDownloaded(mediaId: String?, dir: String) {
+    /// 各记录文件的缓存（内存态，进程内有效）
+    private static var recordCache: [String: RecordEntry] = [:]
+
+    private static func todayString(_ date: Date = Date()) -> String {
+        DateFormatter.fallback.string(from: date)
+    }
+
+    /// 下载成功后写入记录文件（recordFile 模式，时间锚定）：
+    /// 只记录"最新一份媒体的日期 + 当天媒体的资源索引"。
+    /// 新的一天有新媒体时锚点滚动到新的一天、清空旧索引（更早的历史不再记录）。
+    private func recordDownloaded(mediaId: String?, created: Date?, dir: String) {
         guard settings.sameFileCheckModeValue == .recordFile,
               let mediaId, !mediaId.isEmpty else { return }
         let url = recordFileURL(dir: dir)
-        var ids = Self.recordCache[url.path] ?? []
-        guard !ids.contains(mediaId) else { return }
-        ids.insert(mediaId)
-        Self.recordCache[url.path] = ids
+        let today = Self.todayString()
+        var entry = Self.recordCache[url.path] ?? RecordEntry(anchorDay: "", dayIds: [])
+
+        if entry.anchorDay.isEmpty {
+            // 首次：锚定到这份媒体的日期
+            entry.anchorDay = created.map { Self.todayString($0) } ?? today
+            entry.dayIds = []
+        } else if let created, let anchor = Self.parseAnchorDay(entry.anchorDay), created > anchor {
+            // 新媒体比锚点新 → 锚点前滚到该媒体日期,清空旧索引
+            entry.anchorDay = Self.todayString(created)
+            entry.dayIds = []
+        } else if entry.anchorDay < today {
+            // 锚点已是今天之前,但这份媒体不比锚点新(补下载历史) → 保持锚点
+            // 若今天没有新媒体,锚点维持
+        }
+
+        guard !entry.dayIds.contains(mediaId) else {
+            Self.recordCache[url.path] = entry
+            return
+        }
+        entry.dayIds.append(mediaId)
+        Self.recordCache[url.path] = entry
         do {
             try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            let data = try JSONSerialization.data(withJSONObject: ["downloaded": Array(ids).sorted()])
+            let data = try JSONSerialization.data(withJSONObject: [
+                "anchorDay": entry.anchorDay,
+                "dayIds": entry.dayIds.sorted(),
+            ])
             try data.write(to: url, options: .atomic)
         } catch {
             AppLogger.warn("下载记录写入失败", category: "DL", ["dir": dir, "error": error.localizedDescription])
         }
+    }
+
+    private static func parseAnchorDay(_ s: String) -> Date? {
+        guard !s.isEmpty else { return nil }
+        return DateFormatter.dayOnly.date(from: s)
     }
 
     /// 某推文媒体应保存的目标目录（主页"已下载"判定用）
@@ -231,7 +286,7 @@ final class DownloadStore {
 
     /// recordFile 模式下给文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 时保持原样）
     private func lockedFileName(_ fileName: String, mediaId: String?) -> String {
-        guard settings.sameFileCheckModeValue == .recordFile,
+        guard settings.download.sameFileSkip,
               !templateHasMediaId(),
               let mediaId, !mediaId.isEmpty else { return fileName }
         let stem = (fileName as NSString).deletingPathExtension
@@ -462,7 +517,7 @@ final class DownloadStore {
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let targetDir = dir ?? settings.download.saveDirBase
             let recordPath = recordFileURL(dir: targetDir).path
-            return Self.recordCache[recordPath]?.contains(mediaId) ?? false
+            return Self.recordCache[recordPath]?.dayIds.contains(mediaId) ?? false
         }
         guard let url = downloadURL(for: media) else { return false }
         return tasks.contains { $0.downloadUrl == url && $0.status == .complete }
@@ -574,7 +629,7 @@ final class DownloadStore {
                 $0.error = nil
             }
             AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
-            recordDownloaded(mediaId: task.media.id, dir: task.dir)
+            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir)
             pump()
             refreshSleepAssertion()
         } catch {
@@ -584,7 +639,7 @@ final class DownloadStore {
                 try fm.copyItem(at: stagedFile, to: destURL)
                 let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
                 AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
-            recordDownloaded(mediaId: task.media.id, dir: task.dir)
+            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir)
                 refreshSleepAssertion()
             } catch {
                 update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }

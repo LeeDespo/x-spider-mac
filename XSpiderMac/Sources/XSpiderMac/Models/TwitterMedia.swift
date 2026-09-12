@@ -24,6 +24,8 @@ struct TwitterMedia: Codable, Sendable {
     let height: Int?
     let type: MediaType
     let videoInfo: VideoInfo?
+    /// 该媒体所属推文的发布时间（记录文件时间锚定判定用；不参与编解码）
+    var createdTime: Date?
 }
 
 enum MediaType: String, Codable, Sendable {

@@ -71,3 +71,18 @@ enum AppDirectories {
         }
     }
 }
+
+
+// MARK: - 通用日期格式化（记录文件锚点用）
+
+extension DateFormatter {
+    /// yyyy-MM-dd（本地时区）
+    static let dayOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static var fallback: DateFormatter { dayOnly }
+}
