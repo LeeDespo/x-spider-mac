@@ -195,6 +195,10 @@ enum L10n {
         ("液态玻璃外观", "液態玻璃外觀"),
         ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "當前 macOS 版本低於 26（Tahoe），不支援液態玻璃，已自動使用標準材質。"),
 
+        ("输入用户 ID 或推文链接", "輸入用戶 ID 或推文連結"),
+        ("该推文没有媒体内容", "該推文沒有媒體內容"),
+        ("推文加载失败", "推文載入失敗"),
+
     ])
 
     // MARK: - English
@@ -362,6 +366,10 @@ enum L10n {
         ("不分配", "None"),
         ("液态玻璃外观", "Liquid Glass appearance"),
         ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "macOS below 26 (Tahoe) does not support Liquid Glass; standard materials are used."),
+
+        ("输入用户 ID 或推文链接", "User ID or tweet link"),
+        ("该推文没有媒体内容", "This tweet has no media"),
+        ("推文加载失败", "Failed to load tweet"),
 
     ])
 }

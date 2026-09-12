@@ -41,6 +41,7 @@ final class HomepageStore {
         userInfo = nil
         clearPostList()
         listOwnerScreenName = nil
+        tweetSearchMode = false
 
         loadUserTask?.cancel()
 
@@ -69,6 +70,61 @@ final class HomepageStore {
     func loadMediaNow() async {
         guard userInfo != nil else { return }
         await loadPostList()
+    }
+
+    // MARK: - 推文搜索（x.com/<user>/status/<id> 链接或纯数字 ID）
+
+    /// 当前展示模式：false = 用户时间线；true = 推文搜索结果（UI 不套用用户搜索布局）
+    var tweetSearchMode = false
+
+    /// 从输入中提取推文 ID：完整链接（含 ?query 后缀）、纯数字 ID
+    static func extractTweetID(from input: String) -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty, trimmed.allSatisfy({ $0.isNumber }), trimmed.count >= 10 {
+            return trimmed
+        }
+        if let range = trimmed.range(of: "status(?:es)?/([0-9]{10,})", options: .regularExpression) {
+            let seg = trimmed[range]
+            if let id = seg.split(separator: "/").last {
+                return String(id)
+            }
+        }
+        return nil
+    }
+
+    /// 搜索指定推文的媒体
+    func loadTweet(tweetID: String) async {
+        userGeneration += 1
+        let generation = userGeneration
+        tweetSearchMode = true
+        userInfo = nil
+        userInfoLoading = false
+        clearPostList()
+        listOwnerScreenName = nil
+
+        postListLoading = true
+        defer { postListLoading = false }
+
+        do {
+            let post = try await TwitterAPI.shared.getTweet(id: tweetID)
+            guard generation == userGeneration else { return }
+            if post.medias?.isEmpty ?? true {
+                lastError = L("该推文没有媒体内容")
+                postList = []
+            } else {
+                postList = [post]
+            }
+            AppLogger.info("推文媒体加载完成", category: "HOME", [
+                "tweetId": tweetID, "medias": "\(post.medias?.count ?? 0)",
+            ])
+        } catch {
+            if error is CancellationError { return }
+            guard generation == userGeneration else { return }
+            lastError = L("推文加载失败") + ": " + error.localizedDescription
+            AppLogger.warn("推文媒体加载失败", category: "HOME", [
+                "tweetId": tweetID, "error": error.localizedDescription,
+            ])
+        }
     }
 
     // MARK: - 媒体列表（上游 loadPostList / loadMorePostList：cursor 翻页）

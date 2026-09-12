@@ -16,7 +16,9 @@ struct HomeView: View {
                 .padding(.bottom, 8)
 
             if !appStore.cookieString.isEmpty {
-                if store.userInfoLoading {
+                if store.tweetSearchMode {
+                    tweetResultView
+                } else if store.userInfoLoading {
                     loadingView
                 } else if let user = store.userInfo {
                     userInfoCard(user)
@@ -50,25 +52,55 @@ struct HomeView: View {
         .frame(minWidth: 600)
     }
 
+    /// 搜索分流：推文链接/ID → 推文模式；否则按用户 screen_name
+    private func submitSearch(keyword: String? = nil) {
+        let text = (keyword ?? store.keyword).trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        if let tweetID = HomepageStore.extractTweetID(from: text) {
+            Task { await store.loadTweet(tweetID: tweetID) }
+        } else {
+            Task { await store.loadUser(screenName: text) }
+        }
+    }
+
+    /// 推文搜索结果（独立布局：单卡网格，无用户信息卡/下载配置）
+    private var tweetResultView: some View {
+        VStack(spacing: 0) {
+            if store.postListLoading {
+                loadingView
+            } else if let post = store.postList.first {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
+                        ForEach(Array((post.medias ?? []).enumerated()), id: \.element.id) { idx, media in
+                            MediaGridItem(post: post, media: media, index: idx + 1)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+            } else {
+                emptyState
+            }
+        }
+    }
+
     // MARK: - 搜索栏（上游 Space.Compact：输入 + 搜索按钮 + 历史下拉）
 
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField(L("请输入用户 ID，如：shiratamacaron"), text: Binding(
+            TextField(L("输入用户 ID 或推文链接"), text: Binding(
                 get: { store.keyword },
                 set: { store.keyword = $0 }
             ))
-            .onSubmit {
-                Task { await store.loadUser(screenName: store.keyword) }
-            }
+            .onSubmit { submitSearch() }
 
             if !appStore.searchHistory.isEmpty {
                 Menu {
                     ForEach(appStore.searchHistory, id: \.self) { history in
                         Button(history) {
-                            Task { await store.loadUser(screenName: history) }
+                            submitSearch(keyword: history)
                         }
                     }
                     Divider()
@@ -82,9 +114,7 @@ struct HomeView: View {
                 .frame(width: 28)
             }
 
-            Button {
-                Task { await store.loadUser(screenName: store.keyword) }
-            } label: {
+            Button { submitSearch() } label: {
                 if store.userInfoLoading {
                     ProgressView()
                         .controlSize(.small)
