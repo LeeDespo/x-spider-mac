@@ -3,7 +3,10 @@ import SwiftUI
 /// 上游 Homepage.tsx + PostListGridView.tsx + DownloadController.tsx 的移植。
 /// 关键修复：全部状态来自 HomepageStore（切换页面不丢失）。
 struct HomeView: View {
+    @State private var autoLoadAttempted = false
     @State private var store = HomepageStore.shared
+    // cursor 变化（成功翻页）后允许下一次自动加载
+    private var cursorKey: String { store.postListCursor ?? "" }
     @State private var appStore = AppStore.shared
     @State private var downloadStore = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
@@ -259,21 +262,28 @@ struct HomeView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
 
-                    // 无限滚动：滚动到底自动加载下一页（上游 InfiniteScroll 组件）
+                    // 无限滚动：固定高度的底部区，避免 loading↔按钮切换时视图抖动闪烁
                     HStack {
                         if store.postListLoading {
-                            ProgressView(L("加载中…"))
-                        } else if store.postListCursor != nil {
-                            Button(L("加载更多")) {
-                                Task { await store.loadMorePostList() }
-                            }
-                            .compatGlassButton()
-                            .onAppear {
-                                Task { await store.loadMorePostList() }
-                            }
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if store.postListCursor != nil, !autoLoadAttempted {
+                            Color.clear
+                                .frame(height: 1)
+                                .onAppear {
+                                    autoLoadAttempted = true
+                                    Task { await store.loadMorePostList() }
+                                }
+                        } else if !store.postList.isEmpty {
+                            Text(L("已加载全部"))
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
                     }
                     .frame(maxWidth: .infinity)
+                    .frame(height: 36)  // 固定高度：分支切换不改变布局
+                    .animation(nil, value: store.postListLoading)  // 分支切换不做动画，消除闪烁
+                    .onChange(of: cursorKey) { _, _ in autoLoadAttempted = false }
                     .padding(.bottom, 24)
                 }
             }

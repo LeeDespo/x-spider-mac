@@ -222,6 +222,9 @@ final class HomepageStore {
             ])
         } catch {
             guard generation == userGeneration else { return }
+            // 翻页失败：保留 cursor 但停止自动加载（onAppear 触发会在下次滚动重试），
+            // 不再无限循环请求
+            lastError = nil
             AppLogger.warn("媒体时间线翻页失败", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?", "error": error.localizedDescription,
             ])

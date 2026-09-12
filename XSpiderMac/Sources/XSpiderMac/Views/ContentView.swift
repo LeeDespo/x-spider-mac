@@ -10,16 +10,20 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $selection)
         } detail: {
-            // 切页过渡：原页面淡出后，新页面淡入
+            // 切页过渡：Cubic 回弹位移（系统设置页风格）——旧页缩小淡出，新页从 4% 缩放回弹淡入
             ZStack {
                 detailView(for: selection ?? .home)
                     .id(selection)
             }
             .background(.clear)
-            .animation(.easeOut(duration: 0.12), value: selection)
+            .animation(.spring(duration: 0.32, bounce: 0.18), value: selection)
             .transition(.asymmetric(
-                insertion: .opacity.animation(.easeIn(duration: 0.22).delay(0.10)),
-                removal: .opacity.animation(.easeOut(duration: 0.12))
+                insertion: .scale(scale: 0.96, anchor: .center)
+                    .combined(with: .opacity)
+                    .animation(.spring(duration: 0.32, bounce: 0.18)),
+                removal: .scale(scale: 0.98, anchor: .center)
+                    .combined(with: .opacity)
+                    .animation(.easeOut(duration: 0.14))
             ))
         }
         .overlay(alignment: .bottomTrailing) {

@@ -47,11 +47,15 @@ struct SettingsView: View {
             }
 
             // 按账号建子目录（替代原"目录模板"）
-            Toggle(L("按账号创建子文件夹"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.accountSubfolderEnabled },
                 set: { settingsStore.settings.download.accountSubfolder = $0 }
-            ))
-            .infoHint(L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("按账号创建子文件夹"))
+                    InfoHint(text: L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中。"))
+                }
+            }
 
             // 文件名模板（单一输入 + 实时预览）
             TextField(L("文件名模板"), text: Binding(
@@ -160,11 +164,15 @@ struct SettingsView: View {
 
     private var homeSection: some View {
         Section {
-            Toggle(L("自动加载媒体"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.autoLoadMediaEnabled },
                 set: { settingsStore.settings.download.autoLoadMedia = $0 }
-            ))
-            .infoHint(L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("自动加载媒体"))
+                    InfoHint(text: L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。"))
+                }
+            }
         } header: {
             Label(L("主页"), systemImage: "house")
         }
@@ -174,16 +182,24 @@ struct SettingsView: View {
 
     private var privacySection: some View {
         Section {
-            Toggle(L("自动删除下载历史记录"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.autoClearDownloadHistoryEnabled },
                 set: { settingsStore.settings.app.autoClearDownloadHistory = $0 }
-            ))
-            .infoHint(L("开启后，每次离开对应页面时自动清空下载历史记录。仅删除记录，不删除已下载的文件。"))
-            Toggle(L("自动删除搜索记录"), isOn: Binding(
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("自动删除下载历史记录"))
+                    InfoHint(text: L("开启后，每次离开对应页面时自动清空下载历史记录。仅删除记录，不删除已下载的文件。"))
+                }
+            }
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.autoClearSearchHistoryEnabled },
                 set: { settingsStore.settings.app.autoClearSearchHistory = $0 }
-            ))
-            .infoHint(L("开启后，每次离开对应页面时自动清空搜索记录。仅删除记录。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("自动删除搜索记录"))
+                    InfoHint(text: L("开启后，每次离开对应页面时自动清空搜索记录。仅删除记录。"))
+                }
+            }
         } header: {
             Label(L("隐私"), systemImage: "hand.raised")
         }
@@ -222,11 +238,15 @@ struct SettingsView: View {
 
     private var syncSection: some View {
         Section {
-            Toggle(L("打开应用时自动同步"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.autoSyncOnLaunchEnabled },
                 set: { settingsStore.settings.sync.autoSyncOnLaunch = $0 }
-            ))
-            .infoHint(L("启动应用后自动开始同步清单内所有用户的最新媒体，同「同步」页的判定规则跳过已下载。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("打开应用时自动同步"))
+                    InfoHint(text: L("启动应用后自动开始同步清单内所有用户的最新媒体，同「同步」页的判定规则跳过已下载。"))
+                }
+            }
         } header: {
             Label(L("同步"), systemImage: "arrow.triangle.2.circlepath")
         }
@@ -234,11 +254,15 @@ struct SettingsView: View {
 
     private var cacheSection: some View {
         Section {
-            Toggle(L("启用图片缓存"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.cachingEnabled },
                 set: { settingsStore.settings.app.cachingEnabled = $0 }
-            ))
-            .infoHint(L("缓存头像与媒体缩略图，重复加载时直接读本地，节省流量并加快刷新。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("启用图片缓存"))
+                    InfoHint(text: L("缓存头像与媒体缩略图，重复加载时直接读本地，节省流量并加快刷新。"))
+                }
+            }
 
             if settingsStore.settings.cachingEnabled {
                 ForEach(ImageCache.Category.allCases, id: \.self) { cat in
@@ -264,6 +288,7 @@ struct SettingsView: View {
                     cacheUsageText = L("已清理")
                 }
                 .buttonStyle(.glass)
+                InfoHint(text: L("删除 Cache/XSpiderMac/images 目录下全部缓存文件并重建索引。"))
                 Text(cacheUsageText ?? ByteCountFormatter.string(fromByteCount: ImageCache.shared.currentBytes(), countStyle: .file))
                     .font(.caption)
             }
@@ -401,11 +426,15 @@ struct SettingsView: View {
 
     private var powerSection: some View {
         Section {
-            Toggle(L("有下载任务时阻止系统休眠"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.app.preventSleepDuringDownload },
                 set: { settingsStore.settings.app.preventSleepDuringDownload = $0 }
-            ))
-            .infoHint(L("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("有下载任务时阻止系统休眠"))
+                    InfoHint(text: L("使用系统电源断言机制，仅在下载进行期间保持唤醒，不会修改系统设置。"))
+                }
+            }
         } header: {
             Label(L("电源"), systemImage: "zzz")
         }
@@ -415,11 +444,15 @@ struct SettingsView: View {
 
     private var logSection: some View {
         Section {
-            Toggle(L("开启日志记录"), isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { settingsStore.settings.app.writeLogs },
                 set: { settingsStore.settings.app.writeLogs = $0 }
-            ))
-            .infoHint(L("日志记录网络请求、下载任务、错误等信息，用于问题排查。"))
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("开启日志记录"))
+                    InfoHint(text: L("日志记录网络请求、下载任务、错误等信息，用于问题排查。"))
+                }
+            }
 
             LabeledContent(L("日志位置")) {
                 Text(AppLogger.currentLogFile.path)

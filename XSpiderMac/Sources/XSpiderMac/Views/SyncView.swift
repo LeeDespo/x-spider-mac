@@ -12,8 +12,12 @@ struct SyncView: View {
             if store.users.isEmpty && store.phase != .syncing {
                 emptyState
             } else {
+                // 蜂窝整体在页面内垂直水平居中，进度框紧贴蜂窝下方（同列居中），不沉底
+                Spacer(minLength: 0)
                 honeycomb
                 progressBar
+                    .frame(maxWidth: 520)
+                Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -61,6 +65,7 @@ struct SyncView: View {
             }
             .padding(28)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 320, alignment: .center)  // 内容垂直居中：少量用户时不顶到顶部
         }
         .scrollIndicators(.hidden)
     }
@@ -294,7 +299,7 @@ struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
+        let maxWidth = proposal.width ?? 360
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
@@ -306,7 +311,7 @@ struct FlowLayout: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
-        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
+        return CGSize(width: maxWidth, height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
