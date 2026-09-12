@@ -18,12 +18,10 @@ struct ContentView: View {
                 }
         }
         .background {
-            // 应用背景层：边栏同款模糊(折射+适度模糊),滑块控制浓度,两种玻璃模式统一
-            LiquidGlassBackground(
-                blur: Double(settingsStore.settings.glassBlur),
-                glassEnabled: settingsStore.settings.liquidGlassEnabled
-            )
-            .ignoresSafeArea()
+            // 应用背景层：与边栏同一条渲染管线（NSGlassEffectView + sidebar 材质），
+            // 滑块控制材质浓度（100 = 与边栏一致），两种玻璃模式统一
+            SidebarStyleBackground(level: settingsStore.settings.glassBlur)
+                .ignoresSafeArea()
         }
         .transparentWindowBackground()
         .task {
