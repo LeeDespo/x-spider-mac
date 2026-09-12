@@ -7,7 +7,8 @@ import AppKit
 ///   不会被材质层挡住折射（之前拉满时材质 alpha=1 把折射全盖住，观感"发灰浑浊"）
 /// - 材质层独立于玻璃放在后面：滑块控制**材质透明度**，第二低档（约 t=0.12-0.2）即边栏观感；
 ///   拉满 = 材质全显（最不透但玻璃仍在最上层折射）
-/// - 圆角浮动面板 → 有边缘，折射才能发生
+/// - 全出血铺满整窗（无留边）→ 滚动条轨道、底缘等区域不再露出透明窗口底；
+///   玻璃折射覆盖整个窗口表面
 /// - 顶栏区域全覆盖（面板延伸到 titlebar 底下），顶栏随滑块变化
 struct SidebarStyleBackground: NSViewRepresentable {
     /// 0–100
@@ -36,7 +37,7 @@ struct SidebarStyleBackground: NSViewRepresentable {
         // 玻璃容器（折射 + 玻璃质感）——最上层，contentView 为空只对背后取景
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: container.bounds)
-            glass.cornerRadius = 16
+            glass.cornerRadius = 0
             glass.style = .regular
             glass.autoresizingMask = [.width, .height]
             container.addSubview(effect)
@@ -44,7 +45,7 @@ struct SidebarStyleBackground: NSViewRepresentable {
             context.coordinator.glassView = glass
         } else {
             effect.wantsLayer = true
-            effect.layer?.cornerRadius = 16
+            effect.layer?.cornerRadius = 0
             effect.layer?.masksToBounds = true
             container.addSubview(effect)
         }
