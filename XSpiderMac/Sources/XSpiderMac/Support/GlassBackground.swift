@@ -53,17 +53,8 @@ struct SidebarStyleBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        let t = Double(min(100, max(0, level))) / 100
-        let effect = context.coordinator.effectView
-        if #available(macOS 26.0, *) {
-            let glass = context.coordinator.glassView
-            glass?.isHidden = level == 0
-            effect?.isHidden = level == 0
-            // 滑块只调材质浓度；玻璃恒定在最上层折射
-            effect?.alphaValue = CGFloat(t)
-        } else {
-            effect?.isHidden = level == 0
-            effect?.alphaValue = CGFloat(t)
-        }
+        // 最低档 20（0 档已移除）：材质浓度下限，玻璃折射层恒定显示
+        let t = Double(min(100, max(20, level))) / 100
+        context.coordinator.effectView?.alphaValue = CGFloat(t)
     }
 }

@@ -405,7 +405,7 @@ enum L10n {
         ("已清理", "Cleared"),
         ("缓存", "Cache"),
         ("模糊度", "Blur"),
-        ("调整应用背景的模糊强度：拉到最低为完全透明，约 20% 时与边栏观感最接近，拉满则最不透。", "Adjust the background blur intensity: zero for fully transparent, around 20% matches the sidebar, maximum is the least transparent."),
+        ("调整应用背景的模糊强度：约 20%（最低档）时与边栏观感最接近，拉满则最不透。", "Adjust the background blur intensity: the minimum step (around 20%) matches the sidebar, maximum is the least transparent."),
         ("该媒体已下载过", "This media has already been downloaded"),
         ("已下载", "Downloaded"),
 

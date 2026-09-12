@@ -119,7 +119,7 @@ struct Settings: Codable, Sendable {
     /// 缓存上限 MB（默认 200，钳制 50–500）
     var cacheLimitMB: Int { min(500, max(50, app.cacheLimitMB ?? 200)) }
     /// 玻璃模糊强度（0–100，默认 60）
-    var glassBlur: Int { min(100, max(0, app.glassBlur ?? 60)) }
+    var glassBlur: Int { min(100, max(20, app.glassBlur ?? 60)) }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

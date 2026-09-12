@@ -312,9 +312,9 @@ struct SettingsView: View {
                     Slider(value: Binding(
                         get: { Double(settingsStore.settings.glassBlur) },
                         set: { settingsStore.settings.app.glassBlur = Int($0) }
-                    ), in: 0...100, step: 5)
+                    ), in: 20...100, step: 5)
                 }
-                Text(L("调整应用背景的模糊强度：拉到最低为完全透明，约 20% 时与边栏观感最接近，拉满则最不透。"))
+                Text(L("调整应用背景的模糊强度：约 20%（最低档）时与边栏观感最接近，拉满则最不透。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
