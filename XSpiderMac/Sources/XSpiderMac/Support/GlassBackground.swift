@@ -2,11 +2,13 @@ import SwiftUI
 import AppKit
 
 /// 内容区背景：与边栏同一条液态玻璃渲染管线（NSGlassEffectView 包 sidebar 材质）。
-/// 关键差异修正：
-/// - 只垫在内容区（detail），边栏底下不放，避免与边栏自身材质叠加发浑发灰
-/// - isEmphasized 关掉（那是 sidebar 强调灰调的来源之一）
-/// - 圆角浮动面板 → 有边缘，NSGlassEffectView 的折射扭曲才能显现
-/// 滑块控制材质浓度：100 = 与边栏观感一致；0 = 完全无层（窗口透明）。
+/// 要点（对照边栏的真实观感调校）：
+/// - 玻璃容器 style = .regular（折射扭曲的来源），contentView 为空 → 玻璃直接对背景取景，
+///   不会被材质层挡住折射（之前拉满时材质 alpha=1 把折射全盖住，观感"发灰浑浊"）
+/// - 材质层独立于玻璃放在后面：滑块控制**材质透明度**，第二低档（约 t=0.12-0.2）即边栏观感；
+///   拉满 = 材质全显（最不透但玻璃仍在最上层折射）
+/// - 圆角浮动面板 → 有边缘，折射才能发生
+/// - 顶栏区域全覆盖（面板延伸到 titlebar 底下），顶栏随滑块变化
 struct SidebarStyleBackground: NSViewRepresentable {
     /// 0–100
     var level: Int
@@ -23,7 +25,7 @@ struct SidebarStyleBackground: NSViewRepresentable {
         container.wantsLayer = true
         container.layer?.masksToBounds = false
 
-        // 边栏同款材质（模糊 + vibrancy 着色），关掉 emphasized 避免发灰
+        // 材质层（vibrancy 着色，控制浓度）——玻璃后面
         let effect = NSVisualEffectView(frame: container.bounds)
         effect.material = .sidebar
         effect.blendingMode = .behindWindow
@@ -31,12 +33,13 @@ struct SidebarStyleBackground: NSViewRepresentable {
         effect.isEmphasized = false
         effect.autoresizingMask = [.width, .height]
 
+        // 玻璃容器（折射 + 玻璃质感）——最上层，contentView 为空只对背后取景
         if #available(macOS 26.0, *) {
-            // 液态玻璃容器：边缘折射扭曲的来源（与 NavigationSplitView 边栏一致）
             let glass = NSGlassEffectView(frame: container.bounds)
             glass.cornerRadius = 16
-            glass.contentView = effect
+            glass.style = .regular
             glass.autoresizingMask = [.width, .height]
+            container.addSubview(effect)
             container.addSubview(glass)
             context.coordinator.glassView = glass
         } else {
@@ -55,9 +58,11 @@ struct SidebarStyleBackground: NSViewRepresentable {
         if #available(macOS 26.0, *) {
             let glass = context.coordinator.glassView
             glass?.isHidden = level == 0
-            // 材质浓度随滑块；玻璃容器的折射恒定
+            effect?.isHidden = level == 0
+            // 滑块只调材质浓度；玻璃恒定在最上层折射
             effect?.alphaValue = CGFloat(t)
         } else {
+            effect?.isHidden = level == 0
             effect?.alphaValue = CGFloat(t)
         }
     }

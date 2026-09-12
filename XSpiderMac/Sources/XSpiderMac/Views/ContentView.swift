@@ -21,11 +21,10 @@ struct ContentView: View {
             // 内容区专用背景层（不垫在边栏下面，避免与边栏材质叠加导致更浑）：
             // NSGlassEffectView(sidebar 材质) 浮动面板，圆角+留边 → 有边缘才有折射
             SidebarStyleBackground(level: settingsStore.settings.glassBlur)
-                .padding(.top, 8)
                 .padding(.leading, 6)
                 .padding(.trailing, 8)
                 .padding(.bottom, 8)
-                .ignoresSafeArea(.container, edges: .bottom)
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
         }
         .transparentWindowBackground()
         .task {
