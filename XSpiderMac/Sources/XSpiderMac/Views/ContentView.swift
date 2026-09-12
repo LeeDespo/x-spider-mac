@@ -18,7 +18,7 @@ struct ContentView: View {
                 }
         }
         .background {
-            // 应用背景层：blur 滑块全模式统一控制。0 = 完全透明
+            // 应用背景层：blur 滑块全模式统一控制。0 = 完全透明（NSWindow 透明底 → 透到桌面）
             if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
                 LiquidGlassBackground(blur: Double(settingsStore.settings.glassBlur) / 100)
                     .ignoresSafeArea()
@@ -27,6 +27,7 @@ struct ContentView: View {
                     .ignoresSafeArea()
             }
         }
+        .transparentWindowBackground()
         .task {
             // 上游 App.tsx useMount：恢复会话（有 cookie 则静默重新验证）
             await appStore.restoreSession()

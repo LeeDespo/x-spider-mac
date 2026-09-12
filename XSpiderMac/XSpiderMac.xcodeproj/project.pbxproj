@@ -12,6 +12,7 @@
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
 		1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */; };
+		1C52D12FA380F2CEC29BB661 /* WindowConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491496E19FE861DE65FB5614 /* WindowConfig.swift */; };
 		1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247792FC3A5153BA109AB30B /* Aria2Engine.swift */; };
 		28FD816424E84727DEABCCA7 /* GlassCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A721BC7BC346461F850A948 /* GlassCompat.swift */; };
 		2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */; };
@@ -76,6 +77,7 @@
 		2B628263D9561601F809C4F8 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		2C67A4155E3A3ADB82010417 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
+		491496E19FE861DE65FB5614 /* WindowConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowConfig.swift; sourceTree = "<group>"; };
 		49F384578208B4323FB9E377 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		583B467661B41B8F17D31BDF /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweetDetailUserTests.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				CC4B91779185027CBBA49B18 /* L10n.swift */,
 				E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */,
 				A2C71F4FE1A0AD871AA29345 /* String+Path.swift */,
+				491496E19FE861DE65FB5614 /* WindowConfig.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -401,6 +404,7 @@
 				C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */,
 				75165C853F73A66A6AD0B6DF /* TwitterPost.swift in Sources */,
 				94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */,
+				1C52D12FA380F2CEC29BB661 /* WindowConfig.swift in Sources */,
 				CE63FF9703F273846ED5CFEA /* XClientTransaction.swift in Sources */,
 				7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */,
 			);

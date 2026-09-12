@@ -300,7 +300,7 @@ struct SettingsView: View {
             ))
             .disabled(!GlassCompat.supportsLiquidGlass)
 
-            if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
+            if GlassCompat.supportsLiquidGlass {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(L("模糊度"))
