@@ -26,6 +26,14 @@ enum SyncPhase: Equatable, Sendable {
         case .interrupted: return L("意外中断")
         }
     }
+
+    var buttonHint: String {
+        switch self {
+        case .idle, .interrupted: return L("开始同步")
+        case .syncing: return L("暂停")
+        case .done: return L("再次同步")
+        }
+    }
 }
 
 @Observable

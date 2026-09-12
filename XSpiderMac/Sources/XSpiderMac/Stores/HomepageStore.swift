@@ -27,6 +27,8 @@ final class HomepageStore {
     private var userGeneration = 0
     /// 当前列表归属的 screen_name（视图判断网格属于哪个用户）
     private(set) var listOwnerScreenName: String?
+    /// 连续空页计数（翻页去重后无新内容），≥2 判定到底
+    private var consecutiveEmptyPages = 0
 
     // MARK: - 用户加载（上游 loadUser：abort 旧请求 → getUser → 成功后加载媒体）
 
@@ -207,9 +209,11 @@ final class HomepageStore {
             // 按推文 ID 去重：Twitter 偶发返回重复页；重复内容会导致无限加载
             let existing = Set(postList.map(\.id))
             let fresh = posts.filter { !existing.contains($0.id) }
-            if posts.isEmpty || (fresh.isEmpty && nextCursor == cursor) {
-                // 服务端没给新内容也不给新 cursor → 到底了，停止翻页
+            if fresh.isEmpty { consecutiveEmptyPages += 1 } else { consecutiveEmptyPages = 0 }
+            // 连续 2 页无新内容（无论 cursor 是否变化）→ 判定到底，停止翻页
+            if posts.isEmpty || consecutiveEmptyPages >= 2 {
                 postListCursor = nil
+                consecutiveEmptyPages = 0
                 AppLogger.info("媒体时间线已到底", category: "HOME", ["screenName": userInfo?.screenName ?? "?"])
                 return
             }
@@ -234,6 +238,7 @@ final class HomepageStore {
     func clearPostList() {
         postList = []
         postListCursor = nil
+        consecutiveEmptyPages = 0
     }
 
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）

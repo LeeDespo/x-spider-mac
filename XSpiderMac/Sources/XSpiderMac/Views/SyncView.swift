@@ -1,22 +1,25 @@
 import SwiftUI
 
-/// 同步页：watchOS 蜂窝头像布局（FlowLayout 环绕 + 外围淡化），
-/// 中心加号添加用户；底部进度框 + 状态机圆形按钮。
+/// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout：中心加号 + 每环 6k 个），
+/// 外围淡化；进度框（下载提示框同款 UI）+ 外侧小号状态机按钮。
 struct SyncView: View {
     @State private var store = SyncStore.shared
     @State private var showAddSheet = false
     @State private var input = ""
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 14) {
             if store.users.isEmpty && store.phase != .syncing {
                 emptyState
             } else {
-                // 蜂窝整体在页面内垂直水平居中，进度框紧贴蜂窝下方（同列居中），不沉底
                 Spacer(minLength: 0)
                 honeycomb
-                progressBar
-                    .frame(maxWidth: 520)
+                // 进度框 + 外侧小按钮（贴框右侧）
+                HStack(alignment: .center, spacing: 10) {
+                    progressBar
+                    primaryButton
+                }
+                .frame(maxWidth: 560)
                 Spacer(minLength: 0)
             }
         }
@@ -24,7 +27,6 @@ struct SyncView: View {
         .navigationTitle(L("同步"))
         .sheet(isPresented: $showAddSheet) { addSheet }
         .task {
-            // 打开应用自动同步（设置开启时）
             store.syncOnLaunchIfNeeded()
         }
     }
@@ -33,16 +35,7 @@ struct SyncView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Button {
-                showAddSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 84, height: 84)
-                    .background(.quinary, in: Circle())
-            }
-            .buttonStyle(.plain)
+            primaryButton
             Text(L("暂无可同步的用户"))
                 .foregroundStyle(.secondary)
             Text(L("先在主页浏览或下载过用户媒体，再回到这里同步。"))
@@ -52,22 +45,28 @@ struct SyncView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - 蜂窝头像
+    // MARK: - 蜂窝头像（六边形环展开）
 
     private var honeycomb: some View {
-        ScrollView {
-            FlowLayout(spacing: 18) {
+        ScrollView([.horizontal, .vertical]) {
+            HoneycombLayout(cellSize: 96, ringGap: 10) {
+                // 中心 = 加号
+                addCenterButton
+                // 外圈 = 用户（按环展开顺序）
                 ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
                     honeycombCell(user, index: idx)
                 }
-                // 中心加号按钮
-                addCenterButton
             }
-            .padding(28)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 320, alignment: .center)  // 内容垂直居中：少量用户时不顶到顶部
+            .frame(width: honeycombDiameter, height: honeycombDiameter, alignment: .center)
+            .padding(40)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// 蜂窝所需直径：环数 = ceil((n) / 6)；直径 ≈ (2*环数+1) * 环间距
+    private var honeycombDiameter: CGFloat {
+        let rings = Double((store.users.count + 5) / 6)
+        return CGFloat((2 * rings + 1)) * 110 + 80
     }
 
     @ViewBuilder
@@ -79,14 +78,13 @@ struct SyncView: View {
         }
     }
 
-    /// 外围淡化：按离中心的索引距离衰减（20+ 用户时外圈 0.35 起）
+    /// 外围淡化：环号越深越透明
     private func opacity(for index: Int) -> Double {
-        let total = store.users.count
-        guard total > 12 else { return 1.0 }
-        let distance = abs(index - total / 2)
-        let maxD = Double(max(total - total / 2, 1))
-        let t = Double(distance) / maxD
-        return 1.0 - t * 0.55
+        let ring = Double((index + 5) / 6)  // 第几环（0 起）
+        let maxRing = Double((store.users.count + 5) / 6)
+        guard maxRing > 1 else { return 1.0 }
+        let t = ring / maxRing
+        return 1.0 - t * 0.5
     }
 
     private var addCenterButton: some View {
@@ -94,44 +92,51 @@ struct SyncView: View {
             showAddSheet = true
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 28, weight: .medium))
+                .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 68, height: 68)
+                .frame(width: 64, height: 64)
                 .background(.quinary, in: Circle())
+                .overlay {
+                    Circle().strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1.5)
+                }
         }
         .buttonStyle(.plain)
         .help(L("添加同步用户"))
     }
 
-    // MARK: - 进度框
+    // MARK: - 进度框（下载提示框同款 UI）
 
     private var progressBar: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(phaseLabel)
-                    .font(.callout.weight(.medium))
-                if store.phase == .syncing {
-                    let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
-                    ProgressView(value: progress)
-                    Text(currentUserText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if store.phase == .done {
-                    Text(summaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                    .font(.caption)
+                Spacer()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            primaryButton
+            if store.phase == .syncing {
+                let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+                Text(currentUserText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if store.phase == .done {
+                Text(summaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(16)
-        .liquidGlass(cornerRadius: 16)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .liquidGlass(interactive: true, cornerRadius: 20)
     }
 
     private var phaseLabel: String {
@@ -152,7 +157,7 @@ struct SyncView: View {
         store.userMessages.values.joined(separator: " · ")
     }
 
-    // MARK: - 状态机圆形按钮（无文字，图标随状态变化 + 动画）
+    // MARK: - 状态机圆形按钮（小号，无文字）
 
     @ViewBuilder
     private var primaryButton: some View {
@@ -168,20 +173,19 @@ struct SyncView: View {
             withAnimation(.spring(duration: 0.35)) { store.primaryAction() }
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 52, height: 52)
+                .frame(width: 40, height: 40)
                 .background(.quinary, in: Circle())
                 .overlay {
-                    Circle()
-                        .strokeBorder(color.opacity(0.35), lineWidth: 2)
+                    Circle().strokeBorder(color.opacity(0.35), lineWidth: 1.5)
                 }
-                // syncing 时旋转动画
                 .rotationEffect(.degrees(store.phase == .syncing ? 360 : 0))
                 .animation(store.phase == .syncing ? .linear(duration: 1.6).repeatForever(autoreverses: false) : .spring(duration: 0.35), value: store.phase)
         }
         .buttonStyle(.plain)
         .disabled(store.users.isEmpty && store.phase == .idle)
+        .help(store.phase.buttonHint)
     }
 
     // MARK: - 添加弹窗
@@ -235,9 +239,55 @@ struct SyncView: View {
     @State private var appStore = AppStore.shared
 }
 
-// MARK: - FlowLayout（环绕布局，watchOS 蜂窝用）
+// MARK: - HoneycombLayout（六边形环展开：中心 + 每环 6k 个，参考 redblobgames rings 公式）
 
-/// 蜂窝单元：头像 + 圆环 + 悬停删除按钮
+/// 环形蜂窝布局：子视图 0 = 中心，其余按六边形环展开（环 k 有 6k 个位置，
+/// 每环半径 = k * step）。角度微交错让相邻环错位，形成蜂窝视觉密度。
+struct HoneycombLayout: Layout {
+    var cellSize: CGFloat = 96
+    var ringGap: CGFloat = 10
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rings = Double(max(0, subviews.count - 1)) / 6.0
+        let count = Int(ceil(rings))
+        let diameter = CGFloat(2 * count + 1) * (cellSize / 2 + ringGap) + cellSize
+        return CGSize(width: diameter, height: diameter)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let step = cellSize / 2 + ringGap
+
+        for (idx, subview) in subviews.enumerated() {
+            let pos: CGPoint
+            if idx == 0 {
+                pos = center
+            } else {
+                // 第 idx 个子视图 → (ring, ringIndex)：环 k 容纳 6k 个
+                let ring = Int(ceil(Double(idx) / 6.0))
+                let indexInRing = idx - (6 * (ring - 1) + 1)  // 环内 0-based
+                let capacity = 6 * ring
+                // 六边形环：角度均匀 + 半环交错偏移，模拟蜂窝错位嵌套
+                let angle = (Double(indexInRing) / Double(capacity)) * 2 * .pi
+                    + (Double(ring) * .pi / 6)  // 每环错开 30°
+                let radius = Double(ring) * step
+                pos = CGPoint(
+                    x: center.x + CGFloat(cos(angle)) * radius,
+                    y: center.y + CGFloat(sin(angle)) * radius
+                )
+            }
+            let size = subview.sizeThatFits(.unspecified)
+            subview.place(
+                at: CGPoint(x: pos.x - size.width / 2, y: pos.y - size.height / 2),
+                anchor: .topLeading,
+                proposal: .unspecified
+            )
+        }
+    }
+}
+
+// MARK: - 蜂窝单元
+
 private struct HoneycombCell: View {
     let user: SyncUser
     let isActive: Bool
@@ -291,63 +341,6 @@ private struct HoneycombCell: View {
         if isActive { return Color.accentColor }
         if isDone { return .green }
         return Color.clear
-    }
-}
-
-/// 自适应流式布局：子视图按行排列，放不下换行（居中对齐）
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 360
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return CGSize(width: maxWidth, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        var rowViews: [(Int, CGSize)] = []
-        var rowStart = 0
-
-        func flushRow() {
-            guard !rowViews.isEmpty else { return }
-            let totalWidth = rowViews.reduce(0) { $0 + $1.1.width } + CGFloat(rowViews.count - 1) * spacing
-            var cx = bounds.minX + (bounds.width - totalWidth) / 2  // 居中
-            for (idx, size) in rowViews {
-                let sub = subviews[idx]
-                let vSize = sub.sizeThatFits(.unspecified)
-                sub.place(at: CGPoint(x: cx, y: y + (rowHeight - vSize.height) / 2),
-                          proposal: ProposedViewSize(size))
-                cx += size.width + spacing
-            }
-            y += rowHeight + spacing
-            rowViews.removeAll()
-            rowStart = 0
-        }
-
-        for (idx, view) in subviews.enumerated() {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX, !rowViews.isEmpty {
-                flushRow()
-                x = bounds.minX
-            }
-            rowViews.append((idx, size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        flushRow()
     }
 }
 
