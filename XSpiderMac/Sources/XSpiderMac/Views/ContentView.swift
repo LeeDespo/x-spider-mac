@@ -17,11 +17,15 @@ struct ContentView: View {
                         .padding(20)
                 }
         }
-        .background {
-            // 应用背景层：与边栏同一条渲染管线（NSGlassEffectView + sidebar 材质），
-            // 滑块控制材质浓度（100 = 与边栏一致），两种玻璃模式统一
+        .background(alignment: .topLeading) {
+            // 内容区专用背景层（不垫在边栏下面，避免与边栏材质叠加导致更浑）：
+            // NSGlassEffectView(sidebar 材质) 浮动面板，圆角+留边 → 有边缘才有折射
             SidebarStyleBackground(level: settingsStore.settings.glassBlur)
-                .ignoresSafeArea()
+                .padding(.top, 8)
+                .padding(.leading, 6)
+                .padding(.trailing, 8)
+                .padding(.bottom, 8)
+                .ignoresSafeArea(.container, edges: .bottom)
         }
         .transparentWindowBackground()
         .task {
