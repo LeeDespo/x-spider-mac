@@ -10,8 +10,17 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $selection)
         } detail: {
-            detailView(for: selection ?? .home)
-                .background(.clear)
+            // 切页过渡：原页面淡出后，新页面淡入
+            ZStack {
+                detailView(for: selection ?? .home)
+                    .id(selection)
+            }
+            .background(.clear)
+            .animation(.easeOut(duration: 0.12), value: selection)
+            .transition(.asymmetric(
+                insertion: .opacity.animation(.easeIn(duration: 0.22).delay(0.10)),
+                removal: .opacity.animation(.easeOut(duration: 0.12))
+            ))
         }
         .overlay(alignment: .bottomTrailing) {
             // 浮条挂在 NavigationSplitView 层级：切页时 detail 内容重建，

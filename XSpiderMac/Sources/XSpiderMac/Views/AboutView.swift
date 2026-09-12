@@ -25,16 +25,11 @@ struct AboutView: View {
             Text(L("macOS 原生版 X 媒体下载器"))
                 .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 linkRow(L("开发者"), label: "LeeDespo", url: developerURL)
                 linkRow(L("项目地址"), label: "LeeDespo/x-spider-mac", url: projectURL)
                 linkRow(L("开源协议"), label: "GPL-3.0-only", url: licenseURL)
-                Divider()
-                // 鸣谢：X 爬虫核心方案来自上游项目
-                linkRow(L("鸣谢") + " · " + L("上游项目"), label: "MiningCattiva/x-spider", url: upstreamURL)
-                Text(L("X 的媒体解析与接口方案基于上游 x-spider（Electron 版）移植，感谢原作者。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                linkRow(L("上游项目"), label: "MiningCattiva/x-spider", url: upstreamURL)
             }
             .font(.callout)
             .padding(20)
