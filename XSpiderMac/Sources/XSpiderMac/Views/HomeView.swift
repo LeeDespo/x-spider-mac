@@ -405,11 +405,16 @@ struct MediaGridItem: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
-                    // 液态玻璃关闭时用实材质底,否则 bordered 按钮在半透明黑上完全透明
                     if GlassCompat.supportsLiquidGlass && SettingsStore.shared.settings.liquidGlassEnabled {
                         Rectangle().fill(.black.opacity(0.4))
                     } else {
-                        Rectangle().fill(.regularMaterial)
+                        // 玻璃关时跟随模糊度滑块(0 = 完全透明时用实底黑保证按钮可见)
+                        let blur = SettingsStore.shared.settings.glassBlur
+                        if blur < 5 {
+                            Rectangle().fill(.black.opacity(0.75))
+                        } else {
+                            Rectangle().fill(.regularMaterial)
+                        }
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))

@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLookThumbnailing
 
 /// 上游 DownloadManagement.tsx 的移植：三 Tab（下载中/已完成/失败）+ 任务创建进度 + 任务列表。
 /// 新增：按推特用户名筛选历史（头像小窗）、显示全部、删除当前视图记录。
@@ -177,6 +178,7 @@ struct DownloadsView: View {
                     DownloadTaskRow(task: task)
                 }
                 .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -392,22 +394,54 @@ struct DownloadTaskRow: View {
     }
 
     private func loadThumbnail() async {
-        // 已完成且有本地文件：直接读本地（不发网络请求）
+        // 已完成且有本地文件：优先本地，不发网络请求
         if task.status == .complete {
             let localPath = (task.dir as NSString).appendingPathComponent(task.fileName)
-            if let img = NSImage(contentsOfFile: localPath) {
-                thumbnail = img
-                return
+            if task.media.type == .photo {
+                if let img = NSImage(contentsOfFile: localPath) {
+                    thumbnail = img
+                    return
+                }
+            } else {
+                // 视频/GIF：NSImage 解码不了 mp4，用 QuickLook 生成缩略图
+                if let img = await Self.quickLookThumbnail(path: localPath) {
+                    thumbnail = img
+                    return
+                }
+                // QuickLook 失败（如文件异常）→ 落到下面的网络封面
             }
-            // 视频没有系统缩略图时落回占位图（不联网）
-            if task.media.type != .photo { return }
         }
-        // 未完成或本地文件缺失：网络取缩略图
+        // 网络封面（media.url 是视频封面图 / 图片原图）
         guard let urlString = task.media.url, let url = URL(string: urlString) else { return }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            thumbnail = NSImage(data: data)
-        } catch {}
+            let (data, resp) = try await URLSession.shared.data(from: url)
+            if let img = NSImage(data: data) {
+                thumbnail = img
+            } else {
+                AppLogger.warn("下载列表缩略图解码失败", category: "DL", [
+                    "file": task.fileName, "status": "\((resp as? HTTPURLResponse)?.statusCode ?? 0)",
+                ])
+            }
+        } catch {
+            AppLogger.warn("下载列表缩略图加载失败", category: "DL", [
+                "file": task.fileName, "error": error.localizedDescription,
+            ])
+        }
+    }
+
+    /// QuickLook 生成视频/文档缩略图
+    private static func quickLookThumbnail(path: String) async -> NSImage? {
+        await withCheckedContinuation { cont in
+            let request = QLThumbnailGenerator.Request(
+                fileAt: URL(fileURLWithPath: path),
+                size: CGSize(width: 96, height: 96),
+                scale: 2,
+                representationTypes: .thumbnail
+            )
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+                cont.resume(returning: rep?.nsImage)
+            }
+        }
     }
 
     private func openFile(_ task: DownloadTask) {

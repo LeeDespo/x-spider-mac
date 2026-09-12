@@ -21,6 +21,8 @@ struct SettingsView: View {
             dataSection
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(.clear)
         .navigationTitle(L("设置"))
         .frame(minWidth: 620)
     }
@@ -301,7 +303,7 @@ struct SettingsView: View {
             if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(L("液态玻璃模糊度"))
+                        Text(L("模糊度"))
                         Spacer()
                         Text("\(settingsStore.settings.glassBlur)%")
                             .foregroundStyle(.secondary)

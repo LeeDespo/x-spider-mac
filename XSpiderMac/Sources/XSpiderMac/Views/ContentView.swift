@@ -18,9 +18,12 @@ struct ContentView: View {
                 }
         }
         .background {
-            // 应用背景玻璃层：玻璃开启时用官方 glassEffect + blur 滑块调节；否则纯色
+            // 应用背景层：blur 滑块全模式统一控制。0 = 完全透明
             if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
                 LiquidGlassBackground(blur: Double(settingsStore.settings.glassBlur) / 100)
+                    .ignoresSafeArea()
+            } else {
+                AdaptiveMaterialBackground(level: settingsStore.settings.glassBlur)
                     .ignoresSafeArea()
             }
         }
@@ -53,7 +56,7 @@ struct ContentView: View {
 }
 
 
-/// 应用背景玻璃层（macOS 26+）：glassEffect 的容器 + blur 滑块映射的透明度
+/// 应用背景玻璃层（macOS 26+）：glassEffect 容器 + blur 滑块映射的透明度（0 = 完全透明）
 struct LiquidGlassBackground: View {
     var blur: Double
 
@@ -62,9 +65,39 @@ struct LiquidGlassBackground: View {
             Rectangle()
                 .fill(.clear)
                 .glassEffect(.regular, in: .rect)
-                .opacity(0.25 + blur * 0.5)
+                .opacity(blur * 0.8)
         } else {
             EmptyView()
+        }
+    }
+}
+
+/// 材质背景（玻璃关闭/低版本系统）：滑块连续映射材质透明度，0 = 完全透明
+struct AdaptiveMaterialBackground: View {
+    /// 0–100
+    var level: Int
+
+    var body: some View {
+        let t = Double(min(100, max(0, level))) / 100
+        Rectangle()
+            .fill(.clear)
+            .background {
+                // 材质本身不含透明度调节，用白色/黑色叠加近似"透明度"的视觉
+                MaterialRect(t: t)
+            }
+            .opacity(t == 0 ? 0 : 0.35 + t * 0.65)
+    }
+}
+
+private struct MaterialRect: View {
+    var t: Double
+    var body: some View {
+        if t < 0.34 {
+            Rectangle().fill(.ultraThinMaterial)
+        } else if t < 0.67 {
+            Rectangle().fill(.regularMaterial)
+        } else {
+            Rectangle().fill(.thickMaterial)
         }
     }
 }
