@@ -392,6 +392,17 @@ struct DownloadTaskRow: View {
     }
 
     private func loadThumbnail() async {
+        // 已完成且有本地文件：直接读本地（不发网络请求）
+        if task.status == .complete {
+            let localPath = (task.dir as NSString).appendingPathComponent(task.fileName)
+            if let img = NSImage(contentsOfFile: localPath) {
+                thumbnail = img
+                return
+            }
+            // 视频没有系统缩略图时落回占位图（不联网）
+            if task.media.type != .photo { return }
+        }
+        // 未完成或本地文件缺失：网络取缩略图
         guard let urlString = task.media.url, let url = URL(string: urlString) else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)

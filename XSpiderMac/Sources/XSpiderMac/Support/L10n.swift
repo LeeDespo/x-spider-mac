@@ -199,6 +199,8 @@ enum L10n {
         ("该推文没有媒体内容", "該推文沒有媒體內容"),
         ("推文加载失败", "推文載入失敗"),
 
+        ("正在加载推文…", "正在載入推文…"),
+
     ])
 
     // MARK: - English
@@ -370,6 +372,8 @@ enum L10n {
         ("输入用户 ID 或推文链接", "User ID or tweet link"),
         ("该推文没有媒体内容", "This tweet has no media"),
         ("推文加载失败", "Failed to load tweet"),
+
+        ("正在加载推文…", "Loading tweet…"),
 
     ])
 }

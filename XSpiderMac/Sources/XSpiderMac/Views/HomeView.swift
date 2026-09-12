@@ -285,7 +285,7 @@ struct HomeView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.large)
-            Text(L("正在加载用户…"))
+            Text(store.tweetSearchMode ? L("正在加载推文…") : L("正在加载用户…"))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -393,7 +393,14 @@ struct MediaGridItem: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black.opacity(0.4))
+                .background {
+                    // 液态玻璃关闭时用实材质底,否则 bordered 按钮在半透明黑上完全透明
+                    if GlassCompat.supportsLiquidGlass && SettingsStore.shared.settings.liquidGlassEnabled {
+                        Rectangle().fill(.black.opacity(0.4))
+                    } else {
+                        Rectangle().fill(.regularMaterial)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
