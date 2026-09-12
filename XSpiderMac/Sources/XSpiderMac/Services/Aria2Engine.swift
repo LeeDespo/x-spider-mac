@@ -94,7 +94,9 @@ final class Aria2Engine: @unchecked Sendable {
 
         try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
         let destPath = (destDir as NSString).appendingPathComponent(fileName)
+        // 同名任务重复启动时必须连控制文件一起清掉，否则 --continue 读到旧控制文件产生"假完成"
         try? FileManager.default.removeItem(atPath: destPath)
+        try? FileManager.default.removeItem(atPath: destPath + ".aria2")
 
         let perServer = min(16, max(1, connections))
         let p = Process()
@@ -160,11 +162,13 @@ final class Aria2Engine: @unchecked Sendable {
     // MARK: - 进度解析
 
     private func parseProgressLine(_ line: String, gid: String) {
-        // 形如: [#a1b2c3 4.2MiB/12MiB(35%) 1.2MiB/sec]
+        // 形如: [#a1b2c3 4.2MiB/12MiB(35%) 1.2MiB/sec]（首段是 #gid，要跳过）
         guard let open = line.firstIndex(of: "["), let close = line.lastIndex(of: "]") else { return }
         let body = line[line.index(after: open)..<close]
         let parts = body.split(separator: " ").map(String.init)
-        guard parts.count >= 2 else { return }
+        // 至少 [#gid done/total]
+        guard parts.count >= 3, parts[0].hasPrefix("#") else { return }
+        let sizeParts = Array(parts.dropFirst())
         func bytes(_ s: String) -> Int64? {
             let units: [(String, Int64)] = [("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10), ("B", 1)]
             for (suffix, mult) in units where s.hasSuffix(suffix) {
@@ -173,10 +177,10 @@ final class Aria2Engine: @unchecked Sendable {
             }
             return Int64(s)
         }
-        guard let done = bytes(parts[0]) else { return }
+        guard let done = bytes(sizeParts[0]) else { return }
         var total: Int64 = 0
-        if parts[1].contains("/") {
-            let seg = parts[1].split(separator: "/").last.map(String.init) ?? ""
+        if sizeParts[1].contains("/") {
+            let seg = sizeParts[1].split(separator: "/").last.map(String.init) ?? ""
             let num = seg.prefix { $0.isNumber || $0 == "." || $0 == "%" }
             let trimmed = num.trimmingCharacters(in: CharacterSet(charactersIn: "%"))
             if !trimmed.isEmpty, let t = bytes(trimmed + "B") {

@@ -59,6 +59,8 @@ final class DownloadStore {
     private var sessionTasks: [String: URLSessionDownloadTask] = [:]
     /// aria2 引擎（进程管理）
     private let aria2 = Aria2Engine.shared
+    /// aria2 任务 → 暂存文件路径（完成后原子移动到目标位置）
+    private var aria2StagingPaths: [String: URL] = [:]
     private var resumeDataMap: [String: Data] = [:]
     private var session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -249,9 +251,12 @@ final class DownloadStore {
             } else {
                 proxyArg = nil
             }
+            let stagingURL = AppDirectories.staging.appendingPathComponent(aria2FileName(for: task))
+            aria2StagingPaths[task.gid] = stagingURL
             aria2.start(
                 gid: task.gid, urlString: task.downloadUrl,
-                destDir: task.dir, fileName: task.fileName,
+                destDir: AppDirectories.staging.path,
+                fileName: aria2FileName(for: task),
                 proxy: proxyArg,
                 connections: settings.aria2Split,
                 minSplitSizeMB: settings.aria2MinSplitSize,
@@ -260,7 +265,19 @@ final class DownloadStore {
             return
         }
 
-        // 内置 URLSession 引擎
+        launchBuiltIn(task, url: url)
+    }
+
+    /// aria2 暂存文件名：gid 前缀 + 简化名，避免多任务同名竞态（文件名中的 / 等替换掉）
+    private func aria2FileName(for task: DownloadTask) -> String {
+        let safe = task.fileName
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return "\(task.gid)-\(safe)"
+    }
+
+    /// 内置 URLSession 引擎分支体（launch 尾部调用）
+    private func launchBuiltIn(_ task: DownloadTask, url: URL) {
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("https://x.com", forHTTPHeaderField: "Referer")
@@ -306,6 +323,10 @@ final class DownloadStore {
         sessionTasks[gid]?.cancel()
         sessionTasks.removeValue(forKey: gid)
         aria2.cancel(gid: gid)
+        if let staging = aria2StagingPaths.removeValue(forKey: gid) {
+            try? fm.removeItem(at: staging)
+            try? fm.removeItem(at: URL(fileURLWithPath: staging.path + ".aria2"))
+        }
         resumeDataMap.removeValue(forKey: gid)
         tasks.removeAll { $0.gid == gid }
         pump()

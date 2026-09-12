@@ -30,6 +30,7 @@
 		7B7FD3147348CF551F07B9A9 /* XSpiderMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */; };
 		89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */; };
 		94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1544EECF1A89E6C5FC211279 /* TwitterUser.swift */; };
+		98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */; };
 		9DE45F14785C82B9348ABC18 /* SleepPreventer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */; };
 		A95AC0460DAA207A127EA14F /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */; };
 		AC227416870F9297A4DBB582 /* DownloadTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C99C4BFC75F391787FD663 /* DownloadTask.swift */; };
@@ -74,6 +75,7 @@
 		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
 		49F384578208B4323FB9E377 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		583B467661B41B8F17D31BDF /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweetDetailUserTests.swift; sourceTree = "<group>"; };
 		65114E0D2408F2AD861228F0 /* DownloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadStore.swift; sourceTree = "<group>"; };
 		65CBC9960CB839075452DECD /* TwitterPost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterPost.swift; sourceTree = "<group>"; };
 		6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterMedia.swift; sourceTree = "<group>"; };
@@ -233,6 +235,7 @@
 				DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */,
 				D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */,
 				F52E6EBC6E44EE82061C8673 /* L10nTests.swift */,
+				644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */,
 				3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */,
 			);
 			path = XSpiderMacTests;
@@ -344,6 +347,7 @@
 				75CA165417644DEFA269E1F5 /* DownloadEngineTests.swift in Sources */,
 				2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */,
 				6A781AF2E19543EB6B368AA4 /* L10nTests.swift in Sources */,
+				98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */,
 				045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

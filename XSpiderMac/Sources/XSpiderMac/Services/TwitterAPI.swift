@@ -320,18 +320,24 @@ actor TwitterAPI {
     static func mapTwitterPost(_ item: [String: Any]) -> TwitterPost? {
         let legacy = item["legacy"] as? [String: Any] ?? [:]
         let coreUser = Self.path(item, ["core", "user_results", "result"]) as? [String: Any]
-        let userLegacy = coreUser?["legacy"] as? [String: Any] ?? [:]
+        // 新版 TweetDetail 用户结构：字段在 result.core / result.avatar 下（无 legacy）
+        let newUserCore = coreUser?["core"] as? [String: Any]
+        let userLegacy = coreUser?["legacy"] as? [String: Any]
+            ?? newUserCore  // 新版回退：{name, screen_name, created_at}
+        let avatarField = (coreUser?["avatar"] as? [String: Any])?["image_url"] as? String
+        let legacyAvatar = userLegacy?["profile_image_url_https"] as? String
         let entities = legacy["entities"] as? [String: Any] ?? [:]
 
         return TwitterPost(
             id: item["rest_id"] as? String ?? "",
             user: TwitterUser(
-                screenName: userLegacy["screen_name"] as? String ?? "",
-                avatar: userLegacy["profile_image_url_https"] as? String ?? "",
-                name: userLegacy["name"] as? String ?? "",
+                screenName: userLegacy?["screen_name"] as? String ?? "",
+                avatar: legacyAvatar ?? avatarField ?? "",
+                name: userLegacy?["name"] as? String ?? "",
                 id: coreUser?["rest_id"] as? String ?? "",
-                mediaCount: userLegacy["media_count"] as? Int,
-                registerTime: TwitterDate.parse(userLegacy["created_at"] as? String)
+                mediaCount: userLegacy?["media_count"] as? Int
+                    ?? (coreUser?["tweet_counts"] as? [String: Any])?["media_tweets"] as? Int,
+                registerTime: TwitterDate.parse(userLegacy?["created_at"] as? String)
             ),
             createdAt: TwitterDate.parse(legacy["created_at"] as? String),
             fullText: legacy["full_text"] as? String,
