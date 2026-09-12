@@ -12,10 +12,12 @@ struct ContentView: View {
         } detail: {
             detailView(for: selection ?? .home)
                 .background(.clear)
-                .overlay(alignment: .bottomTrailing) {
-                    FloatingDownloadBar()
-                        .padding(20)
-                }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            // 浮条挂在 NavigationSplitView 层级：切页时 detail 内容重建，
+            // 但浮条身份保持稳定，不会每次切页都重播出现动画
+            FloatingDownloadBar()
+                .padding(20)
         }
         .background {
             // 全出血铺满整窗（含滚动条轨道与底缘）：不留缝隙，避免露出透明窗口底。
