@@ -185,11 +185,10 @@ struct SyncView: View {
                 }
             }
             .help(HexRing.ringNumber(index: index) > 5 ? user.name : "")
-        if edgeT > 0.02 {
-            hovered.blur(radius: 8 * edgeT).opacity(1 - 0.4 * edgeT)
-        } else {
-            hovered
-        }
+        // 边缘模糊：始终挂载（条件挂载会让进入/离开边缘带时视图树结构突变 → 闪烁缩动）
+        return hovered
+            .blur(radius: 8 * edgeT)
+            .opacity(1 - 0.4 * edgeT)
     }
 
     /// 白色实心圆（占位圈 / 头像垫圈）：静态颜色合成，不做材质/阴影/模糊（127 个圈的性能命门）
@@ -207,11 +206,9 @@ struct SyncView: View {
             )
             .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 1))
             .frame(width: size, height: size)
-        if edgeT > 0.02 {
-            circle.blur(radius: 8 * edgeT).opacity(1 - 0.4 * edgeT)
-        } else {
-            circle
-        }
+        return circle
+            .blur(radius: 8 * edgeT)
+            .opacity(1 - 0.4 * edgeT)
     }
 
     /// 悬停控件：左上删除、右上同步（已完成=绿）、底部昵称标签；带悬停桥区防闪抖
@@ -222,7 +219,7 @@ struct SyncView: View {
             glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
                 withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
             }
-            .offset(x: -size / 2 - 10, y: -size / 2 - 10)
+            .offset(x: -size / 2 - 8, y: -size / 2 - 8)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
 
             glassMiniButton(icon: "arrow.triangle.2.circlepath",
@@ -230,19 +227,17 @@ struct SyncView: View {
                             help: L("同步该用户")) {
                 withAnimation(.spring(duration: 0.3)) { store.startSync(target: [user]) }
             }
-            .offset(x: size / 2 + 10, y: -size / 2 - 10)
+            .offset(x: size / 2 + 8, y: -size / 2 - 8)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
 
             Text("\(user.name)-@\(user.screenName)")
                 .font(.caption2)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(.white.opacity(0.88), in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.8))
-                .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
+                .padding(.vertical, 3)
+                .liquidGlass(interactive: false, cornerRadius: 12)
                 .fixedSize()
-                .offset(y: size / 2 + 16)
+                .offset(y: size / 2 + 14)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         // 悬停桥区：覆盖头像+按钮+标签的整片区域，鼠标在控件间移动时不清除
@@ -527,9 +522,10 @@ enum HexRing {
         return anchors[4].s
     }
 
-    /// 环间距：内环更疏（40pt），向外收紧（×0.80，8pt 保底）——外围更密、中间更疏
+    /// 环间距：内环更疏，向外收紧——每环 ×1.20，10pt 保底；五环外不再增加
     static func ringGap(ring: Int) -> CGFloat {
-        max(8, 40 * pow(0.80, Double(ring - 1)))
+        if ring >= 5 { return ringGap(ring: 5) }
+        return max(10, 12 * pow(1.20, Double(ring - 1)))
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）
