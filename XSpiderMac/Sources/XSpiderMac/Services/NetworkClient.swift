@@ -19,14 +19,31 @@ actor NetworkClient {
         self.session = URLSession(configuration: config)
     }
 
-    func request(
+    /// 快速模式（同步页用）：单次 15s 超时、最多 2 次尝试——离线/代理不可达时快速失败，
+    /// 不让同步页长时间停留在「同步中」
+    func requestFast(
         method: String = "GET",
         url: URL,
         query: [String: String] = [:],
         headers: [String: String] = [:],
         body: Data? = nil
     ) async throws -> NetworkResponse {
-        var remainingRetryCount = maxRetryCount
+        try await request(method: method, url: url, query: query,
+                          headers: headers, body: body,
+                          maxAttempts: 2, perAttemptTimeout: 15)
+    }
+
+    func request(
+        method: String = "GET",
+        url: URL,
+        query: [String: String] = [:],
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        maxAttempts: Int? = nil,
+        perAttemptTimeout: TimeInterval? = nil
+    ) async throws -> NetworkResponse {
+        let attemptLimit = maxAttempts ?? maxRetryCount
+        var remainingRetryCount = attemptLimit
         var retryDelay: TimeInterval = 0.1
         var lastError: Error?
 
@@ -35,7 +52,8 @@ actor NetworkClient {
                 let start = Date()
                 let resp = try await requestInternal(
                     method: method, url: url, query: query,
-                    headers: headers, body: body
+                    headers: headers, body: body,
+                    timeout: perAttemptTimeout
                 )
                 AppLogger.perf("\(method) \(url.path)", category: "NET", ms: Date().timeIntervalSince(start) * 1000, [
                     "status": "\(resp.status)",
@@ -67,7 +85,8 @@ actor NetworkClient {
         url: URL,
         query: [String: String],
         headers: [String: String],
-        body: Data?
+        body: Data?,
+        timeout: TimeInterval? = nil
     ) async throws -> NetworkResponse {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: true)!
         if !query.isEmpty {
@@ -78,16 +97,22 @@ actor NetworkClient {
         request.httpBody = body
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
 
-        let (data, response) = try await session.data(for: request)
-        let http = response as! HTTPURLResponse
-
-        var respHeaders: [String: [String]] = [:]
-        for (key, value) in http.allHeaderFields {
-            let k = key as! String
-            respHeaders[k, default: []].append(value as! String)
+        // 单次尝试限时：超时抛 timedOut（调用方快速失败,不拖同步状态）
+        let doFetch: @Sendable () async throws -> NetworkResponse = { [request] in
+            let (data, response) = try await self.session.data(for: request)
+            let http = response as! HTTPURLResponse
+            var headers: [String: [String]] = [:]
+            for (key, value) in http.allHeaderFields {
+                let k = key as! String
+                headers[k, default: []].append(value as! String)
+            }
+            return NetworkResponse(status: http.statusCode, headers: headers, data: data)
         }
-
-        return NetworkResponse(status: http.statusCode, headers: respHeaders, data: data)
+        if let timeout {
+            request.timeoutInterval = timeout
+            return try await withTimeout(timeout, doFetch)
+        }
+        return try await doFetch()
     }
 }
 
@@ -138,5 +163,22 @@ extension URLSessionConfiguration {
             kCFNetworkProxiesHTTPSProxy: host,
             kCFNetworkProxiesHTTPSPort: port,
         ]
+    }
+}
+
+
+/// 竞速超时工具：deadline 先到则抛 timedOut(原任务自动作废)
+func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await op() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw URLError(.timedOut)
+        }
+        guard let result = try await group.next() else {
+            throw URLError(.timedOut)
+        }
+        group.cancelAll()
+        return result
     }
 }

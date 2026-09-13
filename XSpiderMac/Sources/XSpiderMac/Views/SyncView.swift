@@ -13,6 +13,7 @@ struct SyncView: View {
     @State private var showAddSheet = false
     @State private var input = ""
     @State private var appStore = AppStore.shared
+    @State private var settingsStore = SettingsStore.shared
     /// 页面可视尺寸（状态卡 3/4 高度定位与平移钳制用）
     @State private var viewportSize: CGSize = .zero
     /// 蜂窝内容的平移偏移（拖拽/滚轮/方向键驱动）
@@ -38,8 +39,14 @@ struct SyncView: View {
     }
 
     var body: some View {
-        honeycomb
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+            if settingsStore.settings.syncLayout == .dock {
+                DockSyncLayout()
+            } else {
+                honeycomb
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .center) {
                 // 状态卡行：卡片中心对准页面中心（按钮组只向右延伸 104pt，整组右移半个按钮组 52pt）
                 HStack(spacing: 8) {
@@ -238,13 +245,24 @@ struct SyncView: View {
             // 悬停桥区命中形（头像圆 + 下方标签条横带，透明但参与 hit）
             hoverBridge(size: size)
 
-            // 标签条：贴头像下缘（下移 size/2 + 8）
+            // 标签条：贴头像下缘（下移 size/2 + 8）——[垃圾桶删除][标签/消息/失败图标][同步钮]
             HStack(spacing: 8) {
-                glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
+                glassMiniButton(icon: "trash", tint: .red, help: L("移除该用户")) {
                     withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
                 }
+
                 Group {
-                    if let message, !message.isEmpty {
+                    if store.failedUsers[user.screenName] != nil {
+                        // 失败：红色玻璃感叹图标 + 原因文本（居中同一条）
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.red)
+                            Text(store.failedUsers[user.screenName] ?? "")
+                                .lineLimit(1)
+                                .foregroundStyle(.red)
+                        }
+                    } else if let message, !message.isEmpty {
                         Text(message)
                             .lineLimit(1)
                             .foregroundStyle(isDone ? Color.green : Color.red)
@@ -557,10 +575,10 @@ enum HexRing {
         return anchors[4].s
     }
 
-    /// 环间距：一环 25pt、每环 ×1.5 递增；五环外恒定（25×1.5⁴≈126.6pt，直接内联不递归）
+    /// 环间距：一环 35pt、每环 ×2 递增；五环及之外与四环一致（35×2³=280pt，直接内联不递归）
     static func ringGap(ring: Int) -> CGFloat {
-        if ring >= 5 { return 25 * pow(1.5, 4) }
-        return 25 * pow(1.5, Double(ring - 1))
+        if ring >= 5 { return 35 * pow(2, 3) }
+        return 35 * pow(2, Double(ring - 1))
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）

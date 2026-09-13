@@ -250,6 +250,25 @@ struct SettingsView: View {
                 }
             }
 
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.quitOnSyncCompleteEnabled },
+                set: { settingsStore.settings.sync.quitOnSyncComplete = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("同步完成后自动关闭应用"))
+                    InfoHint(text: L("所有用户同步结束且无失败时，应用在短暂展示完成状态后自动退出。若有失败会保留窗口等待处理。"))
+                }
+            }
+
+            Picker(L("同步页面布局"), selection: Binding(
+                get: { settingsStore.settings.syncLayout },
+                set: { settingsStore.settings.syncLayout = $0; restartDialogVisible = true }
+            )) {
+                ForEach(SyncLayoutMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+
             Button {
                 showSyncListManager = true
             } label: {

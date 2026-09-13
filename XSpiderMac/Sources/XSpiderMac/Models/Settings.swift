@@ -79,10 +79,35 @@ struct DownloadSettings: Codable, Sendable {
 struct SyncSettings: Codable, Sendable {
     /// 打开应用自动开始同步
     var autoSyncOnLaunch: Bool?
-    init() { autoSyncOnLaunch = false }
+    /// 同步完成且无失败后自动退出应用
+    var quitOnSyncComplete: Bool?
+    /// 同步页布局：dock（仿 Dock）/ honeycomb（蜂窝）
+    var layout: String?
+    init() {
+        autoSyncOnLaunch = false
+        quitOnSyncComplete = false
+        layout = "dock"
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         autoSyncOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? false
+        quitOnSyncComplete = try c.decodeIfPresent(Bool.self, forKey: .quitOnSyncComplete) ?? false
+        layout = try c.decodeIfPresent(String.self, forKey: .layout) ?? "dock"
+    }
+}
+
+/// 同步页布局模式
+enum SyncLayoutMode: String, CaseIterable, Identifiable, Sendable {
+    case dock
+    case honeycomb
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .dock: return L("仿 Dock 布局")
+        case .honeycomb: return L("蜂窝布局")
+        }
     }
 }
 
@@ -147,6 +172,13 @@ struct Settings: Codable, Sendable {
     var glassBlur: Int { min(100, max(20, app.glassBlur ?? 60)) }
     /// 打开应用自动同步（默认关）
     var autoSyncOnLaunchEnabled: Bool { sync.autoSyncOnLaunch ?? false }
+    /// 同步完成无失败后自动退出（默认关）
+    var quitOnSyncCompleteEnabled: Bool { sync.quitOnSyncComplete ?? false }
+    /// 同步页布局（默认仿 Dock）
+    var syncLayout: SyncLayoutMode {
+        get { SyncLayoutMode(rawValue: sync.layout ?? "dock") ?? .dock }
+        set { sync.layout = newValue.rawValue }
+    }
     /// 有效字号
     var fontSizeValue: Double {
         get { app.fontSize ?? 14 }

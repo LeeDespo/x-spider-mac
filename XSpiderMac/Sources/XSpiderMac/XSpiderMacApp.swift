@@ -23,23 +23,6 @@ struct XSpiderMacApp: App {
         .defaultSize(width: 1200, height: 800)
         // ── 实用菜单栏（L() 动态翻译：语言切换立即生效）──
         .commands {
-        CommandMenu(L("文件")) {
-            Button(L("新建下载任务…")) {
-                NotificationCenter.default.post(name: .openDownloadsTab, object: nil)
-            }
-            .keyboardShortcut("n", modifiers: .command)
-
-            Button(L("搜索用户或推文…")) {
-                NotificationCenter.default.post(name: .focusSearchField, object: nil)
-            }
-            .keyboardShortcut("f", modifiers: .command)
-
-            Divider()
-            Button(L("导入 Cookie…")) {
-                NotificationCenter.default.post(name: .openCookieImport, object: nil)
-            }
-        }
-
         CommandMenu(L("下载")) {
             Button(L("全部暂停")) {
                 downloadStore.pauseAll()

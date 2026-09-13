@@ -121,22 +121,24 @@ actor TwitterAPI {
 
     // MARK: - 用户查询
 
-    func getUser(screenName: String) async throws -> TwitterUser {
+    func getUser(screenName: String, fast: Bool = false) async throws -> TwitterUser {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName"
         let url = URL(string: "https://\(host)\(path)")!
         let variables = """
         {"screen_name":"\(screenName)","withSafetyModeUserFields":true}
         """
-        let resp = try await client.request(
-            url: url,
-            query: [
+        let resp = try await (fast
+            ? client.requestFast(url: url, query: [
                 "features": Self.userByScreenNameFeatures,
                 "fieldToggles": #"{"withAuxiliaryUserLabels":false}"#,
                 "variables": variables,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
+            ], headers: await commonHeaders(method: "GET", path: path))
+            : client.request(url: url, query: [
+                "features": Self.userByScreenNameFeatures,
+                "fieldToggles": #"{"withAuxiliaryUserLabels":false}"#,
+                "variables": variables,
+            ], headers: await commonHeaders(method: "GET", path: path)))
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any],
               let user = (json["data"] as? [String: Any])?["user"] as? [String: Any],
@@ -159,7 +161,7 @@ actor TwitterAPI {
 
     /// 上游 UserMedia（queryId cEjpJXA15Ok78yO4TUQPeQ）。
     /// 返回推文数组 + 下一页 cursor（Bottom cursor value），无更多页时 cursor 为 nil。
-    func getUserMedias(userId: String, cursor: String? = nil, count: Int = 20) async throws -> (posts: [TwitterPost], cursor: String?) {
+    func getUserMedias(userId: String, cursor: String? = nil, count: Int = 20, fast: Bool = false) async throws -> (posts: [TwitterPost], cursor: String?) {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/cEjpJXA15Ok78yO4TUQPeQ/UserMedia"
         let url = URL(string: "https://\(host)\(path)")!
@@ -174,14 +176,15 @@ actor TwitterAPI {
             "withV2Timeline": true,
         ] as [String: Any]) ?? "{}"
 
-        let resp = try await client.request(
-            url: url,
-            query: [
+        let resp = try await (fast
+            ? client.requestFast(url: url, query: [
                 "features": Self.userMediaFeatures,
                 "variables": variables,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
+            ], headers: await commonHeaders(method: "GET", path: path))
+            : client.request(url: url, query: [
+                "features": Self.userMediaFeatures,
+                "variables": variables,
+            ], headers: await commonHeaders(method: "GET", path: path)))
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
