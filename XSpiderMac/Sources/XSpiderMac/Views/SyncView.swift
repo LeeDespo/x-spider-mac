@@ -23,11 +23,13 @@ struct SyncView: View {
     @State private var hoveredIndex: Int?
     /// 悬停桥区激活中（鼠标从头像移到按钮/标签上时防止控件消失）
     @State private var chromeHoverActive = false
+    /// 悬停去抖任务（可取消——切换悬停目标时旧任务立即失效，消除卡顿）
+    @State private var hoverDebounceTask: Task<Void, Never>?
 
-    /// 占位圈上限：补满当前最大环 + 1 环，最多 6 环
+    /// 占位圈上限：补满当前最大用户环 + 5 环，封顶 6 环（一环用户也直接补到 6 环）
     private var placeholderRingLimit: Int {
         let maxUserRing = store.users.isEmpty ? 0 : HexRing.ringNumber(index: store.users.count - 1)
-        return min(6, maxUserRing + 1)
+        return min(6, maxUserRing + 5)
     }
 
     /// 蜂窝总格数（含占位）
@@ -60,7 +62,8 @@ struct SyncView: View {
         GeometryReader { geo in
             // 蜂窝内容中心 = GeometryReader 中心 = 状态卡 overlay 中心（同一锚点，聚焦中心即页面中心）
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            let D = HexRing.diameter(userCount: totalSlots)
+            // 平移极限只由用户头像环数决定（垫圈只是装饰，不参与边界）
+            let D = HexRing.diameter(userCount: max(1, store.users.count))
 
             ZStack {
                 // ── 底层：白色普通材质实心圆（头像垫圈 105% + 空位占位圈）──
@@ -157,43 +160,58 @@ struct SyncView: View {
     @ViewBuilder
     private func avatarView(_ user: SyncUser, index: Int, size: CGFloat, edgeT: Double) -> some View {
         let isActive = store.phase == .syncing && store.currentUser == user.screenName
-        CachedAvatarView(urlString: user.avatar, size: size)
+        let avatar = CachedAvatarView(urlString: user.avatar, size: size)
             .clipShape(Circle())
             .overlay {
                 if isActive {
                     Circle().strokeBorder(Color.accentColor, lineWidth: 3).padding(-6)
                 }
             }
-            .blur(radius: 8 * edgeT)
-            .opacity(1 - 0.4 * edgeT)
+        let hovered = avatar
             .onHover { h in
                 guard HexRing.ringNumber(index: index) <= 5 else { return }
                 if h {
-                    withAnimation(.spring(duration: 0.22)) { hoveredIndex = index }
+                    withAnimation(.spring(duration: 0.18)) { hoveredIndex = index }
                 } else {
-                    // 去抖：给悬停桥区（按钮/标签）接管的时间
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // 去抖：给悬停桥区（按钮/标签）接管的时间；新悬停取消旧任务，切目标不卡
+                    hoverDebounceTask?.cancel()
+                    hoverDebounceTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 90_000_000)
+                        guard !Task.isCancelled else { return }
                         if hoveredIndex == index && !chromeHoverActive {
-                            withAnimation(.spring(duration: 0.2)) { hoveredIndex = nil }
+                            withAnimation(.spring(duration: 0.15)) { hoveredIndex = nil }
                         }
                     }
                 }
             }
             .help(HexRing.ringNumber(index: index) > 5 ? user.name : "")
+        if edgeT > 0.02 {
+            hovered.blur(radius: 8 * edgeT).opacity(1 - 0.4 * edgeT)
+        } else {
+            hovered
+        }
     }
 
-    /// 白色普通材质实心圆（占位圈 / 头像垫圈）
+    /// 白色实心圆（占位圈 / 头像垫圈）：静态颜色合成，不做材质/阴影/模糊（127 个圈的性能命门）
     @ViewBuilder
     private func padCircle(size: CGFloat, edgeT: Double) -> some View {
-        ZStack {
-            Circle().fill(.regularMaterial)
-            Circle().fill(Color.white.opacity(0.55))
+        let circle = Circle()
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.white.opacity(0.92), location: 0),
+                        .init(color: Color(white: 0.97, opacity: 0.82), location: 1),
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 1))
+            .frame(width: size, height: size)
+        if edgeT > 0.02 {
+            circle.blur(radius: 8 * edgeT).opacity(1 - 0.4 * edgeT)
+        } else {
+            circle
         }
-        .overlay(Circle().strokeBorder(Color.white.opacity(0.45), lineWidth: 1))
-        .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
-        .blur(radius: 8 * edgeT)
-        .opacity(1 - 0.4 * edgeT)
     }
 
     /// 悬停控件：左上删除、右上同步（已完成=绿）、底部昵称标签；带悬停桥区防闪抖
@@ -204,7 +222,7 @@ struct SyncView: View {
             glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
                 withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
             }
-            .offset(x: -size / 2 - 12, y: -size / 2 - 12)
+            .offset(x: -size / 2 - 10, y: -size / 2 - 10)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
 
             glassMiniButton(icon: "arrow.triangle.2.circlepath",
@@ -212,7 +230,7 @@ struct SyncView: View {
                             help: L("同步该用户")) {
                 withAnimation(.spring(duration: 0.3)) { store.startSync(target: [user]) }
             }
-            .offset(x: size / 2 + 12, y: -size / 2 - 12)
+            .offset(x: size / 2 + 10, y: -size / 2 - 10)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
 
             Text("\(user.name)-@\(user.screenName)")
@@ -224,7 +242,7 @@ struct SyncView: View {
                 .overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.8))
                 .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
                 .fixedSize()
-                .offset(y: size / 2 + 24)
+                .offset(y: size / 2 + 16)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         // 悬停桥区：覆盖头像+按钮+标签的整片区域，鼠标在控件间移动时不清除
@@ -233,9 +251,12 @@ struct SyncView: View {
         .onHover { h in
             chromeHoverActive = h
             if !h {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                hoverDebounceTask?.cancel()
+                hoverDebounceTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 90_000_000)
+                    guard !Task.isCancelled else { return }
                     if !chromeHoverActive && hoveredIndex == index {
-                        withAnimation(.spring(duration: 0.2)) { hoveredIndex = nil }
+                        withAnimation(.spring(duration: 0.15)) { hoveredIndex = nil }
                     }
                 }
             }
@@ -268,7 +289,7 @@ struct SyncView: View {
     private func installScrollMonitor() {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { event in
             guard showAddSheet == false, NSApp.keyWindow?.sheets.isEmpty ?? true else { return event }
-            let D = HexRing.diameter(userCount: totalSlots)
+            let D = HexRing.diameter(userCount: max(1, store.users.count))
             if event.type == .scrollWheel {
                 let dx = -event.scrollingDeltaX * 2.2
                 let dy = -event.scrollingDeltaY * 2.2

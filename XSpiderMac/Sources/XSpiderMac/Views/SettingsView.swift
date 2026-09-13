@@ -5,6 +5,8 @@ struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var exportMessage: String?
     @State private var showCleanupDialog = false
+    /// 同步清单管理弹窗
+    @State private var showSyncListManager = false
 
     var body: some View {
         Form {
@@ -247,8 +249,25 @@ struct SettingsView: View {
                     InfoHint(text: L("启动应用后自动开始同步清单内所有用户的最新媒体，同「同步」页的判定规则跳过已下载。"))
                 }
             }
+
+            Button {
+                showSyncListManager = true
+            } label: {
+                HStack {
+                    Text(L("管理同步清单"))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         } header: {
             Label(L("同步"), systemImage: "arrow.triangle.2.circlepath")
+        }
+        .sheet(isPresented: $showSyncListManager) {
+            SyncListManagerSheet()
         }
     }
 
@@ -613,5 +632,149 @@ struct TemplateVariablePicker: View {
             .padding(.top, 2)
         }
         .padding(.vertical, 4)
+    }
+}
+
+
+// MARK: - 同步清单管理（设置页入口：检索 / 按添加顺序倒序 / 液态玻璃删除）
+
+/// 列表式清单管理：最新添加排最前；可按用户名、昵称检索；液态玻璃删除按钮
+struct SyncListManagerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var store = SyncStore.shared
+    @State private var searchText = ""
+
+    /// 倒序（最新添加在最前）+ 检索过滤（用户名 / 昵称，不分大小写）
+    private var filteredUsers: [SyncUser] {
+        let reversed = store.users.reversed()
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return Array(reversed) }
+        let lowered = q.lowercased()
+        return reversed.filter {
+            $0.screenName.lowercased().contains(lowered) || $0.name.lowercased().contains(lowered)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题 + 检索框
+            HStack(spacing: 12) {
+                Text(L("同步清单"))
+                    .font(.headline)
+                Spacer()
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField(L("搜索用户名或昵称"), text: $searchText)
+                    .textFieldStyle(.plain)
+                    .frame(width: 180)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if store.users.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tertiary)
+                    Text(L("清单为空"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredUsers.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.tertiary)
+                    Text(L("无匹配结果"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredUsers) { user in
+                            listRow(user)
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text(L("共 \(store.users.count) 位用户"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(L("完成")) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.glassProminent)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .frame(width: 460, height: 520)
+    }
+
+    /// 行：头像 + 昵称 + 用户名 + 液态玻璃删除按钮
+    private func listRow(_ user: SyncUser) -> some View {
+        HStack(spacing: 12) {
+            CachedAvatarView(urlString: user.avatar, size: 36)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user.name)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text("@\(user.screenName)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                withAnimation(.spring(duration: 0.25)) {
+                    store.removeUser(user.screenName)
+                }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.red)
+                    .frame(width: 30, height: 30)
+                    .background {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .overlay {
+                                Circle().fill(
+                                    LinearGradient(colors: [.white.opacity(0.22), .clear],
+                                                   startPoint: .top, endPoint: .center)
+                                )
+                            }
+                            .overlay {
+                                Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1)
+                            }
+                    }
+                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+            .help(L("从清单移除"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .transition(.opacity.combined(with: .move(edge: .trailing)))
     }
 }
