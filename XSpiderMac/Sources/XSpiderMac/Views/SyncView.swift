@@ -1,72 +1,60 @@
 import SwiftUI
 
 /// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout：中心加号 + 每环 6k 个），
-/// 外围淡化；进度框（下载提示框同款 UI）+ 外侧小号状态机按钮。
+/// 外围淡化；悬浮进度框固定在页面 3/4 高度（宽度随状态伸缩），外侧小号状态机按钮。
 struct SyncView: View {
     @State private var store = SyncStore.shared
     @State private var showAddSheet = false
     @State private var input = ""
+    @State private var appStore = AppStore.shared
 
     var body: some View {
-        VStack(spacing: 14) {
-            if store.users.isEmpty && store.phase != .syncing {
-                emptyState
-            } else {
-                Spacer(minLength: 0)
-                honeycomb
-                // 进度框 + 外侧小按钮（贴框右侧）
-                HStack(alignment: .center, spacing: 10) {
-                    progressBar
-                    primaryButton
-                }
-                .frame(maxWidth: 560)
-                Spacer(minLength: 0)
+        // 蜂窝铺满全页；进度框悬浮在页面 3/4 高度点（overlay，不参与布局挤压蜂窝）
+        honeycomb
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .center) {
+                // 垂直偏移 +25% 页面高 = 3/4 位置；左右居中
+                progressBar
+                    .offset(y: honeycombBoxHeight * 0.25)
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(L("同步"))
-        .sheet(isPresented: $showAddSheet) { addSheet }
-        .task {
-            store.syncOnLaunchIfNeeded()
-        }
+            .navigationTitle(L("同步"))
+            .sheet(isPresented: $showAddSheet) { addSheet }
+            .task {
+                store.syncOnLaunchIfNeeded()
+            }
     }
 
-    // MARK: - 空态
-
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            primaryButton
-            Text(L("暂无可同步的用户"))
-                .foregroundStyle(.secondary)
-            Text(L("先在主页浏览或下载过用户媒体，再回到这里同步。"))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    /// 页面可视高度（用于 3/4 定位）：用 GeometryReader 探测
+    @State private var honeycombBoxHeight: CGFloat = 0
 
     // MARK: - 蜂窝头像（六边形环展开）
 
     private var honeycomb: some View {
-        ScrollView([.horizontal, .vertical]) {
-            HoneycombLayout(cellSize: 96, ringGap: 10) {
-                // 中心 = 加号
-                addCenterButton
-                // 外圈 = 用户（按环展开顺序）
-                ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
-                    honeycombCell(user, index: idx)
+        GeometryReader { geo in
+            let boxH = geo.size.height
+            ScrollView([.horizontal, .vertical]) {
+                HoneycombLayout(cellSize: 118, ringGap: 22) {
+                    // 中心 = 加号
+                    addCenterButton
+                    // 外圈 = 用户（按环展开顺序）
+                    ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
+                        honeycombCell(user, index: idx)
+                    }
                 }
+                .frame(width: honeycombDiameter, height: honeycombDiameter, alignment: .center)
+                .padding(48)
+                .frame(width: geo.size.width, height: boxH)  // 蜂窝内容在可视区内居中
             }
-            .frame(width: honeycombDiameter, height: honeycombDiameter, alignment: .center)
-            .padding(40)
+            .scrollIndicators(.hidden)
+            .onAppear { honeycombBoxHeight = boxH }
+            .onChange(of: geo.size.height) { _, newH in honeycombBoxHeight = newH }
         }
-        .scrollIndicators(.hidden)
     }
 
-    /// 蜂窝所需直径：环数 = ceil((n) / 6)；直径 ≈ (2*环数+1) * 环间距
+    /// 蜂窝所需直径：环数 = ceil(n / 6)；直径 ≈ (2*环数+1) * 环间距
     private var honeycombDiameter: CGFloat {
         let rings = Double((store.users.count + 5) / 6)
-        return CGFloat((2 * rings + 1)) * 110 + 80
+        return CGFloat((2 * rings + 1)) * (59 + 22) + 118 + 96
     }
 
     @ViewBuilder
@@ -80,7 +68,7 @@ struct SyncView: View {
 
     /// 外围淡化：环号越深越透明
     private func opacity(for index: Int) -> Double {
-        let ring = Double((index + 5) / 6)  // 第几环（0 起）
+        let ring = Double((index + 5) / 6)
         let maxRing = Double((store.users.count + 5) / 6)
         guard maxRing > 1 else { return 1.0 }
         let t = ring / maxRing
@@ -92,9 +80,9 @@ struct SyncView: View {
             showAddSheet = true
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 26, weight: .medium))
+                .font(.system(size: 30, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 64, height: 64)
+                .frame(width: 76, height: 76)
                 .background(.quinary, in: Circle())
                 .overlay {
                     Circle().strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1.5)
@@ -104,39 +92,61 @@ struct SyncView: View {
         .help(L("添加同步用户"))
     }
 
-    // MARK: - 进度框（下载提示框同款 UI）
+    // MARK: - 悬浮进度框（3/4 高度、宽度随状态伸缩动画）
 
+    @ViewBuilder
     private var progressBar: some View {
-        VStack(spacing: 8) {
-            HStack {
+        HStack(alignment: .center, spacing: 8) {
+            progressBarCard
+            primaryButton
+        }
+    }
+
+    /// 进度卡：idle 最窄（只容纳"等待同步"），syncing/done 拉长显示进度条；居中锚点伸缩
+    private var progressBarCard: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(phaseLabel)
                     .font(.caption)
-                Spacer()
+                if store.phase != .idle {
+                    Spacer()
+                }
             }
-            if store.phase == .syncing {
-                let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .controlSize(.small)
-                Text(currentUserText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else if store.phase == .done {
-                Text(summaryText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // idle 隐藏进度条（占位不塌陷，保持高度恒定）
+            if store.phase != .idle {
+                if store.phase == .syncing {
+                    let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                    Text(currentUserText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if store.phase == .done {
+                    Text(summaryText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if store.phase == .interrupted {
+                    Text(L("已取消"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minWidth: 168, maxWidth: 380, alignment: .leading)
         .liquidGlass(interactive: true, cornerRadius: 20)
+        .animation(.spring(duration: 0.4), value: store.phase)
+        .animation(.spring(duration: 0.4), value: store.currentUserIndex)
     }
 
     private var phaseLabel: String {
@@ -157,7 +167,7 @@ struct SyncView: View {
         store.userMessages.values.joined(separator: " · ")
     }
 
-    // MARK: - 状态机圆形按钮（小号，无文字）
+    // MARK: - 状态机圆形按钮（小号 36pt，无文字，贴进度框右缘）
 
     @ViewBuilder
     private var primaryButton: some View {
@@ -173,9 +183,9 @@ struct SyncView: View {
             withAnimation(.spring(duration: 0.35)) { store.primaryAction() }
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 40, height: 40)
+                .frame(width: 36, height: 36)
                 .background(.quinary, in: Circle())
                 .overlay {
                     Circle().strokeBorder(color.opacity(0.35), lineWidth: 1.5)
@@ -235,17 +245,15 @@ struct SyncView: View {
         .padding(20)
         .frame(width: 420)
     }
-
-    @State private var appStore = AppStore.shared
 }
 
 // MARK: - HoneycombLayout（六边形环展开：中心 + 每环 6k 个，参考 redblobgames rings 公式）
 
 /// 环形蜂窝布局：子视图 0 = 中心，其余按六边形环展开（环 k 有 6k 个位置，
-/// 每环半径 = k * step）。角度微交错让相邻环错位，形成蜂窝视觉密度。
+/// 每环半径 = k * step）。每环旋转 30° 错位，形成蜂窝视觉密度。
 struct HoneycombLayout: Layout {
-    var cellSize: CGFloat = 96
-    var ringGap: CGFloat = 10
+    var cellSize: CGFloat = 118
+    var ringGap: CGFloat = 22
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rings = Double(max(0, subviews.count - 1)) / 6.0
@@ -263,13 +271,11 @@ struct HoneycombLayout: Layout {
             if idx == 0 {
                 pos = center
             } else {
-                // 第 idx 个子视图 → (ring, ringIndex)：环 k 容纳 6k 个
                 let ring = Int(ceil(Double(idx) / 6.0))
-                let indexInRing = idx - (6 * (ring - 1) + 1)  // 环内 0-based
+                let indexInRing = idx - (6 * (ring - 1) + 1)
                 let capacity = 6 * ring
-                // 六边形环：角度均匀 + 半环交错偏移，模拟蜂窝错位嵌套
                 let angle = (Double(indexInRing) / Double(capacity)) * 2 * .pi
-                    + (Double(ring) * .pi / 6)  // 每环错开 30°
+                    + (Double(ring) * .pi / 6)
                 let radius = Double(ring) * step
                 pos = CGPoint(
                     x: center.x + CGFloat(cos(angle)) * radius,
@@ -298,13 +304,13 @@ private struct HoneycombCell: View {
     @State private var isPressed = false
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             ZStack(alignment: .topTrailing) {
                 ZStack {
                     Circle()
                         .strokeBorder(ringColor, lineWidth: 3)
-                        .frame(width: 62, height: 62)
-                    CachedAvatarView(urlString: user.avatar, size: 54)
+                        .frame(width: 76, height: 76)
+                    CachedAvatarView(urlString: user.avatar, size: 68)
                 }
                 if showDelete {
                     Button(action: onDelete) {
@@ -320,7 +326,7 @@ private struct HoneycombCell: View {
             Text(user.name)
                 .font(.caption2)
                 .lineLimit(1)
-                .frame(width: 72)
+                .frame(width: 88)
         }
         .opacity(cellOpacity)
         .scaleEffect(isActive ? 1.08 : (isPressed ? 0.95 : 1.0))

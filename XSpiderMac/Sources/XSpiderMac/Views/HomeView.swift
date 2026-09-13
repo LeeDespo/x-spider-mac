@@ -338,19 +338,20 @@ struct MediaGridItem: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.quaternary)
+            // 1:1 收纳框：底色仅在缩略图未加载时作为占位，加载后隐藏（避免可见方框）
+            if thumbnail == nil {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.quaternary.opacity(0.4))
+            }
 
             if let thumbnail {
                 GeometryReader { geo in
+                    // 1:1 收纳框内 contain-fit：不裁切、不交错，长边对齐框、短边留白（框本身透明不可见）
                     Image(nsImage: thumbnail)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geo.size.width, height: geo.size.width * 3 / 4)
-                        .clipped()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: geo.size.width, height: geo.size.height)
                 }
-                .aspectRatio(4/3, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 Image(systemName: media.type == .photo ? "photo" : "video.fill")
                     .font(.title)
