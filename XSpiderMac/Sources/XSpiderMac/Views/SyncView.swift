@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 /// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout，无中心占位）。
-/// 近大远小按「格子在内容坐标中到可视区中心的距离」计算——滑动即切换聚焦（第五环几乎隐没）。
+/// 近大远小按「格子在内容坐标中到焦点中心的距离」计算；
+/// 焦点通过拖拽 / 滚轮 / 方向键平移蜂窝改变——不依赖内容超出视口。
 /// 状态卡悬浮页面 3/4 高度、胶囊形（下载提示框同款）、左右对称伸缩；
 /// 右侧外挂「新增」「同步」中性玻璃按钮。
 struct SyncView: View {
@@ -9,11 +11,12 @@ struct SyncView: View {
     @State private var showAddSheet = false
     @State private var input = ""
     @State private var appStore = AppStore.shared
-    /// 页面可视高度（3/4 定位用）
-    @State private var viewportHeight: CGFloat = 0
-    /// 可视区中心在「内容坐标系」中的位置（onScrollGeometryChange 持续更新）
-    @State private var focusInContent: CGPoint = .zero
-    @State private var scrollPos = ScrollPosition()
+    /// 页面可视尺寸（3/4 定位与平移钳制用）
+    @State private var viewportSize: CGSize = .zero
+    /// 蜂窝内容的平移偏移（拖拽/滚轮/方向键驱动）
+    @State private var panOffset: CGSize = .zero
+    /// 滚轮事件监听器
+    @State private var scrollMonitor: Any?
 
     var body: some View {
         honeycomb
@@ -26,7 +29,7 @@ struct SyncView: View {
                     addButton
                     syncButton
                 }
-                .offset(x: -52, y: viewportHeight * 0.25)
+                .offset(x: -52, y: viewportSize.height * 0.25)
             }
             .navigationTitle(L("同步"))
             .sheet(isPresented: $showAddSheet) { addSheet }
@@ -35,18 +38,19 @@ struct SyncView: View {
             }
     }
 
-    // MARK: - 蜂窝（六边形环展开 + 滚动驱动近大远小）
+    // MARK: - 蜂窝（六边形环展开 + 拖拽/滚轮平移近大远小）
 
     private var honeycomb: some View {
         GeometryReader { geo in
             let D = honeycombDiameter
-            // 内容尺寸不小于视口：保证初始滚动居中后，可视区中心 == 蜂窝中心
-            let frameW = max(D + 160, geo.size.width)
-            let frameH = max(D + 160, geo.size.height)
-            let contentCenter = CGPoint(x: frameW / 2, y: frameH / 2)
-            let focus = focusInContent == .zero ? contentCenter : focusInContent
+            let contentCenter = CGPoint(x: D / 2, y: D / 2)
+            // 焦点 = 视口中心映射到内容坐标：内容右移 → 焦点左移
+            let focus = CGPoint(
+                x: contentCenter.x - panOffset.width,
+                y: contentCenter.y - panOffset.height
+            )
 
-            ScrollView([.horizontal, .vertical]) {
+            ZStack {
                 HoneycombLayout(step: 88, cellExtent: 84) {
                     ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
                         let rel = HexRing.position(index: idx, step: 88)
@@ -55,32 +59,78 @@ struct SyncView: View {
                     }
                 }
                 .frame(width: D, height: D, alignment: .center)
-                .frame(width: frameW, height: frameH, alignment: .center)
+                .offset(panOffset)
             }
-            .scrollPosition($scrollPos)
-            .scrollIndicators(.hidden)
-            .onScrollGeometryChange(for: CGPoint.self) { g in
-                // 可视区中心 → 内容坐标
-                CGPoint(
-                    x: g.contentOffset.x + g.containerSize.width / 2,
-                    y: g.contentOffset.y + g.containerSize.height / 2
-                )
-            } action: { _, newFocus in
-                withAnimation(.easeOut(duration: 0.22)) { focusInContent = newFocus }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+            .contentShape(Rectangle())
+            .focusable(true)
+            .onMoveCommand { dir in
+                // 方向键平移焦点
+                withAnimation(.spring(duration: 0.25)) {
+                    panOffset = clampedPan(panOffset, viewport: geo.size, content: D,
+                                           dx: dir == .left ? 44 : dir == .right ? -44 : 0,
+                                           dy: dir == .up ? 44 : dir == .down ? -44 : 0)
+                }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        panOffset = clampedPan(panOffset, viewport: geo.size, content: D,
+                                               dx: value.translation.width, dy: value.translation.height,
+                                               additive: false)
+                    }
+                    .onEnded { value in
+                        withAnimation(.spring(duration: 0.35)) {
+                            panOffset = clampedPan(panOffset, viewport: geo.size, content: D,
+                                                   dx: value.translation.width, dy: value.translation.height,
+                                                   additive: false)
+                        }
+                    }
+            )
             .onAppear {
-                viewportHeight = geo.size.height
-                // 初始滚动：对准清单中间的用户（其内容坐标 == 蜂窝中心附近）
-                if let mid = store.users.isEmpty ? nil : store.users[min(store.users.count / 2, store.users.count - 1)].id {
-                    scrollPos.scrollTo(id: mid, anchor: .center)
-                }
-                if focusInContent == .zero { focusInContent = contentCenter }
+                viewportSize = geo.size
+                installScrollMonitor(contentDiameter: D, viewport: geo.size)
             }
-            .onChange(of: geo.size) { _, _ in
-                if let mid = store.users.isEmpty ? nil : store.users[min(store.users.count / 2, store.users.count - 1)].id {
-                    scrollPos.scrollTo(id: mid, anchor: .center)
+            .onChange(of: geo.size) { _, newSize in
+                viewportSize = newSize
+                panOffset = clampedPan(panOffset, viewport: newSize, content: D, dx: 0, dy: 0, additive: false)
+            }
+            .onDisappear {
+                if let monitor = scrollMonitor {
+                    NSEvent.removeMonitor(monitor)
+                    scrollMonitor = nil
                 }
             }
+        }
+    }
+
+    /// 平移钳制：蜂窝大于视口时限到边缘，小于视口时也允许 ±120pt 漫游（焦点仍可移动）
+    private func clampedPan(_ current: CGSize, viewport: CGSize, content: CGFloat,
+                            dx: CGFloat, dy: CGFloat, additive: Bool = true) -> CGSize {
+        let base = additive
+            ? CGSize(width: current.width + dx, height: current.height + dy)
+            : CGSize(width: dx, height: dy)
+        let halfW = max(0, (content - viewport.width) / 2) + 120
+        let halfH = max(0, (content - viewport.height) / 2) + 120
+        return CGSize(
+            width: min(halfW, max(-halfW, base.width)),
+            height: min(halfH, max(-halfH, base.height))
+        )
+    }
+
+    /// 滚轮/触控板双指滑动 → 平移蜂窝（本地事件监听；弹窗打开时放行不拦截）
+    private func installScrollMonitor(contentDiameter: CGFloat, viewport: CGSize) {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard showAddSheet == false, NSApp.keyWindow?.sheets.isEmpty ?? true else { return event }
+            let dx = -event.scrollingDeltaX * 2.2
+            let dy = -event.scrollingDeltaY * 2.2
+            guard abs(dx) > 0.1 || abs(dy) > 0.1 else { return event }
+            withAnimation(.easeOut(duration: 0.12)) {
+                panOffset = clampedPan(panOffset, viewport: viewport, content: contentDiameter,
+                                       dx: dx, dy: dy)
+            }
+            return nil
         }
     }
 
@@ -304,7 +354,7 @@ struct HoneycombLayout: Layout {
             let pos = positions[idx]
             let size = subview.sizeThatFits(.unspecified)
             subview.place(
-                at: CGPoint(x: center.x + pos.x - size.width / 2, y: center.y + pos.y - size.height / 2),
+                at: CGPoint(x: center.x + pos.x - size.width / 2, y: center.y + pos.y - size.width / 2),
                 anchor: .topLeading,
                 proposal: .unspecified
             )
@@ -320,7 +370,7 @@ private struct HoneycombCell: View {
     let isDone: Bool
     /// 本格在内容坐标系中的位置
     let cellPosition: CGPoint
-    /// 可视区中心在内容坐标系中的位置（滚动驱动）
+    /// 焦点中心在内容坐标系中的位置（拖拽/滚轮驱动）
     let focusPosition: CGPoint
     let onDelete: () -> Void
     @State private var showDelete = false
@@ -374,6 +424,7 @@ private struct HoneycombCell: View {
         }
         .scaleEffect(depth.scale * (isActive ? 1.06 : (isPressed ? 0.94 : 1.0)))
         .opacity(depth.fade)
+        .animation(.easeOut(duration: 0.12), value: focusPosition)
         .animation(.spring(duration: 0.3), value: isActive)
         .animation(.spring(duration: 0.2), value: isPressed)
         .frame(width: 84, height: 84)
