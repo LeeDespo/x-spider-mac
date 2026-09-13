@@ -3,7 +3,7 @@ targets:
   XSpiderMac:
     type: application
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - Sources
       - Resources
@@ -16,7 +16,7 @@ targets:
       DEVELOPMENT_TEAM: ""
       ENABLE_HARDENED_RUNTIME: YES
       SWIFT_VERSION: "6.0"
-      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     entitlements:
       path: XSpiderMac.entitlements
       properties:
@@ -29,13 +29,13 @@ targets:
   XSpiderMacTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - Tests
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac.tests
       SWIFT_VERSION: "6.0"
-      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     dependencies:
       - target: XSpiderMac

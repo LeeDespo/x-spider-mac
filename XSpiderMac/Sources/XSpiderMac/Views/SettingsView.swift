@@ -306,7 +306,7 @@ struct SettingsView: View {
                     ImageCache.shared.clearAll()
                     cacheUsageText = L("已清理")
                 }
-                .buttonStyle(.glass)
+                .compatGlassButton()
                 InfoHint(text: L("删除 Cache/XSpiderMac/images 目录下全部缓存文件并重建索引。"))
                 Text(cacheUsageText ?? ByteCountFormatter.string(fromByteCount: ImageCache.shared.currentBytes(), countStyle: .file))
                     .font(.caption)
@@ -358,6 +358,12 @@ struct SettingsView: View {
                 set: { settingsStore.settings.app.liquidGlass = $0; restartDialogVisible = true }
             ))
             .disabled(!GlassCompat.supportsLiquidGlass)
+
+            if !GlassCompat.supportsLiquidGlass {
+                Text(L("当前系统版本不支持液态玻璃，已自动使用普通材质。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if GlassCompat.supportsLiquidGlass {
                 VStack(alignment: .leading, spacing: 4) {
@@ -722,7 +728,7 @@ struct SyncListManagerSheet: View {
                 Spacer()
                 Button(L("完成")) { dismiss() }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.glassProminent)
+                    .compatGlassProminentButton()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

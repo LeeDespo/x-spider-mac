@@ -15,12 +15,16 @@ struct GlassCompat: ViewModifier {
 
     func body(content: Content) -> some View {
         if Self.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
-            Group {
-                if interactive {
-                    content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
-                } else {
-                    content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            if #available(macOS 26.0, *) {
+                Group {
+                    if interactive {
+                        content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                    } else {
+                        content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+                    }
                 }
+            } else {
+                content
             }
         } else if GlassCompat.supportsLiquidGlass {
             // 关闭液态玻璃但系统 26+：按模糊度滑块选材质；0 = 完全透明无背景
@@ -53,7 +57,11 @@ struct GlassButtonCompat: ViewModifier {
 
     func body(content: Content) -> some View {
         if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
-            content.buttonStyle(.glass)
+            if #available(macOS 26.0, *) {
+                content.buttonStyle(.glass)
+            } else {
+                content.buttonStyle(.bordered)
+            }
         } else {
             content.buttonStyle(.bordered)
         }
@@ -76,7 +84,11 @@ struct GlassProminentButtonCompat: ViewModifier {
 
     func body(content: Content) -> some View {
         if GlassCompat.supportsLiquidGlass && settingsStore.settings.liquidGlassEnabled {
-            content.buttonStyle(.glassProminent)
+            if #available(macOS 26.0, *) {
+                content.buttonStyle(.glassProminent)
+            } else {
+                content.buttonStyle(.borderedProminent)
+            }
         } else {
             content.buttonStyle(.borderedProminent)
         }

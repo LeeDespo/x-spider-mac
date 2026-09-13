@@ -216,6 +216,7 @@ struct SyncView: View {
     private func cellChrome(user: SyncUser, index: Int, size: CGFloat) -> some View {
         let isDone = store.completedUsers.contains(user.screenName)
         ZStack {
+            hoverBridge(size: size)
             glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
                 withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
             }
@@ -240,9 +241,8 @@ struct SyncView: View {
                 .offset(y: size / 2 + 14)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
-        // 悬停桥区：覆盖头像+按钮+标签的整片区域，鼠标在控件间移动时不清除
-        .frame(width: size + 140, height: size + 100)
-        .contentShape(Rectangle())
+        // 悬停桥区：命中形是 ZStack 首子视图（透明但参与 hit 联合）——
+        // 鼠标从头像移到任一控件上时 hover 持续 true，控件永不中途消失
         .onHover { h in
             chromeHoverActive = h
             if !h {
@@ -308,6 +308,20 @@ struct SyncView: View {
                 panOffset = clampedPan(panOffset, viewport: viewportSize, content: D, dx: dx, dy: dy)
             }
             return nil
+        }
+    }
+
+    /// 悬停桥区命中形：头像圆 + 顶部按钮横带 + 底部标签横带（联合 hit 区，近乎透明仍可命中）
+    private func hoverBridge(size: CGFloat) -> some View {
+        let pad = size / 2 + 10
+        return ZStack {
+            Circle().fill(Color.white.opacity(0.001)).frame(width: size, height: size)
+            Rectangle().fill(Color.white.opacity(0.001))
+                .frame(width: size + 2 * pad + 56, height: 36)
+                .offset(y: -pad)
+            Rectangle().fill(Color.white.opacity(0.001))
+                .frame(width: 260, height: 26)
+                .offset(y: pad + 8)
         }
     }
 
@@ -473,7 +487,7 @@ struct SyncView: View {
                     input = ""
                     showAddSheet = false
                 }
-                .buttonStyle(.glassProminent)
+                .compatGlassProminentButton()
             }
         }
         .padding(20)
@@ -522,11 +536,10 @@ enum HexRing {
         return anchors[4].s
     }
 
-    /// 环间距：内环更疏，向外收紧——每环 ×1.20，10pt 保底；五环外不再增加
+    /// 环间距：一环 25pt、每环 ×1.5 递增；五环外恒定（25×1.5⁴≈126.6pt，直接内联不递归）
     static func ringGap(ring: Int) -> CGFloat {
-        // 五环外间距恒定：直接算五环值（12×1.2⁴≈24.88pt），不递归调用自身
-        if ring >= 5 { return 12 * pow(1.20, 4) }
-        return max(10, 12 * pow(1.20, Double(ring - 1)))
+        if ring >= 5 { return 25 * pow(1.5, 4) }
+        return 25 * pow(1.5, Double(ring - 1))
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）
@@ -554,9 +567,16 @@ enum HexRing {
         return Int(ceil((-3.0 + (9.0 + 12.0 * Double(index)).squareRoot()) / 6.0))
     }
 
+    /// 全量位置缓存（6 环封顶 127 格）：布局每帧取 O(1)，避免逐格全量重算
+    private static let cachedPositions = SafePositionCache()
+
     /// 第 index 格相对蜂窝中心的平面位置
     static func position(index: Int) -> CGPoint {
-        allPositions(count: index + 1)[index]
+        let count = index + 1
+        if let cached = cachedPositions.get(count) { return cached[index] }
+        let positions = allPositions(count: count)
+        cachedPositions.set(count, positions)
+        return positions[index]
     }
 
     /// 前 count 格的全部位置（含中心）：环 r 在其专属半径上均匀分布（每环独立半径 → 永不重叠）
@@ -582,5 +602,21 @@ enum HexRing {
             ring += 1
         }
         return result
+    }
+}
+
+/// 线程安全的位置缓存（HexRing 静态缓存用，Swift 6 并发检查合规）
+final class SafePositionCache: @unchecked Sendable {
+    private var storage: [Int: [CGPoint]] = [:]
+    private let lock = NSLock()
+
+    func get(_ key: Int) -> [CGPoint]? {
+        lock.lock(); defer { lock.unlock() }
+        return storage[key]
+    }
+
+    func set(_ key: Int, _ value: [CGPoint]) {
+        lock.lock(); defer { lock.unlock() }
+        storage[key] = value
     }
 }
