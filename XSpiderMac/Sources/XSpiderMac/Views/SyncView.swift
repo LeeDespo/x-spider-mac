@@ -55,7 +55,8 @@ struct SyncView: View {
                     ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
                         let rel = HexRing.position(index: idx, step: 88)
                         let cellPos = CGPoint(x: contentCenter.x + rel.x, y: contentCenter.y + rel.y)
-                        honeycombCell(user, index: idx, cellPos: cellPos, focus: focus)
+                        let ring = HexRing.ringNumber(index: idx)
+                        honeycombCell(user, index: idx, cellPos: cellPos, focus: focus, ring: ring)
                     }
                 }
                 .frame(width: D, height: D, alignment: .center)
@@ -64,15 +65,6 @@ struct SyncView: View {
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
             .contentShape(Rectangle())
-            .focusable(true)
-            .onMoveCommand { dir in
-                // 方向键平移焦点
-                withAnimation(.spring(duration: 0.25)) {
-                    panOffset = clampedPan(panOffset, viewport: geo.size, content: D,
-                                           dx: dir == .left ? 44 : dir == .right ? -44 : 0,
-                                           dy: dir == .up ? 44 : dir == .down ? -44 : 0)
-                }
-            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { value in
@@ -119,18 +111,36 @@ struct SyncView: View {
         )
     }
 
-    /// 滚轮/触控板双指滑动 → 平移蜂窝（本地事件监听；弹窗打开时放行不拦截）
+    /// 滚轮/触控板双指滑动 + 方向键 → 平移蜂窝（本地事件监听；弹窗打开时放行不拦截）
     private func installScrollMonitor(contentDiameter: CGFloat, viewport: CGSize) {
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { event in
             guard showAddSheet == false, NSApp.keyWindow?.sheets.isEmpty ?? true else { return event }
-            let dx = -event.scrollingDeltaX * 2.2
-            let dy = -event.scrollingDeltaY * 2.2
-            guard abs(dx) > 0.1 || abs(dy) > 0.1 else { return event }
-            withAnimation(.easeOut(duration: 0.12)) {
-                panOffset = clampedPan(panOffset, viewport: viewport, content: contentDiameter,
-                                       dx: dx, dy: dy)
+            if event.type == .scrollWheel {
+                let dx = -event.scrollingDeltaX * 2.2
+                let dy = -event.scrollingDeltaY * 2.2
+                guard abs(dx) > 0.1 || abs(dy) > 0.1 else { return event }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    panOffset = clampedPan(panOffset, viewport: viewport, content: contentDiameter,
+                                           dx: dx, dy: dy)
+                }
+                return nil
+            } else {
+                // 方向键平移焦点（无 focusable 焦点环）
+                let step: CGFloat = 44
+                let dx: CGFloat, dy: CGFloat
+                switch event.keyCode {
+                case 123: (dx, dy) = (step, 0)      // left
+                case 124: (dx, dy) = (-step, 0)     // right
+                case 125: (dx, dy) = (0, step)      // down
+                case 126: (dx, dy) = (0, -step)     // up
+                default: return event
+                }
+                withAnimation(.spring(duration: 0.25)) {
+                    panOffset = clampedPan(panOffset, viewport: viewport, content: contentDiameter,
+                                           dx: dx, dy: dy)
+                }
+                return nil
             }
-            return nil
         }
     }
 
@@ -142,17 +152,20 @@ struct SyncView: View {
     }
 
     @ViewBuilder
-    private func honeycombCell(_ user: SyncUser, index: Int, cellPos: CGPoint, focus: CGPoint) -> some View {
-        let isActive = store.phase == .syncing && store.currentUserIndex == index
-        let isDone = store.phase == .done || (store.phase == .syncing && index < store.currentUserIndex)
+    private func honeycombCell(_ user: SyncUser, index: Int, cellPos: CGPoint, focus: CGPoint, ring: Int) -> some View {
+        let isActive = store.phase == .syncing && store.currentUser == user.screenName
+        let isDone = store.completedUsers.contains(user.screenName)
         HoneycombCell(
             user: user,
             isActive: isActive,
             isDone: isDone,
+            ring: ring,
             cellPosition: cellPos,
             focusPosition: focus
         ) {
             withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
+        } onSync: {
+            withAnimation(.spring(duration: 0.3)) { store.startSync(target: [user]) }
         }
     }
 
@@ -179,7 +192,7 @@ struct SyncView: View {
         .frame(height: 46, alignment: .center)
         .frame(width: cardWidth, alignment: .center)
         .liquidGlass(interactive: true, cornerRadius: 23)
-        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.30), radius: 12, x: 0, y: 5)
         .animation(.spring(duration: 0.4), value: store.phase)
         .animation(.spring(duration: 0.4), value: store.currentUserIndex)
     }
@@ -237,6 +250,7 @@ struct SyncView: View {
                             Circle().strokeBorder(.white.opacity(0.22), lineWidth: 1)
                         }
                 }
+                .shadow(color: .black.opacity(0.28), radius: 10, x: 0, y: 4)
         }
         .buttonStyle(.plain)
         .help(help)
@@ -304,6 +318,12 @@ enum HexRing {
         allPositions(count: index + 1, step: step)[index]
     }
 
+    /// 第 index 格（0 起）所在环号
+    static func ringNumber(index: Int) -> Int {
+        guard index > 0 else { return 0 }
+        return Int(ceil((-3.0 + (9.0 + 12.0 * Double(index)).squareRoot()) / 6.0))
+    }
+
     /// 前 count 格的全部位置（含中心）；与 HoneycombLayout.placeSubviews 顺序一致
     static func allPositions(count: Int, step: CGFloat) -> [CGPoint] {
         var result: [CGPoint] = [.zero]
@@ -368,78 +388,120 @@ private struct HoneycombCell: View {
     let user: SyncUser
     let isActive: Bool
     let isDone: Bool
+    /// 本格所在环号（0 起）
+    let ring: Int
     /// 本格在内容坐标系中的位置
     let cellPosition: CGPoint
-    /// 焦点中心在内容坐标系中的位置（拖拽/滚轮驱动）
+    /// 焦点中心在内容坐标系中的位置（拖拽/滚轮/方向键驱动）
     let focusPosition: CGPoint
     let onDelete: () -> Void
-    @State private var showDelete = false
+    let onSync: () -> Void
+    @State private var isHovering = false
     @State private var isPressed = false
 
-    /// 深度参数：一个环距 = 88pt；第 4~5 环几乎隐没
-    private var depth: (scale: CGFloat, fade: Double) {
+    static let baseSize: CGFloat = 68
+
+    /// 缩放：中心 200%，随环数加速衰减，第五环 ≈50%，第六环起一律 20%。只缩放不改透明度。
+    private var depthScale: CGFloat {
         let dist = hypot(cellPosition.x - focusPosition.x, cellPosition.y - focusPosition.y)
-        let d = min(1, dist / (88.0 * 4.4))
-        // 幂曲线：近环保持明亮，远环快速隐没
-        let fade = max(0.03, 1.0 - 0.95 * pow(d, 1.6))
-        let scale = 1.12 - 0.42 * pow(d, 1.2)
-        return (scale, fade)
+        if ring == 0 || dist < 60 { return 2.0 }
+        let falloff = pow(0.72, Double(ring))
+        let near = CGFloat(2.0 * falloff)   // 1.44, 1.04, 0.75, 0.54(5环≈50%), 0.39
+        return ring >= 6 ? 0.2 : max(near, 0.2)
     }
 
+    /// 是否五环及以内（悬停才出按钮/标签；环号之外的距离太远不响应）
+    private var interactive: Bool { ring <= 5 }
+
     var body: some View {
-        let depth = depth
+        let scale = depthScale
+        let size = Self.baseSize * scale
         ZStack {
+            // 同步中：强调色圆环
             Circle()
                 .strokeBorder(isActive ? Color.accentColor : Color.clear, lineWidth: 3)
-                .frame(width: 76, height: 76)
-            CachedAvatarView(urlString: user.avatar, size: 68)
+                .frame(width: size + 8, height: size + 8)
+
+            CachedAvatarView(urlString: user.avatar, size: size)
                 .clipShape(Circle())
 
-            // 同步完成/已处理：头像中心黑透明遮罩 + 绿勾（watchOS 风格）
-            if isDone {
+            // 完成态：右上角玻璃打勾徽标（悬停时隐藏，让位给按钮）
+            if isDone && !isHovering {
                 Circle()
-                    .fill(Color.black.opacity(0.45))
-                    .frame(width: 68, height: 68)
-                Image(systemName: "checkmark")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.green)
+                    .fill(.ultraThinMaterial)
+                    .overlay(Circle().fill(Color.green.opacity(0.85)))
+                    .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                    .frame(width: 24, height: 24)
+                    .overlay(Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
+                    .offset(x: size / 2 - 6, y: -size / 2 + 6)
                     .transition(.scale.combined(with: .opacity))
             }
 
-            // 悬停/长按删除：头像中心黑透明遮罩 + 白 ×（大小形状即头像）
-            if showDelete {
-                Button(action: onDelete) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.55))
-                            .frame(width: 68, height: 68)
-                        Image(systemName: "xmark")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
+            // 悬停（五环内）：右上角 [删除][同步] 并排玻璃圆钮 + 昵称-用户名标签
+            if isHovering && interactive {
+                HStack(spacing: 8) {
+                    glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) { onDelete() }
+                    glassMiniButton(icon: "arrow.triangle.2.circlepath",
+                                    tint: isDone ? Color.green : Color.accentColor,
+                                    help: L("同步该用户")) { onSync() }
                 }
-                .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .scaleEffect(depth.scale * (isActive ? 1.06 : (isPressed ? 0.94 : 1.0)))
-        .opacity(depth.fade)
-        .animation(.easeOut(duration: 0.12), value: focusPosition)
-        .animation(.spring(duration: 0.3), value: isActive)
-        .animation(.spring(duration: 0.2), value: isPressed)
-        .frame(width: 84, height: 84)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) { showDelete = hovering }
-        }
-        .onLongPressGesture(minimumDuration: 0.25, pressing: { pressing in
-            isPressed = pressing
-            if pressing {
-                withAnimation(.spring(duration: 0.25)) { showDelete = true }
-            }
-        }, perform: {})
-    }
-}
+                .offset(x: size / 2 - 10, y: -size / 2 - 10)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
 
-#Preview {
-    SyncView()
+                VStack(spacing: 2) {
+                    Spacer()
+                    Text("\(user.name)-@\(user.screenName)")
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.85), in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.8))
+                        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                }
+                .frame(width: max(size, 120), height: size)
+                .offset(y: size / 2 + 16)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .frame(width: max(size, Self.baseSize) + 24, height: max(size, Self.baseSize) + 24)
+        .scaleEffect(isPressed ? 0.94 : 1.0)
+        .animation(.spring(duration: 0.28), value: scale)
+        .animation(.spring(duration: 0.22), value: isHovering)
+        .animation(.spring(duration: 0.25), value: isDone)
+        .onHover { h in
+            guard interactive else { return }
+            isHovering = h
+        }
+        .onLongPressGesture(minimumDuration: 0.25, pressing: { p in
+            isPressed = p
+        }, perform: {})
+        .help(interactive ? "" : user.name)
+    }
+
+    /// 右上角小号玻璃圆钮（32pt，玻璃材质 + 阴影，与状态卡同族）
+    private func glassMiniButton(icon: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 32, height: 32)
+                .background {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            Circle().fill(
+                                LinearGradient(colors: [.white.opacity(0.25), .clear],
+                                               startPoint: .top, endPoint: .center)
+                            )
+                        }
+                        .overlay {
+                            Circle().strokeBorder(.white.opacity(0.30), lineWidth: 1)
+                        }
+                }
+                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
 }

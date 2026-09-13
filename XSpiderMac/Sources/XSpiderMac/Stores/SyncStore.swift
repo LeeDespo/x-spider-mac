@@ -49,6 +49,10 @@ final class SyncStore {
     var phase: SyncPhase = .idle
     /// 当前正在同步的用户下标（-1 = 无）
     var currentUserIndex: Int = -1
+    /// 当前正在同步的用户 screenName（单用户同步时定位单元格）
+    var currentUser: String?
+    /// 同步完成的用户（头像右上角打勾；下次同步开始时清空）
+    var completedUsers: Set<String> = []
     /// 每用户状态文本（如 "新任务 3，跳过 12"）
     var userMessages: [String: String] = [:]
     var autoSyncOnLaunch: Bool {
@@ -111,13 +115,15 @@ final class SyncStore {
 
     // MARK: - 同步执行
 
-    func startSync() {
+    func startSync(target: [SyncUser]? = nil) {
         guard phase != .syncing else { return }
-        guard !users.isEmpty else { return }
+        let list = target ?? users
+        guard !list.isEmpty else { return }
         phase = .syncing
         userMessages = [:]
+        completedUsers = []
         syncTask = Task { [weak self] in
-            await self?.runSync()
+            await self?.runSync(list)
         }
     }
 
@@ -128,12 +134,14 @@ final class SyncStore {
         syncTask = nil
         phase = .interrupted
         currentUserIndex = -1
+        currentUser = nil
     }
 
     /// done/interrupted 状态点击 → 回到 idle 可再次同步
     func resetPhase() {
         phase = .idle
         currentUserIndex = -1
+        currentUser = nil
     }
 
     /// 圆形按钮动作分发
@@ -145,10 +153,11 @@ final class SyncStore {
         }
     }
 
-    private func runSync() async {
-        for (idx, user) in users.enumerated() {
+    private func runSync(_ target: [SyncUser]) async {
+        for user in target {
             if Task.isCancelled { return }
-            currentUserIndex = idx
+            currentUserIndex = users.firstIndex(where: { $0.screenName == user.screenName }) ?? -1
+            currentUser = user.screenName
             do {
                 guard let info = try? await TwitterAPI.shared.getUser(screenName: user.screenName), !info.id.isEmpty else {
                     userMessages[user.screenName] = L("用户不存在")
@@ -179,12 +188,14 @@ final class SyncStore {
                     page += 1
                 } while cursor != nil && page < maxPages
                 userMessages[user.screenName] = L("新任务 ") + "\(newTasks)" + L("，跳过 ") + "\(skipped)"
+                if !Task.isCancelled { completedUsers.insert(user.screenName) }
             } catch {
                 userMessages[user.screenName] = error.localizedDescription
             }
         }
         if !Task.isCancelled {
             currentUserIndex = -1
+            currentUser = nil
             phase = .done
         }
     }

@@ -29,9 +29,14 @@ struct ContentView: View {
         .overlay(alignment: .bottomTrailing) {
             // 浮条挂在 NavigationSplitView 层级：切页时 detail 内容重建，
             // 但浮条身份保持稳定，不会每次切页都重播出现动画
-            FloatingDownloadBar()
-                .padding(20)
+            // 同步页隐藏浮条（带动画）：蜂窝页面保持纯净
+            if selection != .sync {
+                FloatingDownloadBar()
+                    .padding(20)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
+        .animation(.spring(duration: 0.35), value: selection)
         .background {
             // 全出血铺满整窗（含滚动条轨道与底缘）：不留缝隙，避免露出透明窗口底。
             // 折射由玻璃层在全窗口表面呈现；滑块只调材质浓度
