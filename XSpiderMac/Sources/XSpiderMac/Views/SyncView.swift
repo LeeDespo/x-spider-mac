@@ -524,7 +524,8 @@ enum HexRing {
 
     /// 环间距：内环更疏，向外收紧——每环 ×1.20，10pt 保底；五环外不再增加
     static func ringGap(ring: Int) -> CGFloat {
-        if ring >= 5 { return ringGap(ring: 5) }
+        // 五环外间距恒定：直接算五环值（12×1.2⁴≈24.88pt），不递归调用自身
+        if ring >= 5 { return 12 * pow(1.20, 4) }
         return max(10, 12 * pow(1.20, Double(ring - 1)))
     }
 
