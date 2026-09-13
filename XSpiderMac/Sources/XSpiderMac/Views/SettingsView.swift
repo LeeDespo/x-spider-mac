@@ -784,20 +784,7 @@ struct SyncListManagerSheet: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.red)
                     .frame(width: 30, height: 30)
-                    .background {
-                        Circle()
-                            .fill(.ultraThinMaterial)
-                            .overlay {
-                                Circle().fill(
-                                    LinearGradient(colors: [.white.opacity(0.22), .clear],
-                                                   startPoint: .top, endPoint: .center)
-                                )
-                            }
-                            .overlay {
-                                Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1)
-                            }
-                    }
-                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                    .liquidGlass(interactive: true, cornerRadius: 15)
             }
             .buttonStyle(.plain)
             .help(L("从清单移除"))

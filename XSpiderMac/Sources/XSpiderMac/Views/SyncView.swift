@@ -27,10 +27,11 @@ struct SyncView: View {
     /// 悬停去抖任务（可取消——切换悬停目标时旧任务立即失效，消除卡顿）
     @State private var hoverDebounceTask: Task<Void, Never>?
 
-    /// 占位圈上限：补满当前最大用户环 + 5 环，封顶 6 环（一环用户也直接补到 6 环）
+    /// 占位圈规则：用户填到第 N 环(可能不满) → 补满第 N 环 + 再生成完整 N+1 环；封顶 6 环
+    /// 例：用户排满五环、第六环没排满 → 补满六环,再加七环(7>6 截到 6)
     private var placeholderRingLimit: Int {
         let maxUserRing = store.users.isEmpty ? 0 : HexRing.ringNumber(index: store.users.count - 1)
-        return min(6, maxUserRing + 5)
+        return min(6, maxUserRing + 1)
     }
 
     /// 蜂窝总格数（含占位）
@@ -39,29 +40,33 @@ struct SyncView: View {
     }
 
     var body: some View {
-        Group {
-            if settingsStore.settings.syncLayout == .dock {
-                // dock 行悬在状态卡上方：状态卡在中心下 0.25h,行取 0.42h(同一直线、固定间距)
-                DockSyncLayout(y: viewportSize.height * 0.42)
-            } else {
-                honeycomb
+        GeometryReader { geo in
+            Group {
+                if settingsStore.settings.syncLayout == .dock {
+                    // dock 行 = 页面中心（状态卡在 3/4 高度,不与本行重叠）
+                    DockSyncLayout(y: geo.size.height * 0.5)
+                } else {
+                    honeycomb
+                }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .center) {
-                // 状态卡行：卡片中心对准页面中心（按钮组只向右延伸 104pt，整组右移半个按钮组 52pt）
+                // 状态卡行：位于页面 3/4 高度（中心下 0.25h）；按钮组只向右延伸，整组右移半宽补偿
                 HStack(spacing: 8) {
                     progressBarCard
                     addButton
                     syncButton
                 }
-                .offset(x: 52, y: viewportSize.height * 0.25)
+                .offset(x: 52, y: geo.size.height * 0.25)
             }
             .navigationTitle(L("同步"))
             .sheet(isPresented: $showAddSheet) { addSheet }
             .task {
                 store.syncOnLaunchIfNeeded()
             }
+            .onAppear { viewportSize = geo.size }
+            .onChange(of: geo.size) { _, newSize in viewportSize = newSize }
+        }
     }
 
     // MARK: - 蜂窝
@@ -423,68 +428,43 @@ struct SyncView: View {
     }
 
     @ViewBuilder
+    /// 中号玻璃圆钮（新增/同步）：与状态卡同一条液态玻璃管线
     private func glassDiscButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
-                .background {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Circle().fill(
-                                LinearGradient(colors: [.white.opacity(0.25), .clear],
-                                               startPoint: .top, endPoint: .center)
-                            )
-                        }
-                        .overlay {
-                            Circle().strokeBorder(.white.opacity(0.22), lineWidth: 1)
-                        }
-                }
-                .shadow(color: .black.opacity(0.28), radius: 10, x: 0, y: 4)
+                .liquidGlass(interactive: true, cornerRadius: 22)
         }
         .buttonStyle(.plain)
         .help(help)
     }
 
     /// 右上角小号玻璃圆钮（32pt，玻璃材质 + 阴影，与状态卡同族）
+    /// 小号玻璃圆钮：与状态卡同一条液态玻璃管线（无打光/无高光描边，观感与提示框一致）
     private func glassMiniButton(icon: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(tint)
                 .frame(width: 32, height: 32)
-                .background {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Circle().fill(
-                                LinearGradient(colors: [.white.opacity(0.25), .clear],
-                                               startPoint: .top, endPoint: .center)
-                            )
-                        }
-                        .overlay {
-                            Circle().strokeBorder(.white.opacity(0.30), lineWidth: 1)
-                        }
-                }
-                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3)
+                .liquidGlass(interactive: true, cornerRadius: 16)
         }
         .buttonStyle(.plain)
         .help(help)
     }
 
-    /// 完成徽标：绿色玻璃小圆 + 白勾（24pt 固定，悬停淡出）
+    /// 完成徽标：纯色绿圆 + 白勾（24pt 固定，悬停淡出）——与 dock 打勾一致的纯色风格
     private var completionBadge: some View {
         ZStack {
-            Circle().fill(.ultraThinMaterial)
-            Circle().fill(Color.green.opacity(0.85))
-            Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1)
+            Circle().fill(Color.green.opacity(0.9))
             Image(systemName: "checkmark")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
         }
         .frame(width: 24, height: 24)
+        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
     }
 
     // MARK: - 添加弹窗
@@ -577,10 +557,9 @@ enum HexRing {
         return anchors[4].s
     }
 
-    /// 环间距：一环 35pt、每环 ×2 递增；五环及之外与四环一致（35×2³=280pt，直接内联不递归）
+    /// 环间距：全环固定 35pt（恒定,不随环号变化）
     static func ringGap(ring: Int) -> CGFloat {
-        if ring >= 5 { return 35 * pow(2, 3) }
-        return 35 * pow(2, Double(ring - 1))
+        35
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）
@@ -609,37 +588,6 @@ enum HexRing {
     }
 
     /// 连续环半径：环号（可为小数）→ 像素半径（环锚点间线性插值）
-    static func ringRadiusContinuous(_ ringEquiv: CGFloat) -> CGFloat {
-        if ringEquiv <= 0 { return 0 }
-        if ringEquiv >= 6 { return ringRadius(ring: 6) }
-        var prevR: CGFloat = 0, prevD: CGFloat = 0
-        for r in 1...6 {
-            let rad = ringRadius(ring: r)
-            if ringEquiv <= CGFloat(r) {
-                let t = (ringEquiv - prevR) / CGFloat(r - Int(prevR))
-                return prevD + (rad - prevD) * t
-            }
-            prevR = CGFloat(r); prevD = rad
-        }
-        return ringRadius(ring: 6)
-    }
-
-    /// 反函数：像素距离 → 等效环号（ringRadius 的分段线性逆）
-    static func ringEquivalent(forPixelDistance d: CGFloat) -> CGFloat {
-        if d <= 0 { return 0 }
-        var prevR: CGFloat = 0, prevD: CGFloat = 0
-        for r in 1...6 {
-            let rad = ringRadius(ring: r)
-            if d <= rad {
-                let t = (d - prevD) / max(0.001, rad - prevD)
-                return prevR + t * CGFloat(r - Int(prevR))
-            }
-            prevR = CGFloat(r); prevD = rad
-        }
-        // 超出 6 环：按 5→6 斜率线性外推
-        let slope = max(0.001, ringRadius(ring: 6) - ringRadius(ring: 5))
-        return 6 + (d - ringRadius(ring: 6)) / slope
-    }
 
     /// 动态重定位（蜂窝边距随聚焦中心变化的核心）：
     /// 全量位置缓存（6 环封顶 127 格）：布局每帧取 O(1)，避免逐格全量重算
