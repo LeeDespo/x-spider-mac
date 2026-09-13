@@ -55,14 +55,28 @@ struct SearchHistoryPopover: View {
         HStack(spacing: 10) {
             thumbnailStack(for: item)
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.kind == .tweet ? (item.displayName ?? L("推文") + " \(item.keyword)") : item.keyword)
-                    .font(.body.weight(item.kind == .tweet ? .bold : .regular))
-                    .lineLimit(1)
                 if item.kind == .tweet {
-                    Text(L("推文") + " · \(item.keyword)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // 推文：主文 = 推文 id；小字 = 发布者昵称 @用户名
+                    Text(item.keyword)
+                        .font(.body.weight(.semibold))
                         .lineLimit(1)
+                    if let author = item.displayName {
+                        Text(author)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    // 用户：主文 = 昵称；小字 = @用户名
+                    Text(item.displayName ?? item.keyword)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                    if item.displayName != nil {
+                        Text("@\(item.keyword)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
             Spacer()
@@ -85,36 +99,58 @@ struct SearchHistoryPopover: View {
         }
     }
 
-    /// 32pt 图标：用户 = 头像；推文 = 单图或多图堆叠（与账户头像同尺寸）
+    /// 32pt 图标：用户 = 圆头像；推文 = 自适应矩形缩略图（多图计数徽标）
     @ViewBuilder
     private func thumbnailStack(for item: SearchHistoryItem) -> some View {
         if item.kind == .user {
             CachedAvatarView(urlString: item.imageURL, size: 32)
         } else {
-            ZStack {
-                if let extra = item.extraImageURLs, !extra.isEmpty {
-                    ForEach(Array(extra.enumerated().reversed()), id: \.offset) { _, urlString in
-                        CachedAvatarView(urlString: urlString, size: 32)
-                            .rotationEffect(.degrees(0))
-                            .offset(x: 3, y: -3)
+            CachedMediaThumbView(urlString: item.imageURL, width: 44, height: 32, cornerRadius: 6)
+                .overlay(alignment: .bottomTrailing) {
+                    if (item.extraImageURLs?.count ?? 0) > 0 {
+                        Text("×\(1 + (item.extraImageURLs?.count ?? 0))")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .offset(x: 4, y: 4)
                     }
                 }
-                CachedAvatarView(urlString: item.imageURL, size: 32)
+        }
+    }
+}
+
+/// 矩形媒体缩略图（推文历史用）：aspectRatio .fill + 圆角矩形裁剪
+struct CachedMediaThumbView: View {
+    let urlString: String?
+    var width: CGFloat
+    var height: CGFloat
+    var cornerRadius: CGFloat
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: width, height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: width, height: height)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(.background, lineWidth: 1)
+                        Image(systemName: "photo")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if (item.extraImageURLs?.count ?? 0) > 0 {
-                    Text("+\(1 + (item.extraImageURLs?.count ?? 0))")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(2)
-                        .background(.black.opacity(0.6), in: Circle())
-                        .offset(x: 4, y: 4)
-                }
-            }
+        }
+        .task(id: urlString) {
+            guard let urlString else { return }
+            image = await ImageCache.shared.image(for: urlString, category: .avatars)
         }
     }
 }

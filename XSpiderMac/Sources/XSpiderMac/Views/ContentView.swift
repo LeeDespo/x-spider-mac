@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var selection: NavigationItem? = .home
     @State private var appStore = AppStore.shared
+    @State private var showCookieSheet = false
 
     @State private var settingsStore = SettingsStore.shared
 
@@ -44,6 +45,21 @@ struct ContentView: View {
                 .ignoresSafeArea()
         }
         .transparentWindowBackground()
+        .sheet(isPresented: $showCookieSheet) {
+            CookieImportView(isPresented: $showCookieSheet)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openDownloadsTab)) { _ in
+            selection = .downloads
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
+            selection = .home
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                NotificationCenter.default.post(name: .homeFocusSearch, object: nil)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openCookieImport)) { _ in
+            showCookieSheet = true
+        }
         .task {
             // 上游 App.tsx useMount：恢复会话（有 cookie 则静默重新验证）
             await appStore.restoreSession()
@@ -67,6 +83,11 @@ struct ContentView: View {
         case .about: AboutView()
         }
     }
+}
+
+extension Notification.Name {
+    /// 主页搜索框聚焦（菜单「搜索用户或推文」）
+    static let homeFocusSearch = Notification.Name("menu.homeFocusSearch")
 }
 
 #Preview {

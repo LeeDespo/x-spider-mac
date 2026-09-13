@@ -113,6 +113,7 @@ struct SyncView: View {
                                                                        rel.y + panOffset.height))
                     cellChrome(user: user, index: hIdx, size: size)
                         .position(p)
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -191,58 +192,82 @@ struct SyncView: View {
             .opacity(1 - 0.4 * edgeT)
     }
 
-    /// 白色实心圆（占位圈 / 头像垫圈）：静态颜色合成，不做材质/阴影/模糊（127 个圈的性能命门）
+    /// 凹陷浅灰圆（占位圈 / 头像垫圈）：内阴影观感（上暗下亮的反向渐变 + 内描边），
+    /// 静态颜色合成，无材质/阴影/模糊（127 个圈的性能命门）
     @ViewBuilder
     private func padCircle(size: CGFloat, edgeT: Double) -> some View {
         let circle = Circle()
             .fill(
                 LinearGradient(
                     stops: [
-                        .init(color: Color.white.opacity(0.92), location: 0),
-                        .init(color: Color(white: 0.97, opacity: 0.82), location: 1),
+                        .init(color: Color(white: 0.86, opacity: 0.55), location: 0),    // 顶部内阴影
+                        .init(color: Color(white: 0.93, opacity: 0.45), location: 0.35), // 中部过渡
+                        .init(color: Color(white: 0.98, opacity: 0.38), location: 1),    // 底部受光
                     ],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
+                    startPoint: .top, endPoint: .bottom
                 )
             )
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 1))
+            // 内凹描边：上缘深、下缘浅（光从上来 → 凹陷口上缘暗）
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color(white: 0.72, opacity: 0.55), location: 0),
+                                .init(color: Color.white.opacity(0.55), location: 1),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1.5
+                    )
+            )
             .frame(width: size, height: size)
         return circle
             .blur(radius: 8 * edgeT)
             .opacity(1 - 0.4 * edgeT)
     }
 
-    /// 悬停控件：左上删除、右上同步（已完成=绿）、底部昵称标签；带悬停桥区防闪抖
+    /// 悬停控件：一条「标签条」贴在头像正下方——
+    /// [删除钮][昵称-@用户名 或 同步结果消息][同步钮] 同一行；
+    /// 出现/收回带缩放+淡入过渡（挂在 hoveredIndex 变化的 withAnimation 上）
     @ViewBuilder
     private func cellChrome(user: SyncUser, index: Int, size: CGFloat) -> some View {
         let isDone = store.completedUsers.contains(user.screenName)
+        let message = store.userMessages[user.screenName]
         ZStack {
+            // 悬停桥区命中形（头像圆 + 下方标签条横带，透明但参与 hit）
             hoverBridge(size: size)
-            glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
-                withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
-            }
-            .offset(x: -size / 2 - 8, y: -size / 2 - 8)
-            .transition(.scale(scale: 0.6).combined(with: .opacity))
 
-            glassMiniButton(icon: "arrow.triangle.2.circlepath",
-                            tint: isDone ? Color.green : Color.accentColor,
-                            help: L("同步该用户")) {
-                withAnimation(.spring(duration: 0.3)) { store.startSync(target: [user]) }
-            }
-            .offset(x: size / 2 + 8, y: -size / 2 - 8)
-            .transition(.scale(scale: 0.6).combined(with: .opacity))
-
-            Text("\(user.name)-@\(user.screenName)")
+            // 标签条：贴头像下缘（下移 size/2 + 8）
+            HStack(spacing: 8) {
+                glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) {
+                    withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
+                }
+                Group {
+                    if let message, !message.isEmpty {
+                        Text(message)
+                            .lineLimit(1)
+                            .foregroundStyle(isDone ? Color.green : Color.red)
+                    } else {
+                        Text("\(user.name)-@\(user.screenName)")
+                            .lineLimit(1)
+                    }
+                }
                 .font(.caption2)
-                .lineLimit(1)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 3)
+                .padding(.vertical, 5)
                 .liquidGlass(interactive: false, cornerRadius: 12)
                 .fixedSize()
-                .offset(y: size / 2 + 14)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                glassMiniButton(icon: "arrow.triangle.2.circlepath",
+                                tint: isDone ? Color.green : Color.accentColor,
+                                help: L("同步该用户")) {
+                    withAnimation(.spring(duration: 0.3)) { store.startSync(target: [user]) }
+                }
+            }
+            .fixedSize()
+            .offset(y: size / 2 + 8)
         }
-        // 悬停桥区：命中形是 ZStack 首子视图（透明但参与 hit 联合）——
-        // 鼠标从头像移到任一控件上时 hover 持续 true，控件永不中途消失
         .onHover { h in
             chromeHoverActive = h
             if !h {
@@ -311,17 +336,13 @@ struct SyncView: View {
         }
     }
 
-    /// 悬停桥区命中形：头像圆 + 顶部按钮横带 + 底部标签横带（联合 hit 区，近乎透明仍可命中）
+    /// 悬停桥区命中形：头像圆 + 底部标签条横带（联合 hit 区，近乎透明仍可命中）
     private func hoverBridge(size: CGFloat) -> some View {
-        let pad = size / 2 + 10
-        return ZStack {
+        ZStack {
             Circle().fill(Color.white.opacity(0.001)).frame(width: size, height: size)
             Rectangle().fill(Color.white.opacity(0.001))
-                .frame(width: size + 2 * pad + 56, height: 36)
-                .offset(y: -pad)
-            Rectangle().fill(Color.white.opacity(0.001))
-                .frame(width: 260, height: 26)
-                .offset(y: pad + 8)
+                .frame(width: size + 220, height: 40)
+                .offset(y: size / 2 + 8)
         }
     }
 

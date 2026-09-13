@@ -12,12 +12,13 @@ struct TransparentWindowConfig: ViewModifier {
             WindowAccessor { window in
                 guard let window else { return }
                 WindowConfigurator.apply(to: window)
-                // 全屏时撤掉透明底/fullSizeContentView：否则系统在 titlebar 区域
-                // 合成纯白底（全屏白顶栏 bug），并观察全屏切换实时响应
+                // 全屏与窗口化共用同一套沉浸样式（透明底 + fullSizeContentView），
+                // 顶栏观感全屏内外一致；进入全屏后系统不再合成白色 titlebar 底
                 let center = NotificationCenter.default
-                center.addObserver(forName: NSWindow.willEnterFullScreenNotification,
+                center.addObserver(forName: NSWindow.didEnterFullScreenNotification,
                                    object: window, queue: .main) { _ in
-                    WindowConfigurator.exitImmersive(from: window)
+                    // 全屏后重新应用：系统切全屏时会重置样式
+                    WindowConfigurator.apply(to: window)
                 }
                 center.addObserver(forName: NSWindow.didExitFullScreenNotification,
                                    object: window, queue: .main) { _ in
@@ -49,13 +50,6 @@ enum WindowConfigurator {
         window.appearance = nil
     }
 
-    /// 全屏态：恢复不透明标准窗口（防全屏白顶栏）——退出全屏后 apply() 恢复沉浸外观
-    static func exitImmersive(from window: NSWindow) {
-        window.isOpaque = true
-        window.backgroundColor = .windowBackgroundColor
-        window.titlebarAppearsTransparent = false
-        window.styleMask.remove(.fullSizeContentView)
-    }
 }
 
 /// 拿到宿主 NSWindow

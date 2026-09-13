@@ -90,6 +90,7 @@ struct HomeView: View {
     // MARK: - 搜索栏（上游 Space.Compact：输入 + 搜索按钮 + 历史下拉）
 
     @State private var showSearchHistory = false
+    @FocusState private var searchFieldFocused: Bool
 
     private var searchBar: some View {
         HStack(spacing: 8) {
@@ -99,6 +100,7 @@ struct HomeView: View {
                 get: { store.keyword },
                 set: { store.keyword = $0 }
             ))
+            .focused($searchFieldFocused)
             .onSubmit { submitSearch() }
 
             if !appStore.searchHistory.isEmpty {
@@ -131,6 +133,9 @@ struct HomeView: View {
         }
         .padding(10)
         .liquidGlass(interactive: true, cornerRadius: 16)
+        .onReceive(NotificationCenter.default.publisher(for: .homeFocusSearch)) { _ in
+            searchFieldFocused = true
+        }
     }
 
     // MARK: - 用户信息卡（上游 PageHeader 下方的用户行：头像+昵称+screen_name+媒体数+链接）

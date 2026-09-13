@@ -462,6 +462,7 @@ final class DownloadStore {
             aria2.pause(gid: gid)
             update(gid: gid) { $0.status = .paused }
             pump()
+            refreshSleepAssertion()
             return
         }
         task.cancel(byProducingResumeData: { [weak self] data in
@@ -469,6 +470,7 @@ final class DownloadStore {
                 if let data { self?.resumeDataMap[gid] = data }
                 self?.sessionTasks.removeValue(forKey: gid)
                 self?.update(gid: gid) { $0.status = .paused }
+                self?.refreshSleepAssertion()
             }
         })
     }
@@ -502,6 +504,7 @@ final class DownloadStore {
         for task in tasks where task.status == .paused {
             unpause(task.gid)
         }
+        refreshSleepAssertion()
     }
 
     func removeAll(status: DownloadStatus? = nil) {

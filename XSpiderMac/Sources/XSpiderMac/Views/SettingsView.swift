@@ -323,8 +323,11 @@ struct SettingsView: View {
     private var dataSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Button(L("清除所有应用数据…"), role: .destructive) { showCleanupDialog = true }
-                    .compatGlassButton()
+                HStack(spacing: 6) {
+                    Button(L("清除所有应用数据…"), role: .destructive) { showCleanupDialog = true }
+                        .compatGlassButton()
+                    InfoHint(text: L("删除 ~/Library/Application Support/XSpiderMac（下载暂存、aria2 会话、图片缓存）、~/Library/Caches 与 ~/Library/Logs/XSpiderMac 下的应用数据及偏好设置。不影响已保存的媒体文件。"))
+                }
             }
         } header: {
             Label(L("数据"), systemImage: "externaldrive")
@@ -734,6 +737,8 @@ struct SyncListManagerSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 460, height: 520)
+        .presentationBackground(.thinMaterial)
+        .presentationBackgroundInteraction(.enabled)
     }
 
     /// 行：头像 + 昵称 + 用户名 + 液态玻璃删除按钮

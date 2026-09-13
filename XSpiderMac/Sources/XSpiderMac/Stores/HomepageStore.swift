@@ -52,7 +52,7 @@ final class HomepageStore {
             guard generation == userGeneration else { return } // 旧请求晚到，丢弃
             userInfoLoading = false
             userInfo = user
-            AppStore.shared.addSearchHistory(sn)
+            AppStore.shared.addSearchHistory(sn, displayName: user.name, avatarURL: user.avatar)
             // 「自动加载媒体」关闭时只显示用户卡 + 下载配置，省流量
             if SettingsStore.shared.settings.autoLoadMediaEnabled {
                 await loadPostList(generation: generation)
