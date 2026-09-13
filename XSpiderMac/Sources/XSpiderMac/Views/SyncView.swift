@@ -43,10 +43,13 @@ struct SyncView: View {
     private var honeycomb: some View {
         GeometryReader { geo in
             let D = HexRing.diameter(userCount: store.users.count)
+            // 焦点 = 蜂窝内容中心 − 平移偏移（拖拽/滚轮/方向键实时驱动尺寸重排）
+            let focus = CGPoint(x: D / 2 - panOffset.width, y: D / 2 - panOffset.height)
             ZStack {
-                HoneycombLayout {
+                HoneycombLayout(focusPosition: focus) {
                     ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
                         honeycombCell(user, index: idx)
+                            .zIndex(Double(100 - HexRing.ringNumber(index: idx)))
                     }
                 }
                 .frame(width: D, height: D, alignment: .center)
@@ -136,14 +139,20 @@ struct SyncView: View {
 
     @ViewBuilder
     private func honeycombCell(_ user: SyncUser, index: Int) -> some View {
+        let D = HexRing.diameter(userCount: store.users.count)
+        let center = CGPoint(x: D / 2, y: D / 2)
+        let rel = HexRing.position(index: index)
+        let cellPos = CGPoint(x: center.x + rel.x, y: center.y + rel.y)
+        let focus = CGPoint(x: center.x - panOffset.width, y: center.y - panOffset.height)
         let ring = HexRing.ringNumber(index: index)
         let isActive = store.phase == .syncing && store.currentUser == user.screenName
         let isDone = store.completedUsers.contains(user.screenName)
+        let cellSize = HexRing.cellSize(distanceToFocus: hypot(cellPos.x - focus.x, cellPos.y - focus.y))
         return HoneycombCell(
             user: user,
             isActive: isActive,
             isDone: isDone,
-            size: HexRing.cellSize(ring: ring),
+            size: cellSize,
             interactive: ring <= 5
         ) {
             withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
@@ -299,6 +308,16 @@ enum HexRing {
     /// 基准头像直径
     static let baseSize: CGFloat = 68
 
+    /// 距焦点的连续尺寸曲线（布局与视图共用的唯一事实来源）：
+    /// 中心 200% → 每环 ×0.72 → 第五环 ≈50% → 之外一律 20%
+    static func cellSize(distanceToFocus dist: CGFloat) -> CGFloat {
+        let r5 = ringRadius(ring: 5)  // 第五环半径（≈415pt）
+        guard dist > cellSize(ring: 0) * 0.38 else { return cellSize(ring: 0) }
+        guard dist < r5 else { return cellSize(ring: 6) }  // 五环外一律 20%
+        let ringEquivalent = 5.0 * Double(dist / r5)
+        return min(cellSize(ring: 0), baseSize * 2.0 * CGFloat(pow(0.72, ringEquivalent)))
+    }
+
     /// 每环头像直径：中心 200% → 每环 ×0.72 → 五环 50% → 六环起一律 20%
     static func cellSize(ring: Int) -> CGFloat {
         switch ring {
@@ -338,6 +357,11 @@ enum HexRing {
         return Int(ceil((-3.0 + (9.0 + 12.0 * Double(index)).squareRoot()) / 6.0))
     }
 
+    /// 第 index 格（0 起）在内容坐标系中相对蜂窝中心的平面位置
+    static func position(index: Int) -> CGPoint {
+        allPositions(count: index + 1)[index]
+    }
+
     /// 前 count 格的全部位置（含中心）：环 r 在其专属半径上均匀分布（每环独立半径 → 永不重叠）
     static func allPositions(count: Int) -> [CGPoint] {
         var result: [CGPoint] = [.zero]
@@ -369,6 +393,9 @@ enum HexRing {
 /// 环形蜂窝布局：子视图按六边形环展开（环 k 恰好 6k 格），无中心占位。
 /// step = 相邻格中心距；cellExtent = 单元视觉外径（直径）。
 struct HoneycombLayout: Layout {
+    /// 焦点中心在内容坐标系中的位置（随拖拽/滚轮平移实时更新 → 触发重布局）
+    var focusPosition: CGPoint = .zero
+
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let d = HexRing.diameter(userCount: subviews.count)
         return CGSize(width: d, height: d)
@@ -377,13 +404,13 @@ struct HoneycombLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         let positions = HexRing.allPositions(count: subviews.count)
-        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(max(1, subviews.count))).squareRoot()) / 6.0)))
-        _ = rings
 
         for (idx, subview) in subviews.enumerated() {
             guard idx < positions.count else { break }
             let pos = positions[idx]
-            let cellSize = HexRing.cellSize(ring: HexRing.ringNumber(index: idx))
+            // 尺寸 = 该格到焦点的距离（与视图层同一公式）
+            let dist = hypot(pos.x - focusPosition.x, pos.y - focusPosition.y)
+            let cellSize = HexRing.cellSize(distanceToFocus: dist)
             // 直接把格子按目标尺寸摆放（布局即尺寸，无 scaleEffect 溢出）
             subview.place(
                 at: CGPoint(x: center.x + pos.x - cellSize / 2, y: center.y + pos.y - cellSize / 2),
@@ -420,16 +447,21 @@ private struct HoneycombCell: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                // 悬停（五环内）：右上角并排 [删除][同步] 玻璃圆钮（间距 8，不贴边）
+                // 悬停（五环内）：右上角 = 同步该用户圆钮
                 if isHovering && interactive {
-                    HStack(spacing: 8) {
-                        glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) { onDelete() }
-                        glassMiniButton(icon: "arrow.triangle.2.circlepath",
-                                        tint: isDone ? Color.green : Color.accentColor,
-                                        help: L("同步该用户")) { onSync() }
-                    }
-                    .offset(x: 10, y: -10)
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    glassMiniButton(icon: "arrow.triangle.2.circlepath",
+                                    tint: isDone ? Color.green : Color.accentColor,
+                                    help: L("同步该用户")) { onSync() }
+                        .offset(x: 10, y: -10)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                // 悬停（五环内）：右下角 = 删除该用户圆钮
+                if isHovering && interactive {
+                    glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) { onDelete() }
+                        .offset(x: 10, y: 10)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
             }
             .overlay(alignment: .bottom) {
