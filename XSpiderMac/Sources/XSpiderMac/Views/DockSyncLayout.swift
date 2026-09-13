@@ -61,8 +61,9 @@ struct DockSyncLayout: View {
 
     private func xFor(index: Int, center: Int, w: CGFloat) -> CGFloat {
         let off = index - center
+        guard off != 0 else { return w / 2 }  // 中心：直接返回中点（1...0 空区间会 trap）
         var x = w / 2
-        let dir: CGFloat = off >= 0 ? 1 : -1
+        let dir: CGFloat = off > 0 ? 1 : -1
         for step in 1...abs(off) {
             x += dir * xStep(step - 1) + dir * CGFloat(step > 1 ? 6 : 0)
         }

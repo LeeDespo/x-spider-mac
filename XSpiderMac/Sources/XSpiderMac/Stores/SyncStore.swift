@@ -191,7 +191,10 @@ final class SyncStore {
             currentUserIndex = users.firstIndex(where: { $0.screenName == user.screenName }) ?? -1
             currentUser = user.screenName
             do {
-                let info = try await TwitterAPI.shared.getUser(screenName: user.screenName, fast: true)
+                // 单用户总闸 150s：任何未知慢点(密钥加载/分页翻页)兜底快速失败
+                let info = try await withTimeout(150) {
+                    try await TwitterAPI.shared.getUser(screenName: user.screenName, fast: true)
+                }
                 guard !info.id.isEmpty else {
                     throw SyncFailure.userNotFound(user.screenName)
                 }
@@ -203,7 +206,10 @@ final class SyncStore {
                 var page = 0
                 repeat {
                     if Task.isCancelled { return }
-                    let (posts, next) = try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursor, fast: true)
+                    let cursorIn = cursor
+                    let (posts, next) = try await withTimeout(150) {
+                        try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursorIn, fast: true)
+                    }
                     for post in posts {
                         for media in post.medias ?? [] {
                             if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {

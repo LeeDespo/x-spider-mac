@@ -58,7 +58,8 @@ actor XClientTransaction {
             "Cookie": cookieString,
         ]
         // 1. 登录态页面（xclid 用 /tesla；任何用户页都行，关键是登录态渲染）
-        let page = try await client.request(
+        // 快速模式：3 次×10s——断网/代理不可达时快速失败，不让同步页卡「同步中」
+        let page = try await client.requestFast(
             url: URL(string: "https://x.com/tesla")!,
             headers: headers
         )
@@ -260,7 +261,7 @@ actor XClientTransaction {
                     guard active < 16, let url = iterator.next() else { return }
                     active += 1
                     group.addTask { [client, headers] in
-                        let text = (try? await client.request(url: URL(string: url)!, headers: headers))?.text()
+                        let text = (try? await client.requestFast(url: URL(string: url)!, headers: headers))?.text()
                         return (url, text)
                     }
                 }
@@ -309,7 +310,7 @@ actor XClientTransaction {
     }
 
     private func fetchScript(urlString: String, headers: [String: String]) async throws -> String {
-        let resp = try await client.request(url: URL(string: urlString)!, headers: headers)
+        let resp = try await client.requestFast(url: URL(string: urlString)!, headers: headers)
         return resp.text()
     }
 
