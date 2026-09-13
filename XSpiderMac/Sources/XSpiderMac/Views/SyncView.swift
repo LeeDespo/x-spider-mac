@@ -38,6 +38,19 @@ struct SyncView: View {
             .task {
                 store.syncOnLaunchIfNeeded()
             }
+            .onAppear {
+                // 沉浸式蜂窝：同步页隐藏标题栏（顶栏不再遮挡头像）
+                WindowAccessor.applyToKeyWindow { window in
+                    window.titlebarAppearsTransparent = true
+                    window.titleVisibility = .hidden
+                }
+            }
+            .onDisappear {
+                WindowAccessor.applyToKeyWindow { window in
+                    window.titlebarAppearsTransparent = true  // 全窗口透明底本就要求透明 titlebar
+                    window.titleVisibility = .visible
+                }
+            }
     }
 
     // MARK: - 蜂窝（六边形环展开 + 拖拽/滚轮平移近大远小）
@@ -58,7 +71,6 @@ struct SyncView: View {
                 .offset(panOffset)
             }
             .frame(width: geo.size.width, height: geo.size.height)
-            .ignoresSafeArea(.container, edges: [.top, .bottom])
             .clipped()
             .contentShape(Rectangle())
             .simultaneousGesture(
@@ -312,31 +324,31 @@ enum HexRing {
     static let baseSize: CGFloat = 68
 
     /// 距焦点的连续尺寸曲线（布局与视图共用的唯一事实来源）：
-    /// 中心 200% → 每环 ×0.87 → 第五环 = 100% → 之外一律 70%
+    /// 中心 150% → 每环 ×0.9388 → 第五环 = 106% → 之外一律 100%
     static func cellSize(distanceToFocus dist: CGFloat) -> CGFloat {
         let r5 = ringRadius(ring: 5)
         guard dist > cellSize(ring: 0) * 0.38 else { return cellSize(ring: 0) }
-        guard dist < r5 else { return cellSize(ring: 6) }  // 五环外一律 70%
+        guard dist < r5 else { return cellSize(ring: 6) }  // 五环外一律 100%
         let ringEquivalent = 5.0 * Double(dist / r5)
-        return min(cellSize(ring: 0), baseSize * 2.0 * CGFloat(pow(0.8706, ringEquivalent)))
+        return min(cellSize(ring: 0), baseSize * 1.5 * CGFloat(pow(0.9388, ringEquivalent)))
     }
 
-    /// 每环头像直径：中心 200% → 每环 ×0.87 → 五环 100% → 六环起一律 70%
+    /// 每环头像直径：中心 150% → 120% → 115% → 110% → 108% → 106% → 五环外 100%
     static func cellSize(ring: Int) -> CGFloat {
         switch ring {
-        case 0: return baseSize * 2.0
-        case 1: return baseSize * 1.74
-        case 2: return baseSize * 1.51
-        case 3: return baseSize * 1.32
-        case 4: return baseSize * 1.15
-        case 5: return baseSize * 1.0
-        default: return baseSize * 0.70
+        case 0: return baseSize * 1.50
+        case 1: return baseSize * 1.20
+        case 2: return baseSize * 1.15
+        case 3: return baseSize * 1.10
+        case 4: return baseSize * 1.08
+        case 5: return baseSize * 1.06
+        default: return baseSize * 1.0
         }
     }
 
-    /// 环间距：内环更疏（一环 44pt），向外快速收紧（×0.75，6pt 保底）——外围更密、中间更疏
+    /// 环间距：内环更疏（一环 40pt），向外收紧（×0.80，8pt 保底）——外围更密、中间更疏
     static func ringGap(ring: Int) -> CGFloat {
-        max(6, 44 * pow(0.75, Double(ring - 1)))
+        max(8, 40 * pow(0.80, Double(ring - 1)))
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 该处间隙；环间 = 两环尺寸/2 之和 + 该处间隙）
