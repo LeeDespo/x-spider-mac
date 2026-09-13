@@ -42,21 +42,11 @@ struct SyncView: View {
 
     private var honeycomb: some View {
         GeometryReader { geo in
-            let D = honeycombDiameter
-            let contentCenter = CGPoint(x: D / 2, y: D / 2)
-            // 焦点 = 视口中心映射到内容坐标：内容右移 → 焦点左移
-            let focus = CGPoint(
-                x: contentCenter.x - panOffset.width,
-                y: contentCenter.y - panOffset.height
-            )
-
+            let D = HexRing.diameter(userCount: store.users.count)
             ZStack {
-                HoneycombLayout(step: 88, cellExtent: 84) {
+                HoneycombLayout {
                     ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
-                        let rel = HexRing.position(index: idx, step: 88)
-                        let cellPos = CGPoint(x: contentCenter.x + rel.x, y: contentCenter.y + rel.y)
-                        let ring = HexRing.ringNumber(index: idx)
-                        honeycombCell(user, index: idx, cellPos: cellPos, focus: focus, ring: ring)
+                        honeycombCell(user, index: idx)
                     }
                 }
                 .frame(width: D, height: D, alignment: .center)
@@ -73,10 +63,10 @@ struct SyncView: View {
                                                additive: false)
                     }
                     .onEnded { value in
-                        withAnimation(.spring(duration: 0.35)) {
+                        withAnimation(.spring(duration: 0.3)) {
                             panOffset = clampedPan(panOffset, viewport: geo.size, content: D,
-                                                   dx: value.translation.width, dy: value.translation.height,
-                                                   additive: false)
+                                                   dx: value.predictedEndTranslation.width - value.translation.width,
+                                                   dy: value.predictedEndTranslation.height - value.translation.height)
                         }
                     }
             )
@@ -144,24 +134,17 @@ struct SyncView: View {
         }
     }
 
-    /// 蜂窝所需直径（满环公式：环 r 横向半径 = r*step）
-    private var honeycombDiameter: CGFloat {
-        let n = max(1, store.users.count)
-        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
-        return CGFloat(2 * rings) * 88 + 84
-    }
-
     @ViewBuilder
-    private func honeycombCell(_ user: SyncUser, index: Int, cellPos: CGPoint, focus: CGPoint, ring: Int) -> some View {
+    private func honeycombCell(_ user: SyncUser, index: Int) -> some View {
+        let ring = HexRing.ringNumber(index: index)
         let isActive = store.phase == .syncing && store.currentUser == user.screenName
         let isDone = store.completedUsers.contains(user.screenName)
-        HoneycombCell(
+        return HoneycombCell(
             user: user,
             isActive: isActive,
             isDone: isDone,
-            ring: ring,
-            cellPosition: cellPos,
-            focusPosition: focus
+            size: HexRing.cellSize(ring: ring),
+            interactive: ring <= 5
         ) {
             withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
         } onSync: {
@@ -313,9 +296,38 @@ enum HexRing {
         (0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0),
     ]
 
-    /// 第 index 格（0 = 中心）相对蜂窝中心的平面坐标（flat-top 投影）
-    static func position(index: Int, step: CGFloat) -> CGPoint {
-        allPositions(count: index + 1, step: step)[index]
+    /// 基准头像直径
+    static let baseSize: CGFloat = 68
+
+    /// 每环头像直径：中心 200% → 每环 ×0.72 → 五环 50% → 六环起一律 20%
+    static func cellSize(ring: Int) -> CGFloat {
+        switch ring {
+        case 0: return baseSize * 2.0
+        case 1: return baseSize * 1.44
+        case 2: return baseSize * 1.04
+        case 3: return baseSize * 0.75
+        case 4: return baseSize * 0.60
+        case 5: return baseSize * 0.50
+        default: return baseSize * 0.20
+        }
+    }
+
+    /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）
+    static func ringRadius(ring: Int, gap: CGFloat = 14) -> CGFloat {
+        guard ring > 0 else { return 0 }
+        var radius: CGFloat = cellSize(ring: 0) / 2 + cellSize(ring: 1) / 2 + gap
+        for r in 2...ring {
+            radius += cellSize(ring: r - 1) / 2 + cellSize(ring: r) / 2 + gap
+        }
+        return radius
+    }
+
+    /// 蜂窝整体直径（最大环半径 × 2 + 最大格径 + 余量）
+    static func diameter(userCount: Int) -> CGFloat {
+        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(max(1, userCount))).squareRoot()) / 6.0)))
+        guard rings > 0 else { return cellSize(ring: 0) + 40 }
+        let maxCell = cellSize(ring: rings)
+        return ringRadius(ring: rings) * 2 + maxCell + 24
     }
 
     /// 第 index 格（0 起）所在环号
@@ -324,23 +336,23 @@ enum HexRing {
         return Int(ceil((-3.0 + (9.0 + 12.0 * Double(index)).squareRoot()) / 6.0))
     }
 
-    /// 前 count 格的全部位置（含中心）；与 HoneycombLayout.placeSubviews 顺序一致
-    static func allPositions(count: Int, step: CGFloat) -> [CGPoint] {
+    /// 前 count 格的全部位置（含中心）：环 r 在其专属半径上均匀分布（每环独立半径 → 永不重叠）
+    static func allPositions(count: Int) -> [CGPoint] {
         var result: [CGPoint] = [.zero]
         guard count > 1 else { return result }
-        var axial: (q: Double, r: Double) = (0, 0)
         var ring = 1
         while result.count < count {
-            axial = (Double(-ring), Double(ring))  // 环起点：NW 角顶点
+            let radius = ringRadius(ring: ring)
+            var axial: (q: Double, r: Double) = (Double(-ring), Double(ring))  // 环起点：NW 角顶点
             for dir in directions.indices {
                 for _ in 0..<ring {
                     let d = directions[dir]
                     axial = (axial.q + d.0, axial.r + d.1)
-                    // axial → 平面像素（flat-top：x = step*(q + r/2), y = step*r*√3/2）
-                    result.append(CGPoint(
-                        x: CGFloat(step * (axial.q + axial.r / 2)),
-                        y: CGFloat(step * axial.r * 0.866_025_4)
-                    ))
+                    // 轴向 → 平面（flat-top：x = radius*(q + r/2)/ring, y = radius*r*√3/2/ring）
+                    // 即把该环的 6r 格均匀放在半径 radius 的六边形环上
+                    let x = radius * CGFloat(axial.q + axial.r / 2) / CGFloat(ring)
+                    let y = radius * CGFloat(axial.r) * 0.866_025_4 / CGFloat(ring)
+                    result.append(CGPoint(x: x, y: y))
                     if result.count >= count { return result }
                 }
             }
@@ -355,131 +367,128 @@ enum HexRing {
 /// 环形蜂窝布局：子视图按六边形环展开（环 k 恰好 6k 格），无中心占位。
 /// step = 相邻格中心距；cellExtent = 单元视觉外径（直径）。
 struct HoneycombLayout: Layout {
-    var step: CGFloat = 88
-    var cellExtent: CGFloat = 84
-
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let n = max(1, subviews.count)
-        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
-        let diameter = CGFloat(2 * rings) * step + cellExtent
-        return CGSize(width: diameter, height: diameter)
+        let d = HexRing.diameter(userCount: subviews.count)
+        return CGSize(width: d, height: d)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
-        let positions = HexRing.allPositions(count: subviews.count, step: step)
+        let positions = HexRing.allPositions(count: subviews.count)
+        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(max(1, subviews.count))).squareRoot()) / 6.0)))
+        _ = rings
 
         for (idx, subview) in subviews.enumerated() {
             guard idx < positions.count else { break }
             let pos = positions[idx]
-            let size = subview.sizeThatFits(.unspecified)
+            let cellSize = HexRing.cellSize(ring: HexRing.ringNumber(index: idx))
+            // 直接把格子按目标尺寸摆放（布局即尺寸，无 scaleEffect 溢出）
             subview.place(
-                at: CGPoint(x: center.x + pos.x - size.width / 2, y: center.y + pos.y - size.width / 2),
+                at: CGPoint(x: center.x + pos.x - cellSize / 2, y: center.y + pos.y - cellSize / 2),
                 anchor: .topLeading,
-                proposal: .unspecified
+                proposal: ProposedViewSize(width: cellSize, height: cellSize)
             )
         }
     }
 }
 
-// MARK: - 蜂窝单元（近大远小 + 悬停删除遮罩 + 完成态遮罩）
+// MARK: - 蜂窝单元（尺寸由布局按环提案；悬停元素 overlay 锚定头像边缘，永不错位）
 
 private struct HoneycombCell: View {
     let user: SyncUser
     let isActive: Bool
     let isDone: Bool
-    /// 本格所在环号（0 起）
-    let ring: Int
-    /// 本格在内容坐标系中的位置
-    let cellPosition: CGPoint
-    /// 焦点中心在内容坐标系中的位置（拖拽/滚轮/方向键驱动）
-    let focusPosition: CGPoint
+    /// 头像直径（布局按环号算好直接给）
+    let size: CGFloat
+    /// 五环内才响应悬停按钮/标签
+    let interactive: Bool
     let onDelete: () -> Void
     let onSync: () -> Void
     @State private var isHovering = false
     @State private var isPressed = false
 
-    static let baseSize: CGFloat = 68
-
-    /// 缩放：中心 200%，随环数加速衰减，第五环 ≈50%，第六环起一律 20%。只缩放不改透明度。
-    private var depthScale: CGFloat {
-        let dist = hypot(cellPosition.x - focusPosition.x, cellPosition.y - focusPosition.y)
-        if ring == 0 || dist < 60 { return 2.0 }
-        let falloff = pow(0.72, Double(ring))
-        let near = CGFloat(2.0 * falloff)   // 1.44, 1.04, 0.75, 0.54(5环≈50%), 0.39
-        return ring >= 6 ? 0.2 : max(near, 0.2)
-    }
-
-    /// 是否五环及以内（悬停才出按钮/标签；环号之外的距离太远不响应）
-    private var interactive: Bool { ring <= 5 }
-
     var body: some View {
-        let scale = depthScale
-        let size = Self.baseSize * scale
-        ZStack {
-            // 同步中：强调色圆环
-            Circle()
-                .strokeBorder(isActive ? Color.accentColor : Color.clear, lineWidth: 3)
-                .frame(width: size + 8, height: size + 8)
-
-            CachedAvatarView(urlString: user.avatar, size: size)
-                .clipShape(Circle())
-
-            // 完成态：右上角玻璃打勾徽标（悬停时隐藏，让位给按钮）
-            if isDone && !isHovering {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Circle().fill(Color.green.opacity(0.85)))
-                    .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
-                    .frame(width: 24, height: 24)
-                    .overlay(Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
-                    .offset(x: size / 2 - 6, y: -size / 2 + 6)
-                    .transition(.scale.combined(with: .opacity))
-            }
-
-            // 悬停（五环内）：右上角 [删除][同步] 并排玻璃圆钮 + 昵称-用户名标签
-            if isHovering && interactive {
-                HStack(spacing: 8) {
-                    glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) { onDelete() }
-                    glassMiniButton(icon: "arrow.triangle.2.circlepath",
-                                    tint: isDone ? Color.green : Color.accentColor,
-                                    help: L("同步该用户")) { onSync() }
+        avatar
+            .overlay(alignment: .topTrailing) {
+                // 完成态：右上角玻璃打勾徽标（悬停时淡出让位给按钮组）
+                if isDone && !isHovering {
+                    completionBadge
+                        .offset(x: 6, y: -6)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
                 }
-                .offset(x: size / 2 - 10, y: -size / 2 - 10)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-
-                VStack(spacing: 2) {
-                    Spacer()
+            }
+            .overlay(alignment: .topTrailing) {
+                // 悬停（五环内）：右上角并排 [删除][同步] 玻璃圆钮（间距 8，不贴边）
+                if isHovering && interactive {
+                    HStack(spacing: 8) {
+                        glassMiniButton(icon: "xmark", tint: .red, help: L("移除该用户")) { onDelete() }
+                        glassMiniButton(icon: "arrow.triangle.2.circlepath",
+                                        tint: isDone ? Color.green : Color.accentColor,
+                                        help: L("同步该用户")) { onSync() }
+                    }
+                    .offset(x: 10, y: -10)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .bottom) {
+                // 悬停（五环内）：昵称-@用户名 白色液态玻璃标签（贴头像下缘）
+                if isHovering && interactive {
                     Text("\(user.name)-@\(user.screenName)")
                         .font(.caption2)
                         .lineLimit(1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(.white.opacity(0.85), in: Capsule())
+                        .background(.white.opacity(0.88), in: Capsule())
                         .overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.8))
-                        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                        .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
+                        .fixedSize()
+                        .offset(y: 18)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .frame(width: max(size, 120), height: size)
-                .offset(y: size / 2 + 16)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-        }
-        .frame(width: max(size, Self.baseSize) + 24, height: max(size, Self.baseSize) + 24)
-        .scaleEffect(isPressed ? 0.94 : 1.0)
-        .animation(.spring(duration: 0.28), value: scale)
-        .animation(.spring(duration: 0.22), value: isHovering)
-        .animation(.spring(duration: 0.25), value: isDone)
-        .onHover { h in
-            guard interactive else { return }
-            isHovering = h
-        }
-        .onLongPressGesture(minimumDuration: 0.25, pressing: { p in
-            isPressed = p
-        }, perform: {})
-        .help(interactive ? "" : user.name)
+            .overlay {
+                // 同步中：强调色圆环（随头像尺寸）
+                if isActive {
+                    Circle()
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                        .padding(-5)
+                }
+            }
+            .scaleEffect(isPressed ? 0.94 : 1.0)
+            .animation(.spring(duration: 0.22), value: isHovering)
+            .animation(.spring(duration: 0.25), value: isDone)
+            .onHover { h in
+                guard interactive else { return }
+                isHovering = h
+            }
+            .onLongPressGesture(minimumDuration: 0.25, pressing: { p in
+                isPressed = p
+            }, perform: {})
+            .help(interactive ? "" : user.name)
     }
 
-    /// 右上角小号玻璃圆钮（32pt，玻璃材质 + 阴影，与状态卡同族）
+    private var avatar: some View {
+        CachedAvatarView(urlString: user.avatar, size: size)
+            .clipShape(Circle())
+    }
+
+    /// 完成徽标：绿色玻璃小圆 + 白勾（24pt 固定，悬停淡出）
+    private var completionBadge: some View {
+        ZStack {
+            Circle()
+                .fill(.ultraThinMaterial)
+            Circle()
+                .fill(Color.green.opacity(0.85))
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 24, height: 24)
+        .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+    }
+
+    /// 32pt 玻璃圆钮（与状态卡同材质族）
     private func glassMiniButton(icon: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
