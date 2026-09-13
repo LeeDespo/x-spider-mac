@@ -41,8 +41,8 @@ enum SyncPhase: Equatable, Sendable {
 final class SyncStore {
     static let shared = SyncStore()
 
-    /// 同步清单（持久化）
-    @ObservationIgnored private(set) var users: [SyncUser] = [] {
+    /// 同步清单（持久化；可观察——删除/添加实时驱动蜂窝重排动画）
+    private(set) var users: [SyncUser] = [] {
         didSet { persistUsers() }
     }
 

@@ -51,10 +51,12 @@ struct SyncView: View {
         }
     }
 
-    /// 蜂窝所需直径：环数 = ceil(n / 6)；直径 ≈ (2*环数+1) * 环间距
+    /// 蜂窝所需直径（满环公式，与 HoneycombLayout.sizeThatFits 一致）
     private var honeycombDiameter: CGFloat {
-        let rings = Double((store.users.count + 5) / 6)
-        return CGFloat((2 * rings + 1)) * (59 + 22) + 118 + 96
+        let n = max(1, store.users.count)
+        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
+        let step: CGFloat = 118 / 2 + 22
+        return CGFloat(2 * rings + 1) * step + 118
     }
 
     @ViewBuilder
@@ -102,51 +104,56 @@ struct SyncView: View {
         }
     }
 
-    /// 进度卡：idle 最窄（只容纳"等待同步"），syncing/done 拉长显示进度条；居中锚点伸缩
+    /// 进度卡：idle 最窄（约 1/4，只容纳四字），同步时**左右对称拉长**。
+    /// 高度恒定 + 内容 ZStack overlay 切换 → 宽度变化只走水平方向，不上下拉伸。
     private var progressBarCard: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(phaseLabel)
-                    .font(.caption)
-                if store.phase != .idle {
-                    Spacer()
+        ZStack {
+            if store.phase == .idle {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(L("等待同步"))
+                        .font(.caption)
                 }
-            }
-            // idle 隐藏进度条（占位不塌陷，保持高度恒定）
-            if store.phase != .idle {
-                if store.phase == .syncing {
-                    let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(store.users.count)
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .controlSize(.small)
-                    Text(currentUserText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if store.phase == .done {
-                    Text(summaryText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if store.phase == .interrupted {
-                    Text(L("已取消"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                .transition(.opacity)
+            } else {
+                VStack(spacing: 5) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text(phaseLabel)
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    if store.phase == .syncing {
+                        let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(max(1, store.users.count))
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .controlSize(.small)
+                    } else {
+                        Text(store.phase == .done ? summaryText : L("已取消"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+                .transition(.opacity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(minWidth: 168, maxWidth: 380, alignment: .leading)
-        .liquidGlass(interactive: true, cornerRadius: 20)
+        .padding(.horizontal, 12)
+        .frame(width: cardWidth, height: 52, alignment: .center)  // 宽度动画、高度恒定 → 只左右伸缩
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .liquidGlass(interactive: true, cornerRadius: 18)
         .animation(.spring(duration: 0.4), value: store.phase)
         .animation(.spring(duration: 0.4), value: store.currentUserIndex)
+    }
+
+    /// 卡宽：idle ≈ 容纳"等待同步"（~110pt）；激活态拉长（~200pt，用户要求约 1/4 长度级别）
+    private var cardWidth: CGFloat {
+        store.phase == .idle ? 112 : 210
     }
 
     private var phaseLabel: String {
@@ -185,7 +192,7 @@ struct SyncView: View {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 36, height: 36)
+                .frame(width: 34, height: 34)
                 .background(.quinary, in: Circle())
                 .overlay {
                     Circle().strokeBorder(color.opacity(0.35), lineWidth: 1.5)
@@ -256,9 +263,10 @@ struct HoneycombLayout: Layout {
     var ringGap: CGFloat = 22
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rings = Double(max(0, subviews.count - 1)) / 6.0
-        let count = Int(ceil(rings))
-        let diameter = CGFloat(2 * count + 1) * (cellSize / 2 + ringGap) + cellSize
+        // 满蜂窝环数公式：n-1 ≤ 3r(r+1) → r = ceil((-1+sqrt(1+12(n-1)))/6)
+        let n = max(1, subviews.count - 1)
+        let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
+        let diameter = CGFloat(2 * rings + 1) * (cellSize / 2 + ringGap) + cellSize
         return CGSize(width: diameter, height: diameter)
     }
 
@@ -266,22 +274,32 @@ struct HoneycombLayout: Layout {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         let step = cellSize / 2 + ringGap
 
-        for (idx, subview) in subviews.enumerated() {
-            let pos: CGPoint
-            if idx == 0 {
-                pos = center
-            } else {
-                let ring = Int(ceil(Double(idx) / 6.0))
-                let indexInRing = idx - (6 * (ring - 1) + 1)
-                let capacity = 6 * ring
-                let angle = (Double(indexInRing) / Double(capacity)) * 2 * .pi
-                    + (Double(ring) * .pi / 6)
-                let radius = Double(ring) * step
-                pos = CGPoint(
-                    x: center.x + CGFloat(cos(angle)) * radius,
-                    y: center.y + CGFloat(sin(angle)) * radius
-                )
+        // 六边形环展开（redblobgames rings：cube 坐标六方向螺旋步进，
+        // 环 k 恰好 6k 格，从 12 点方向顺时针，保证一环满再到下一环、相邻格等距）
+        let directions: [(Double, Double)] = [
+            (0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0),  // axial: N NE SE S SW NW
+        ]
+        // 预生成蜂窝位置序列（下标 = 子视图序号；0 = 中心）
+        var positions: [CGPoint] = [center]
+        var axial: (q: Double, r: Double) = (0, 0)
+        for ring in 1...64 {
+            // 先走到环起点：NW 方向 × ring 步（六边形角）
+            axial = (Double(-ring), Double(ring))
+            for dir in directions.indices {
+                for _ in 0..<ring {
+                    let d = directions[dir]
+                    axial = (axial.q + d.0, axial.r + d.1)
+                    // axial → 平面像素（flat-top：x = step * (q + r/2), y = step * r * √3/2）
+                    let px = center.x + CGFloat(step * (axial.q + axial.r / 2))
+                    let py = center.y + CGFloat(step * axial.r * 0.866_025_4)
+                    positions.append(CGPoint(x: px, y: py))
+                }
             }
+        }
+
+        for (idx, subview) in subviews.enumerated() {
+            guard idx < positions.count else { break }
+            let pos = positions[idx]
             let size = subview.sizeThatFits(.unspecified)
             subview.place(
                 at: CGPoint(x: pos.x - size.width / 2, y: pos.y - size.height / 2),

@@ -378,65 +378,57 @@ struct MediaGridItem: View {
                 .padding(6)
             }
 
-            // hover 操作（上游 GridViewItemActions：下载 + 打开推文）
+            // hover 操作：无遮罩，中央一排圆形图标按钮（已下载勾 / 下载 / 打开推文）
             if isHovering {
-                VStack(spacing: 8) {
-                    // 已下载过同一媒体 → 禁用态「已下载」，实底色保证在缩略图上清晰可读
+                HStack(spacing: 10) {
                     if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "checkmark.circle.fill")
-                            Text(L("已下载"))
-                                .font(.callout.weight(.semibold))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
-                        .background(Color.green.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(.white.opacity(0.6), lineWidth: 1)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityHint(L("该媒体已下载过"))
+                        iconBadge("checkmark", color: .green, help: L("该媒体已下载过"))
                     } else {
-                        Button {
+                        roundIconButton("arrow.down", help: L("下载")) {
                             Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
-                        } label: {
-                            Label(L("下载"), systemImage: "arrow.down.circle")
-                                .frame(maxWidth: .infinity)
                         }
-                        .compatGlassButton()
                     }
-
                     if let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") {
-                        Link(destination: url) {
-                            Label(L("打开推文"), systemImage: "safari")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .compatGlassButton()
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background {
-                    if GlassCompat.supportsLiquidGlass && SettingsStore.shared.settings.liquidGlassEnabled {
-                        Rectangle().fill(.black.opacity(0.4))
-                    } else {
-                        // 玻璃关时跟随模糊度滑块(0 = 完全透明时用实底黑保证按钮可见)
-                        let blur = SettingsStore.shared.settings.glassBlur
-                        if blur < 5 {
-                            Rectangle().fill(.black.opacity(0.75))
-                        } else {
-                            Rectangle().fill(.regularMaterial)
+                        roundIconButton("link", help: L("打开推文")) {
+                            NSWorkspace.shared.open(url)
                         }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .aspectRatio(4/5, contentMode: .fit)
         .onHover { isHovering = $0 }
+    }
+
+    /// 圆形玻璃图标按钮（36pt）
+    @ViewBuilder
+    private func roundIconButton(_ system: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(.black.opacity(0.45), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// 已下载徽标（绿色圆 + 白勾，不可点）
+    private func iconBadge(_ system: String, color: Color, help: String) -> some View {
+        Image(systemName: system)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 36, height: 36)
+            .background(color.opacity(0.85), in: Circle())
+            .overlay {
+                Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1)
+            }
+            .help(help)
     }
 
     private func loadThumbnail() async {
