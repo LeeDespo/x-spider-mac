@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout，中心即首格）。
-/// 近大远小按「到滚动内容中心的距离」计算——内容大于视口时滑动即切换聚焦。
+/// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout，无中心占位）。
+/// 近大远小按「格子在内容坐标中到可视区中心的距离」计算——滑动即切换聚焦（第五环几乎隐没）。
 /// 状态卡悬浮页面 3/4 高度、胶囊形（下载提示框同款）、左右对称伸缩；
 /// 右侧外挂「新增」「同步」中性玻璃按钮。
 struct SyncView: View {
@@ -11,6 +11,9 @@ struct SyncView: View {
     @State private var appStore = AppStore.shared
     /// 页面可视高度（3/4 定位用）
     @State private var viewportHeight: CGFloat = 0
+    /// 可视区中心在「内容坐标系」中的位置（onScrollGeometryChange 持续更新）
+    @State private var focusInContent: CGPoint = .zero
+    @State private var scrollPos = ScrollPosition()
 
     var body: some View {
         honeycomb
@@ -32,42 +35,56 @@ struct SyncView: View {
             }
     }
 
-    // MARK: - 蜂窝头像（六边形环展开 + 近大远小）
+    // MARK: - 蜂窝（六边形环展开 + 滚动驱动近大远小）
 
     private var honeycomb: some View {
         GeometryReader { geo in
-            // 蜂窝内容中心（global 坐标）——Near/far 效果的参考点
-            let contentW = honeycombDiameter + 120
-            let contentH = honeycombDiameter + 120
+            let D = honeycombDiameter
+            // 内容尺寸不小于视口：保证初始滚动居中后，可视区中心 == 蜂窝中心
+            let frameW = max(D + 160, geo.size.width)
+            let frameH = max(D + 160, geo.size.height)
+            let contentCenter = CGPoint(x: frameW / 2, y: frameH / 2)
+            let focus = focusInContent == .zero ? contentCenter : focusInContent
+
             ScrollView([.horizontal, .vertical]) {
                 HoneycombLayout(step: 88, cellExtent: 84) {
-                    ForEach(store.users) { user in
-                        honeycombCell(user)
+                    ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
+                        let rel = HexRing.position(index: idx, step: 88)
+                        let cellPos = CGPoint(x: contentCenter.x + rel.x, y: contentCenter.y + rel.y)
+                        honeycombCell(user, index: idx, cellPos: cellPos, focus: focus)
                     }
                 }
-                .frame(width: contentW, height: contentH, alignment: .center)
-                .overlay {
-                    // 近大远小参考点 = 蜂窝内容中心（global）
-                    GeometryReader { marker -> Color in
-                        let f = marker.frame(in: .global)
-                        viewportCenterGlobal = CGPoint(x: f.midX, y: f.midY)
-                        return Color.clear
-                    }
-                }
-                .padding(60)
+                .frame(width: D, height: D, alignment: .center)
+                .frame(width: frameW, height: frameH, alignment: .center)
             }
+            .scrollPosition($scrollPos)
             .scrollIndicators(.hidden)
+            .onScrollGeometryChange(for: CGPoint.self) { g in
+                // 可视区中心 → 内容坐标
+                CGPoint(
+                    x: g.contentOffset.x + g.containerSize.width / 2,
+                    y: g.contentOffset.y + g.containerSize.height / 2
+                )
+            } action: { _, newFocus in
+                withAnimation(.easeOut(duration: 0.22)) { focusInContent = newFocus }
+            }
             .onAppear {
                 viewportHeight = geo.size.height
+                // 初始滚动：对准清单中间的用户（其内容坐标 == 蜂窝中心附近）
+                if let mid = store.users.isEmpty ? nil : store.users[min(store.users.count / 2, store.users.count - 1)].id {
+                    scrollPos.scrollTo(id: mid, anchor: .center)
+                }
+                if focusInContent == .zero { focusInContent = contentCenter }
             }
-            .onChange(of: geo.size.height) { _, newH in viewportHeight = newH }
+            .onChange(of: geo.size) { _, _ in
+                if let mid = store.users.isEmpty ? nil : store.users[min(store.users.count / 2, store.users.count - 1)].id {
+                    scrollPos.scrollTo(id: mid, anchor: .center)
+                }
+            }
         }
     }
 
-    /// 近大远小参考点（蜂窝内容中心，global 坐标，由 overlay marker 持续更新）
-    @State private var viewportCenterGlobal: CGPoint = .zero
-
-    /// 蜂窝所需直径（满环公式：环 r 的横向半径 = r*step）
+    /// 蜂窝所需直径（满环公式：环 r 横向半径 = r*step）
     private var honeycombDiameter: CGFloat {
         let n = max(1, store.users.count)
         let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
@@ -75,15 +92,15 @@ struct SyncView: View {
     }
 
     @ViewBuilder
-    private func honeycombCell(_ user: SyncUser) -> some View {
-        let index = store.users.firstIndex(where: { $0.id == user.id }) ?? 0
+    private func honeycombCell(_ user: SyncUser, index: Int, cellPos: CGPoint, focus: CGPoint) -> some View {
         let isActive = store.phase == .syncing && store.currentUserIndex == index
         let isDone = store.phase == .done || (store.phase == .syncing && index < store.currentUserIndex)
         HoneycombCell(
             user: user,
             isActive: isActive,
             isDone: isDone,
-            focusCenter: viewportCenterGlobal
+            cellPosition: cellPos,
+            focusPosition: focus
         ) {
             withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
         }
@@ -224,7 +241,46 @@ struct SyncView: View {
     }
 }
 
-// MARK: - HoneycombLayout（六边形环展开：每环 6k 格，参考 redblobgames rings 公式）
+// MARK: - 六边形环位置（布局与视图共用的唯一事实来源，参考 redblobgames rings 公式）
+
+enum HexRing {
+    /// 六方向轴向步进（N NE SE S SW NW）
+    static let directions: [(Double, Double)] = [
+        (0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0),
+    ]
+
+    /// 第 index 格（0 = 中心）相对蜂窝中心的平面坐标（flat-top 投影）
+    static func position(index: Int, step: CGFloat) -> CGPoint {
+        allPositions(count: index + 1, step: step)[index]
+    }
+
+    /// 前 count 格的全部位置（含中心）；与 HoneycombLayout.placeSubviews 顺序一致
+    static func allPositions(count: Int, step: CGFloat) -> [CGPoint] {
+        var result: [CGPoint] = [.zero]
+        guard count > 1 else { return result }
+        var axial: (q: Double, r: Double) = (0, 0)
+        var ring = 1
+        while result.count < count {
+            axial = (Double(-ring), Double(ring))  // 环起点：NW 角顶点
+            for dir in directions.indices {
+                for _ in 0..<ring {
+                    let d = directions[dir]
+                    axial = (axial.q + d.0, axial.r + d.1)
+                    // axial → 平面像素（flat-top：x = step*(q + r/2), y = step*r*√3/2）
+                    result.append(CGPoint(
+                        x: CGFloat(step * (axial.q + axial.r / 2)),
+                        y: CGFloat(step * axial.r * 0.866_025_4)
+                    ))
+                    if result.count >= count { return result }
+                }
+            }
+            ring += 1
+        }
+        return result
+    }
+}
+
+// MARK: - HoneycombLayout（六边形环展开：每环 6k 格）
 
 /// 环形蜂窝布局：子视图按六边形环展开（环 k 恰好 6k 格），无中心占位。
 /// step = 相邻格中心距；cellExtent = 单元视觉外径（直径）。
@@ -241,33 +297,14 @@ struct HoneycombLayout: Layout {
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
-
-        // 六边形环展开（redblobgames rings：六方向步进，环 k 从 NW 角顶点起顺时针）
-        let directions: [(Double, Double)] = [
-            (0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0),  // axial: N NE SE S SW NW
-        ]
-        var positions: [CGPoint] = []
-        var axial: (q: Double, r: Double) = (0, 0)
-        for ring in 1...64 {
-            axial = (Double(-ring), Double(ring))
-            for dir in directions.indices {
-                for _ in 0..<ring {
-                    let d = directions[dir]
-                    axial = (axial.q + d.0, axial.r + d.1)
-                    // axial → 平面像素（flat-top：x = step * (q + r/2), y = step * r * √3/2）
-                    let px = center.x + CGFloat(step * (axial.q + axial.r / 2))
-                    let py = center.y + CGFloat(step * axial.r * 0.866_025_4)
-                    positions.append(CGPoint(x: px, y: py))
-                }
-            }
-        }
+        let positions = HexRing.allPositions(count: subviews.count, step: step)
 
         for (idx, subview) in subviews.enumerated() {
             guard idx < positions.count else { break }
             let pos = positions[idx]
             let size = subview.sizeThatFits(.unspecified)
             subview.place(
-                at: CGPoint(x: pos.x - size.width / 2, y: pos.y - size.height / 2),
+                at: CGPoint(x: center.x + pos.x - size.width / 2, y: center.y + pos.y - size.height / 2),
                 anchor: .topLeading,
                 proposal: .unspecified
             )
@@ -281,61 +318,64 @@ private struct HoneycombCell: View {
     let user: SyncUser
     let isActive: Bool
     let isDone: Bool
-    let focusCenter: CGPoint
+    /// 本格在内容坐标系中的位置
+    let cellPosition: CGPoint
+    /// 可视区中心在内容坐标系中的位置（滚动驱动）
+    let focusPosition: CGPoint
     let onDelete: () -> Void
     @State private var showDelete = false
     @State private var isPressed = false
 
+    /// 深度参数：一个环距 = 88pt；第 4~5 环几乎隐没
+    private var depth: (scale: CGFloat, fade: Double) {
+        let dist = hypot(cellPosition.x - focusPosition.x, cellPosition.y - focusPosition.y)
+        let d = min(1, dist / (88.0 * 4.4))
+        // 幂曲线：近环保持明亮，远环快速隐没
+        let fade = max(0.03, 1.0 - 0.95 * pow(d, 1.6))
+        let scale = 1.12 - 0.42 * pow(d, 1.2)
+        return (scale, fade)
+    }
+
     var body: some View {
-        GeometryReader { geo in
-            // 近大远小：距「蜂窝内容中心」越远越小越淡；第五环起几乎不可见
-            let frame = geo.frame(in: .global)
-            let dist = hypot(frame.midX - focusCenter.x, frame.midY - focusCenter.y)
-            // 归一化：一个环距 = 88pt；5 环 = 440pt 处几乎隐没
-            let d = min(1, dist / (88.0 * 5.0))
-            let scale = 1.14 - 0.5 * d          // 1.14 → 0.64
-            let fade = max(0.02, 1.0 - 0.98 * d) // 1.0 → ~0.02
+        let depth = depth
+        ZStack {
+            Circle()
+                .strokeBorder(isActive ? Color.accentColor : Color.clear, lineWidth: 3)
+                .frame(width: 76, height: 76)
+            CachedAvatarView(urlString: user.avatar, size: 68)
+                .clipShape(Circle())
 
-            ZStack {
+            // 同步完成/已处理：头像中心黑透明遮罩 + 绿勾（watchOS 风格）
+            if isDone {
                 Circle()
-                    .strokeBorder(isActive ? Color.accentColor : Color.clear, lineWidth: 3)
-                    .frame(width: 76, height: 76)
-                CachedAvatarView(urlString: user.avatar, size: 68)
-                    .clipShape(Circle())
-
-                // 同步完成/已处理：头像中心黑透明遮罩 + 绿勾（watchOS 风格）
-                if isDone {
-                    Circle()
-                        .fill(Color.black.opacity(0.45))
-                        .frame(width: 68, height: 68)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.green)
-                        .transition(.scale.combined(with: .opacity))
-                }
-
-                // 悬停/长按删除：头像中心黑透明遮罩 + 白 ×（大小形状即头像）
-                if showDelete {
-                    Button(action: onDelete) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.black.opacity(0.55))
-                                .frame(width: 68, height: 68)
-                            Image(systemName: "xmark")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    .fill(Color.black.opacity(0.45))
+                    .frame(width: 68, height: 68)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.green)
                     .transition(.scale.combined(with: .opacity))
-                }
             }
-            .scaleEffect(scale * (isActive ? 1.06 : (isPressed ? 0.94 : 1.0)))
-            .opacity(fade)
-            .animation(.spring(duration: 0.3), value: isActive)
-            .animation(.spring(duration: 0.2), value: isPressed)
-            .animation(.easeOut(duration: 0.25), value: d)
+
+            // 悬停/长按删除：头像中心黑透明遮罩 + 白 ×（大小形状即头像）
+            if showDelete {
+                Button(action: onDelete) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(0.55))
+                            .frame(width: 68, height: 68)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
         }
+        .scaleEffect(depth.scale * (isActive ? 1.06 : (isPressed ? 0.94 : 1.0)))
+        .opacity(depth.fade)
+        .animation(.spring(duration: 0.3), value: isActive)
+        .animation(.spring(duration: 0.2), value: isPressed)
         .frame(width: 84, height: 84)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) { showDelete = hovering }
