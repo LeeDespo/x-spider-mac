@@ -29,7 +29,9 @@ struct SyncView: View {
                     addButton
                     syncButton
                 }
-                .offset(x: -52, y: viewportSize.height * 0.25)
+                // 卡片中心对准页面中心:组中心=页面中心(overlay center),卡片中心=组中心-52,
+                // 需右移 +52 让卡片本体落在页面中心
+                .offset(x: 52, y: viewportSize.height * 0.25)
             }
             .navigationTitle(L("同步"))
             .sheet(isPresented: $showAddSheet) { addSheet }
@@ -56,6 +58,7 @@ struct SyncView: View {
                 .offset(panOffset)
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
             .clipped()
             .contentShape(Rectangle())
             .simultaneousGesture(
@@ -309,32 +312,31 @@ enum HexRing {
     static let baseSize: CGFloat = 68
 
     /// 距焦点的连续尺寸曲线（布局与视图共用的唯一事实来源）：
-    /// 中心 200% → 每环 ×0.72 → 第五环 ≈50% → 之外一律 20%
+    /// 中心 200% → 每环 ×0.87 → 第五环 = 100% → 之外一律 70%
     static func cellSize(distanceToFocus dist: CGFloat) -> CGFloat {
-        let r5 = ringRadius(ring: 5)  // 第五环半径（≈415pt）
+        let r5 = ringRadius(ring: 5)
         guard dist > cellSize(ring: 0) * 0.38 else { return cellSize(ring: 0) }
-        guard dist < r5 else { return cellSize(ring: 6) }  // 五环外一律 20%
+        guard dist < r5 else { return cellSize(ring: 6) }  // 五环外一律 70%
         let ringEquivalent = 5.0 * Double(dist / r5)
-        return min(cellSize(ring: 0), baseSize * 2.0 * CGFloat(pow(0.72, ringEquivalent)))
+        return min(cellSize(ring: 0), baseSize * 2.0 * CGFloat(pow(0.8706, ringEquivalent)))
     }
 
-    /// 每环头像直径：中心 200% → 每环 ×0.72 → 五环 50% → 六环起一律 20%
+    /// 每环头像直径：中心 200% → 每环 ×0.87 → 五环 100% → 六环起一律 70%
     static func cellSize(ring: Int) -> CGFloat {
         switch ring {
         case 0: return baseSize * 2.0
-        case 1: return baseSize * 1.44
-        case 2: return baseSize * 1.04
-        case 3: return baseSize * 0.75
-        case 4: return baseSize * 0.60
-        case 5: return baseSize * 0.50
-        default: return baseSize * 0.20
+        case 1: return baseSize * 1.74
+        case 2: return baseSize * 1.51
+        case 3: return baseSize * 1.32
+        case 4: return baseSize * 1.15
+        case 5: return baseSize * 1.0
+        default: return baseSize * 0.70
         }
     }
 
-    /// 环间距：随环号递减——内环大头像配大间隙（一环 34pt），外环小头像收紧（五环外 7pt）
-    /// 让整张蜂窝的视觉密度均匀，避免内环拥挤、外环稀疏
+    /// 环间距：内环更疏（一环 44pt），向外快速收紧（×0.75，6pt 保底）——外围更密、中间更疏
     static func ringGap(ring: Int) -> CGFloat {
-        max(7, 34 * pow(0.78, Double(ring - 1)))
+        max(6, 44 * pow(0.75, Double(ring - 1)))
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 该处间隙；环间 = 两环尺寸/2 之和 + 该处间隙）
