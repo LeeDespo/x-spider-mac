@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout：中心加号 + 每环 6k 格）。
-/// 距视口中心越近头像越大（近），越远越小（远）——滑动即切换聚焦。
-/// 进度卡悬浮在页面 3/4 高度、左右对称伸缩；卡片右侧外挂「新增」「同步」实心玻璃按钮。
+/// 同步页：watchOS 蜂窝头像布局（六边形环展开 RadialLayout，中心即首格）。
+/// 近大远小按「到滚动内容中心的距离」计算——内容大于视口时滑动即切换聚焦。
+/// 状态卡悬浮页面 3/4 高度、胶囊形（下载提示框同款）、左右对称伸缩；
+/// 右侧外挂「新增」「同步」中性玻璃按钮。
 struct SyncView: View {
     @State private var store = SyncStore.shared
     @State private var showAddSheet = false
     @State private var input = ""
     @State private var appStore = AppStore.shared
-    /// 页面可视高度（3/4 定位用）与视口中心（近大远小用），GeometryReader 探测
+    /// 页面可视高度（3/4 定位用）
     @State private var viewportHeight: CGFloat = 0
-    @State private var viewportCenterGlobal: CGPoint = .zero
 
     var body: some View {
         honeycomb
@@ -36,28 +36,36 @@ struct SyncView: View {
 
     private var honeycomb: some View {
         GeometryReader { geo in
-            let gframe = geo.frame(in: .global)
-            let centerGlobal = CGPoint(x: gframe.midX, y: gframe.midY)
+            // 蜂窝内容中心（global 坐标）——Near/far 效果的参考点
+            let contentW = honeycombDiameter + 120
+            let contentH = honeycombDiameter + 120
             ScrollView([.horizontal, .vertical]) {
                 HoneycombLayout(step: 88, cellExtent: 84) {
-                    // 中心 = 加号（同样参与近大远小）
-                    addCenterButton
-                    ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
-                        honeycombCell(user, index: idx, viewportCenter: centerGlobal, span: max(geo.size.width, geo.size.height))
+                    ForEach(store.users) { user in
+                        honeycombCell(user)
                     }
                 }
-                .frame(width: honeycombDiameter, height: honeycombDiameter, alignment: .center)
-                .padding(56)
-                .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+                .frame(width: contentW, height: contentH, alignment: .center)
+                .overlay {
+                    // 近大远小参考点 = 蜂窝内容中心（global）
+                    GeometryReader { marker -> Color in
+                        let f = marker.frame(in: .global)
+                        viewportCenterGlobal = CGPoint(x: f.midX, y: f.midY)
+                        return Color.clear
+                    }
+                }
+                .padding(60)
             }
             .scrollIndicators(.hidden)
             .onAppear {
                 viewportHeight = geo.size.height
-                viewportCenterGlobal = centerGlobal
             }
             .onChange(of: geo.size.height) { _, newH in viewportHeight = newH }
         }
     }
+
+    /// 近大远小参考点（蜂窝内容中心，global 坐标，由 overlay marker 持续更新）
+    @State private var viewportCenterGlobal: CGPoint = .zero
 
     /// 蜂窝所需直径（满环公式：环 r 的横向半径 = r*step）
     private var honeycombDiameter: CGFloat {
@@ -67,78 +75,51 @@ struct SyncView: View {
     }
 
     @ViewBuilder
-    private func honeycombCell(_ user: SyncUser, index: Int, viewportCenter: CGPoint, span: CGFloat) -> some View {
+    private func honeycombCell(_ user: SyncUser) -> some View {
+        let index = store.users.firstIndex(where: { $0.id == user.id }) ?? 0
         let isActive = store.phase == .syncing && store.currentUserIndex == index
         let isDone = store.phase == .done || (store.phase == .syncing && index < store.currentUserIndex)
         HoneycombCell(
             user: user,
             isActive: isActive,
             isDone: isDone,
-            viewportCenter: viewportCenter,
-            span: span
+            focusCenter: viewportCenterGlobal
         ) {
             withAnimation(.spring(duration: 0.25)) { store.removeUser(user.screenName) }
         }
     }
 
-    private var addCenterButton: some View {
-        Button {
-            showAddSheet = true
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 68, height: 68)
-                .background {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.85))
-                        .overlay {
-                            Circle().fill(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.35), .clear],
-                                    startPoint: .top, endPoint: .center
-                                )
-                            )
-                        }
-                }
-        }
-        .buttonStyle(.plain)
-        .help(L("添加同步用户"))
-    }
+    // MARK: - 悬浮进度卡（下载提示框同款：胶囊形、46pt 高；idle 最窄，同步时左右对称拉长）
 
-    // MARK: - 悬浮进度卡（下载提示框同款高度；idle 最窄，同步时左右对称拉长）
-
-    /// 卡片高度与下载提示框一致（46pt）；宽度动画只走水平方向
+    /// 胶囊卡：idle 恰好容纳图标+四字；激活态左右对称拉长
     private var progressBarCard: some View {
-        ZStack {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(phaseLabel)
-                    .font(.caption)
-                    .lineLimit(1)
-                if store.phase == .syncing {
-                    let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(max(1, store.users.count))
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .controlSize(.small)
-                        .frame(width: 56)
-                }
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(phaseLabel)
+                .font(.caption)
+                .lineLimit(1)
+            if store.phase == .syncing {
+                let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(max(1, store.users.count))
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+                    .frame(width: 56)
             }
-            .transition(.opacity)
         }
-        .padding(.horizontal, 12)
-        .frame(width: cardWidth, height: 46, alignment: .center)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .liquidGlass(interactive: true, cornerRadius: 16)
+        .padding(.horizontal, 14)
+        .frame(height: 46, alignment: .center)
+        .frame(width: cardWidth, alignment: .center)
+        .liquidGlass(interactive: true, cornerRadius: 23)
+        .clipShape(Capsule())
         .animation(.spring(duration: 0.4), value: store.phase)
         .animation(.spring(duration: 0.4), value: store.currentUserIndex)
     }
 
-    /// 卡宽：idle 恰好容纳图标+四字（~104pt）；激活态左右对称拉长到 ~230pt
+    /// 卡宽：idle 恰好容纳图标+四字（~96pt）；激活态左右对称拉长到 ~230pt
     private var cardWidth: CGFloat {
-        store.phase == .idle ? 104 : 230
+        store.phase == .idle ? 96 : 230
     }
 
     private var phaseLabel: String {
@@ -149,56 +130,44 @@ struct SyncView: View {
         return text
     }
 
-    private var summaryText: String {
-        store.userMessages.values.joined(separator: " · ")
-    }
-
-    // MARK: - 实心玻璃按钮（新增 / 同步，44pt，与卡片同高族）
+    // MARK: - 中性玻璃按钮（新增 / 同步，44pt，与卡片同高族，无强调色）
 
     private var addButton: some View {
-        solidGlassButton(icon: "plus", fill: Color.accentColor, help: L("添加同步用户")) {
+        glassDiscButton(icon: "plus", help: L("添加同步用户")) {
             showAddSheet = true
         }
     }
 
     @ViewBuilder
     private var syncButton: some View {
-        let (symbol, fill): (String, Color) = {
-            switch store.phase {
-            case .idle: return ("arrow.triangle.2.circlepath", Color.accentColor)
-            case .syncing: return ("pause.fill", .red)
-            case .done: return ("checkmark", .green)
-            case .interrupted: return ("arrow.triangle.2.circlepath", Color.accentColor)
-            }
-        }()
-        solidGlassButton(icon: symbol, fill: fill, help: store.phase.buttonHint) {
-            withAnimation(.spring(duration: 0.35)) { store.primaryAction() }
+        let symbol = store.phase == .syncing ? "pause.fill"
+            : (store.phase == .done ? "checkmark" : "arrow.triangle.2.circlepath")
+        glassDiscButton(icon: symbol, help: store.phase.buttonHint) {
+            store.primaryAction()
         }
         .disabled(store.users.isEmpty && store.phase == .idle)
-        .rotationEffect(.degrees(store.phase == .syncing ? 360 : 0))
-        .animation(store.phase == .syncing ? .linear(duration: 1.6).repeatForever(autoreverses: false) : .spring(duration: 0.35), value: store.phase)
     }
 
-    /// 实心玻璃圆形按钮：实色填充 + 顶部高光渐变（玻璃质感）
-    private func solidGlassButton(icon: String, fill: Color, help: String, action: @escaping () -> Void) -> some View {
+    /// 中性玻璃圆钮：与状态卡同材质（玻璃 + 发丝描边 + 微高光），图标随相位移入移出
+    private func glassDiscButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
                 .background {
                     Circle()
-                        .fill(fill.opacity(0.9))
+                        .fill(.ultraThinMaterial)
                         .overlay {
                             Circle().fill(
                                 LinearGradient(
-                                    colors: [.white.opacity(0.3), .clear],
+                                    colors: [.white.opacity(0.18), .clear],
                                     startPoint: .top, endPoint: .center
                                 )
                             )
                         }
                         .overlay {
-                            Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1)
+                            Circle().strokeBorder(.white.opacity(0.22), lineWidth: 1)
                         }
                 }
         }
@@ -255,16 +224,16 @@ struct SyncView: View {
     }
 }
 
-// MARK: - HoneycombLayout（六边形环展开：中心 + 每环 6k，参考 redblobgames rings 公式）
+// MARK: - HoneycombLayout（六边形环展开：每环 6k 格，参考 redblobgames rings 公式）
 
-/// 环形蜂窝布局：子视图 0 = 中心，其余按六边形环展开（环 k 恰好 6k 格）。
+/// 环形蜂窝布局：子视图按六边形环展开（环 k 恰好 6k 格），无中心占位。
 /// step = 相邻格中心距；cellExtent = 单元视觉外径（直径）。
 struct HoneycombLayout: Layout {
     var step: CGFloat = 88
     var cellExtent: CGFloat = 84
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let n = max(1, subviews.count - 1)
+        let n = max(1, subviews.count)
         let rings = max(0, Int(ceil((-1.0 + (1.0 + 12.0 * Double(n)).squareRoot()) / 6.0)))
         let diameter = CGFloat(2 * rings) * step + cellExtent
         return CGSize(width: diameter, height: diameter)
@@ -277,7 +246,7 @@ struct HoneycombLayout: Layout {
         let directions: [(Double, Double)] = [
             (0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0),  // axial: N NE SE S SW NW
         ]
-        var positions: [CGPoint] = [center]
+        var positions: [CGPoint] = []
         var axial: (q: Double, r: Double) = (0, 0)
         for ring in 1...64 {
             axial = (Double(-ring), Double(ring))
@@ -312,20 +281,20 @@ private struct HoneycombCell: View {
     let user: SyncUser
     let isActive: Bool
     let isDone: Bool
-    let viewportCenter: CGPoint
-    let span: CGFloat
+    let focusCenter: CGPoint
     let onDelete: () -> Void
     @State private var showDelete = false
     @State private var isPressed = false
 
     var body: some View {
         GeometryReader { geo in
-            // 近大远小：距视口中心越远越小越淡（滑动即切换聚焦）
+            // 近大远小：距「蜂窝内容中心」越远越小越淡；第五环起几乎不可见
             let frame = geo.frame(in: .global)
-            let dist = hypot(frame.midX - viewportCenter.x, frame.midY - viewportCenter.y)
-            let d = min(1, dist / max(1, span * 0.5))
-            let scale = 1.14 - 0.5 * d
-            let fade = 1.0 - 0.45 * d
+            let dist = hypot(frame.midX - focusCenter.x, frame.midY - focusCenter.y)
+            // 归一化：一个环距 = 88pt；5 环 = 440pt 处几乎隐没
+            let d = min(1, dist / (88.0 * 5.0))
+            let scale = 1.14 - 0.5 * d          // 1.14 → 0.64
+            let fade = max(0.02, 1.0 - 0.98 * d) // 1.0 → ~0.02
 
             ZStack {
                 Circle()
@@ -365,6 +334,7 @@ private struct HoneycombCell: View {
             .opacity(fade)
             .animation(.spring(duration: 0.3), value: isActive)
             .animation(.spring(duration: 0.2), value: isPressed)
+            .animation(.easeOut(duration: 0.25), value: d)
         }
         .frame(width: 84, height: 84)
         .onHover { hovering in
