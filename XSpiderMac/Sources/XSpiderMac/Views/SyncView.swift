@@ -41,7 +41,8 @@ struct SyncView: View {
     var body: some View {
         Group {
             if settingsStore.settings.syncLayout == .dock {
-                DockSyncLayout()
+                // dock 行悬在状态卡上方：状态卡在中心下 0.25h,行取 0.42h(同一直线、固定间距)
+                DockSyncLayout(y: viewportSize.height * 0.42)
             } else {
                 honeycomb
             }
@@ -73,11 +74,10 @@ struct SyncView: View {
             let D = HexRing.diameter(userCount: max(1, store.users.count))
 
             // 聚焦点（内容坐标）：pan=0 时在原点（恒等映射）；拖动后即视觉中心所在
-            let focusRel = CGPoint(x: -panOffset.width, y: -panOffset.height)
             ZStack {
                 // ── 底层：白色普通材质实心圆（头像垫圈 105% + 空位占位圈）──
                 ForEach(0..<totalSlots, id: \.self) { idx in
-                    let rel = HexRing.repositioned(rel: HexRing.position(index: idx), focus: focusRel)
+                    let rel = HexRing.position(index: idx)
                     let p = CGPoint(x: center.x + panOffset.width + rel.x,
                                     y: center.y + panOffset.height + rel.y)
                     let size = HexRing.cellSize(distanceToFocus: hypot(rel.x + panOffset.width,
@@ -89,7 +89,7 @@ struct SyncView: View {
 
                 // ── 头像层：外环先画、内环后画（内环头像永远盖住外环）──
                 ForEach(Array(store.users.enumerated()).reversed(), id: \.element.id) { idx, user in
-                    let rel = HexRing.repositioned(rel: HexRing.position(index: idx), focus: focusRel)
+                    let rel = HexRing.position(index: idx)
                     let p = CGPoint(x: center.x + panOffset.width + rel.x,
                                     y: center.y + panOffset.height + rel.y)
                     let size = HexRing.cellSize(distanceToFocus: hypot(rel.x + panOffset.width,
@@ -101,7 +101,7 @@ struct SyncView: View {
                 // ── 完成徽标层（悬停时隐藏，让位给按钮组）──
                 ForEach(Array(store.users.enumerated()), id: \.element.id) { idx, user in
                     if store.completedUsers.contains(user.screenName) && hoveredIndex != idx {
-                        let rel = HexRing.repositioned(rel: HexRing.position(index: idx), focus: focusRel)
+                        let rel = HexRing.position(index: idx)
                         let p = CGPoint(x: center.x + panOffset.width + rel.x,
                                         y: center.y + panOffset.height + rel.y)
                         let size = HexRing.cellSize(distanceToFocus: hypot(rel.x + panOffset.width,
@@ -115,7 +115,7 @@ struct SyncView: View {
                 // ── 悬停控件层（所有头像之上、状态卡之下）──
                 if let hIdx = hoveredIndex, hIdx < store.users.count {
                     let user = store.users[hIdx]
-                    let rel = HexRing.repositioned(rel: HexRing.position(index: hIdx), focus: focusRel)
+                    let rel = HexRing.position(index: hIdx)
                     let p = CGPoint(x: center.x + panOffset.width + rel.x,
                                     y: center.y + panOffset.height + rel.y)
                     let size = HexRing.cellSize(distanceToFocus: hypot(rel.x + panOffset.width,
@@ -642,19 +642,6 @@ enum HexRing {
     }
 
     /// 动态重定位（蜂窝边距随聚焦中心变化的核心）：
-    /// 以 focus 为新环心做径向重映射——聚焦头像成为新的"中心"（距离 0），
-    /// 它周围的格子按「到它的像素距离 → 等效环号 → 动态环半径」重排，
-    /// 于是它的六邻成为一环（ringGap(1) 边距）、再外一圈二环……拖动蜂窝时连续过渡。
-    /// focus 处于内容原点（pan=0）时为恒等映射（静态布局不动）。
-    static func repositioned(rel: CGPoint, focus: CGPoint) -> CGPoint {
-        let dx = rel.x - focus.x, dy = rel.y - focus.y
-        let d = hypot(dx, dy)
-        guard d > 0.001 else { return rel }
-        let newD = ringRadiusContinuous(ringEquivalent(forPixelDistance: d))
-        let scale = newD / d
-        return CGPoint(x: focus.x + dx * scale, y: focus.y + dy * scale)
-    }
-
     /// 全量位置缓存（6 环封顶 127 格）：布局每帧取 O(1)，避免逐格全量重算
     private static let cachedPositions = SafePositionCache()
 
