@@ -316,8 +316,10 @@ enum HexRing {
     static func ringRadius(ring: Int, gap: CGFloat = 14) -> CGFloat {
         guard ring > 0 else { return 0 }
         var radius: CGFloat = cellSize(ring: 0) / 2 + cellSize(ring: 1) / 2 + gap
-        for r in 2...ring {
-            radius += cellSize(ring: r - 1) / 2 + cellSize(ring: r) / 2 + gap
+        if ring >= 2 {
+            for r in 2...ring {
+                radius += cellSize(ring: r - 1) / 2 + cellSize(ring: r) / 2 + gap
+            }
         }
         return radius
     }
