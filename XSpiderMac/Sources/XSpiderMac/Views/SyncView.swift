@@ -331,13 +331,19 @@ enum HexRing {
         }
     }
 
-    /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）
-    static func ringRadius(ring: Int, gap: CGFloat = 14) -> CGFloat {
+    /// 环间距：随环号递减——内环大头像配大间隙（一环 34pt），外环小头像收紧（五环外 7pt）
+    /// 让整张蜂窝的视觉密度均匀，避免内环拥挤、外环稀疏
+    static func ringGap(ring: Int) -> CGFloat {
+        max(7, 34 * pow(0.78, Double(ring - 1)))
+    }
+
+    /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 该处间隙；环间 = 两环尺寸/2 之和 + 该处间隙）
+    static func ringRadius(ring: Int) -> CGFloat {
         guard ring > 0 else { return 0 }
-        var radius: CGFloat = cellSize(ring: 0) / 2 + cellSize(ring: 1) / 2 + gap
+        var radius: CGFloat = cellSize(ring: 0) / 2 + cellSize(ring: 1) / 2 + ringGap(ring: 1)
         if ring >= 2 {
             for r in 2...ring {
-                radius += cellSize(ring: r - 1) / 2 + cellSize(ring: r) / 2 + gap
+                radius += cellSize(ring: r - 1) / 2 + cellSize(ring: r) / 2 + ringGap(ring: r)
             }
         }
         return radius
