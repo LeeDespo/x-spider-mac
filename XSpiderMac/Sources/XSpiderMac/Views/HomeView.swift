@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var appStore = AppStore.shared
     @State private var downloadStore = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
+    @State private var creationTaskCreated = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -205,12 +206,29 @@ struct HomeView: View {
 
                 Spacer()
 
-                Button(L("开始下载")) {
-                    if let user = store.userInfo {
-                        creationStore.createCreationTask(user: user, filter: store.filter)
+                // 两段式：创建后变绿色「已创建」，再点恢复，再点才再次创建（防重复触发）
+                if creationTaskCreated {
+                    Button {
+                        withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = false }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text(L("已创建任务"))
+                        }
                     }
+                    .foregroundStyle(.green)
+                    .compatGlassProminentButton()
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                } else {
+                    Button(L("开始下载")) {
+                        if let user = store.userInfo {
+                            creationStore.createCreationTask(user: user, filter: store.filter)
+                        }
+                        withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = true }
+                    }
+                    .compatGlassProminentButton()
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
-                .compatGlassProminentButton()
             }
 
             HStack(spacing: 16) {

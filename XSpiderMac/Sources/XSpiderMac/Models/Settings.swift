@@ -83,16 +83,20 @@ struct SyncSettings: Codable, Sendable {
     var quitOnSyncComplete: Bool?
     /// 同步页布局：dock（仿 Dock）/ honeycomb（蜂窝）
     var layout: String?
+    /// 同步判定依据：fileName / syncRecordFile（默认同步记录文件）
+    var syncCheckMode: String?
     init() {
         autoSyncOnLaunch = false
         quitOnSyncComplete = false
         layout = "dock"
+        syncCheckMode = "syncRecordFile"
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         autoSyncOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? false
         quitOnSyncComplete = try c.decodeIfPresent(Bool.self, forKey: .quitOnSyncComplete) ?? false
         layout = try c.decodeIfPresent(String.self, forKey: .layout) ?? "dock"
+        syncCheckMode = try c.decodeIfPresent(String.self, forKey: .syncCheckMode) ?? "syncRecordFile"
     }
 }
 
@@ -136,6 +140,11 @@ struct Settings: Codable, Sendable {
     var download: DownloadSettings = DownloadSettings()
     var app: AppSettings = AppSettings()
     var sync: SyncSettings = SyncSettings()
+    /// 同步判定依据
+    var syncCheckModeValue: SyncCheckMode {
+        get { SyncCheckMode(rawValue: sync.syncCheckMode ?? "") ?? .syncRecordFile }
+        set { sync.syncCheckMode = newValue.rawValue }
+    }
 
     static let currentVersion = 3
 
@@ -214,6 +223,19 @@ enum SameFileCheckMode: String, CaseIterable, Sendable {
         switch self {
         case .fileName: return L("按文件名")
         case .recordFile: return L("按下载记录文件")
+        }
+    }
+}
+
+/// 同步判定依据（同步页跳过已下载媒体用；与下载判定相互独立）
+enum SyncCheckMode: String, CaseIterable, Sendable {
+    case fileName       // 与下载判定依据的"按文件名"一致
+    case syncRecordFile // .synced.json：每用户最新媒体日期 + 当天全部媒体 ID(加速同步)
+
+    var displayName: String {
+        switch self {
+        case .fileName: return L("按文件名")
+        case .syncRecordFile: return L("按同步记录文件")
         }
     }
 }

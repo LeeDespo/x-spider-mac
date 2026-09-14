@@ -127,13 +127,24 @@ final class CreationTaskStore {
                     continue
                 }
 
-                // sameFileSkip 检查在 DownloadStore.createDownloadTask 内部完成；
-                // 被跳过的文件计入 skipCount
+                // 全部下载防重复:同一推文媒体在本轮/既有任务里只创建一次
+                // (时间线翻页可能返回重叠推文,sameFileSkip 的记录文件模式在下载完成后才写记录,挡不住并发重复)
+                var seenUrls = Set<String>()
+                var deduped: [(post: TwitterPost, media: TwitterMedia)] = []
+                for item in paramsList {
+                    guard let url = downloadURL(for: item.media) else { continue }
+                    guard seenUrls.insert(url).inserted else { continue }
+                    if DownloadStore.shared.tasks.contains(where: { $0.downloadUrl == url && $0.status != .error && $0.status != .removed }) {
+                        skipCount += 1
+                        continue
+                    }
+                    deduped.append(item)
+                }
                 let beforeCount = DownloadStore.shared.tasks.count
-                await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
+                await DownloadStore.shared.batchCreateDownloadTasks(deduped)
                 let addedCount = DownloadStore.shared.tasks.count - beforeCount
                 completeCount += addedCount
-                skipCount += paramsList.count - addedCount
+                skipCount += deduped.count - addedCount
 
                 updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
 

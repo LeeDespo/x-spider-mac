@@ -42,7 +42,10 @@ struct SettingsView: View {
             HStack {
                 TextField(L("保存路径"), text: Binding(
                     get: { settingsStore.settings.download.saveDirBase },
-                    set: { settingsStore.settings.download.saveDirBase = $0 }
+                    set: {
+                        settingsStore.settings.download.saveDirBase = $0
+                        DownloadStore.shared.refreshDownloadedCaches()
+                    }
                 ))
                 Button(L("选择…")) { selectSaveDir() }
                     .compatGlassButton()
@@ -51,7 +54,10 @@ struct SettingsView: View {
             // 按账号建子目录（替代原"目录模板"）
             Toggle(isOn: Binding(
                 get: { settingsStore.settings.accountSubfolderEnabled },
-                set: { settingsStore.settings.download.accountSubfolder = $0 }
+                set: {
+                    settingsStore.settings.download.accountSubfolder = $0
+                    DownloadStore.shared.refreshDownloadedCaches()
+                }
             )) {
                 HStack(spacing: 6) {
                     Text(L("按账号创建子文件夹"))
@@ -95,7 +101,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .padding(.leading, 16)
-                .infoHint(L("按文件名：目标文件已存在则跳过。\n按下载记录文件：在每个文件夹里维护 .downloaded.json 记录媒体 ID，改文件名模板也不影响判定。"))
+                .infoHint(L("按文件名：强制在文件名末尾增加资源索引。\n按下载记录文件：在保存路径创建并维护 .downloaded.json 文件（全量记录已下载媒体的资源索引），改文件名模板也不影响判定。"))
 
                     .padding(.leading, 16)
             }
@@ -282,6 +288,17 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            Picker(L("同步判定依据"), selection: Binding(
+                get: { settingsStore.settings.syncCheckModeValue },
+                set: { settingsStore.settings.sync.syncCheckMode = $0.rawValue }
+            )) {
+                ForEach(SyncCheckMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            .padding(.leading, 16)
+            .infoHint(L("按文件名：与下载判定依据的「按文件名」一致。\n按同步记录文件：在保存路径维护 .synced.json（记录每用户最新媒体日期与当天全部媒体 ID），同步只检索该日期之后的时间线，当天媒体按资源索引排除，可显著加快同步速度。"))
         } header: {
             Label(L("同步"), systemImage: "arrow.triangle.2.circlepath")
         }

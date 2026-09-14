@@ -45,10 +45,6 @@ struct DockSyncLayout: View {
                         .position(x: geo.size.width / 2, y: y)
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if store.phase == .idle || store.phase == .done { showListSheet = true }
-            }
             .sheet(isPresented: $showListSheet) { SyncListManagerSheet() }
             .sheet(isPresented: $showFailureSheet) { SyncFailureSheet() }
         }
@@ -101,9 +97,6 @@ struct DockSyncLayout: View {
                 .animation(.spring(duration: 0.45, bounce: 0.2), value: store.currentUser)
                 .animation(.spring(duration: 0.4), value: store.phase)
                 .position(x: xFor(index: index, center: center, w: w), y: y)
-                .onTapGesture {
-                    if isFailed && store.phase == .done { showFailureSheet = true }
-                }
         }
     }
 }

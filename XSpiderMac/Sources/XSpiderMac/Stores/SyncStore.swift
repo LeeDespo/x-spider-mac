@@ -128,12 +128,76 @@ final class SyncStore {
         maybeQuitOnComplete()
     }
 
+    // MARK: - 同步记录文件（syncRecordFile 模式）
+
+    /// 记录条目：某用户最新媒体的年月日 + 当天全部媒体资源索引
+    struct SyncRecord: Codable, Sendable {
+        var anchorDay: String       // "yyyy-MM-dd"
+        var dayIds: [String]
+    }
+
+    /// 记录文件路径：保存路径（开启账号子文件夹时按用户拆分）
+    private func syncRecordURL(screenName: String) -> URL {
+        var dir = SettingsStore.shared.settings.download.saveDirBase
+        if dir.isEmpty,
+           let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            dir = downloads.path
+        }
+        if SettingsStore.shared.settings.accountSubfolderEnabled,
+           let user = users.first(where: { $0.screenName.lowercased() == screenName.lowercased() }) {
+            let folderName = "\(user.name)-@\(user.screenName)".safePathComponent()
+            dir = (dir as NSString).appendingPathComponent(folderName)
+        }
+        return URL(fileURLWithPath: dir).appendingPathComponent(".synced.json")
+    }
+
+    static func loadSyncRecord(screenName: String) -> SyncRecord? {
+        let shared = SyncStore.shared
+        let url = shared.syncRecordURL(screenName: screenName)
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONDecoder().decode(SyncRecord.self, from: data) else { return nil }
+        return obj
+    }
+
+    static func writeSyncRecord(screenName: String, anchorDay: String, dayIds: [String]) {
+        let shared = SyncStore.shared
+        let url = shared.syncRecordURL(screenName: screenName)
+        let rec = SyncRecord(anchorDay: anchorDay, dayIds: dayIds.sorted())
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.createDirectory(atPath: url.deletingLastPathComponent().path,
+                                                     withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(rec) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    static func dayString(_ date: Date) -> String {
+        DateFormatter.fallback.string(from: date)
+    }
+
+    static func parseDay(_ s: String) -> Date? {
+        guard !s.isEmpty else { return nil }
+        return DateFormatter.dayOnly.date(from: s)
+    }
+
     /// 重试失败用户（对失败清单批量再同步）
     func retryFailures() {
         let targets = users.filter { failedUsers.keys.contains($0.screenName) }
         guard !targets.isEmpty else { return }
         startSync(target: targets)
     }
+
+    /// 成功用户数（含被忽略的失败）
+    var succeededCount: Int {
+        users.filter {
+            completedUsers.contains($0.screenName) && failedUsers[$0.screenName] == nil ||
+            ignoredFailures.contains($0.screenName)
+        }.count
+    }
+
+    /// 失败（未忽略）用户数
+    var failureCount: Int { failedUsers.count }
 
     /// 失败用户（给 UI 显示）
     var failedUserList: [SyncUser] {
@@ -204,14 +268,39 @@ final class SyncStore {
                 var cursor: String? = nil
                 let maxPages = 5
                 var page = 0
+                // 同步记录文件：仅 syncRecordFile 模式。record = 最新媒体日期 + 当天媒体 ID 集
+                let syncCheck = SettingsStore.shared.settings.syncCheckModeValue
+                let record = syncCheck == .syncRecordFile ? try? Self.loadSyncRecord(screenName: user.screenName) : nil
+                var latestDay = ""
+                var dayIds = Set<String>()
                 repeat {
                     if Task.isCancelled { return }
                     let cursorIn = cursor
                     let (posts, next) = try await withTimeout(150) {
                         try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursorIn, fast: true)
                     }
+                    // 记录文件模式:翻到比记录锚点更早的日期就停(当天媒体仍要按 ID 排除)
+                    if let record, let anchor = Self.parseDay(record.anchorDay) {
+                        let olderThanAnchor = posts.allSatisfy { post in
+                            guard let created = post.createdAt else { return false }
+                            return Self.dayString(created) < record.anchorDay
+                        }
+                        if olderThanAnchor && page > 0 { break }
+                    }
                     for post in posts {
+                        if let created = post.createdAt {
+                            let day = Self.dayString(created)
+                            if day > latestDay { latestDay = day }
+                        }
                         for media in post.medias ?? [] {
+                            // 记录文件模式:锚点日当天的媒体按资源索引排除;其他日期走常规判定
+                            let anchorDay = record?.anchorDay ?? ""
+                            let postDay = post.createdAt.map(Self.dayString) ?? ""
+                            if let record, postDay == anchorDay, let mid = media.id, record.dayIds.contains(mid) {
+                                skipped += 1
+                                dayIds.insert(mid)
+                                continue
+                            }
                             if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
                                 skipped += 1
                             } else {
@@ -221,6 +310,7 @@ final class SyncStore {
                                     partialFailures += 1
                                 }
                             }
+                            if let mid = media.id { dayIds.insert(mid) }
                         }
                     }
                     cursor = next
@@ -230,7 +320,14 @@ final class SyncStore {
                     throw SyncFailure.partialMediaFailure(count: partialFailures)
                 }
                 userMessages[user.screenName] = L("新任务 ") + "\(newTasks)" + L("，跳过 ") + "\(skipped)"
-                if !Task.isCancelled { completedUsers.insert(user.screenName) }
+                if !Task.isCancelled {
+                    completedUsers.insert(user.screenName)
+                    if syncCheck == .syncRecordFile {
+                        Self.writeSyncRecord(screenName: user.screenName,
+                                             anchorDay: latestDay.isEmpty ? (record?.anchorDay ?? "") : latestDay,
+                                             dayIds: Array(dayIds))
+                    }
+                }
             } catch is CancellationError {
                 return
             } catch let failure as SyncFailure {

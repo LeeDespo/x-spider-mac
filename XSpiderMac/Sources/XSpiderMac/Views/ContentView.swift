@@ -30,12 +30,12 @@ struct ContentView: View {
         .overlay(alignment: .bottomTrailing) {
             // 浮条挂在 NavigationSplitView 层级：切页时 detail 内容重建，
             // 但浮条身份保持稳定，不会每次切页都重播出现动画
-            // 同步页隐藏浮条（带动画）：蜂窝页面保持纯净
-            if selection != .sync {
-                FloatingDownloadBar()
-                    .padding(20)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
+            // 同步页隐藏浮条（动画淡出,不移除视图——离开同步页后满足条件即动画回来）
+            FloatingDownloadBar()
+                .opacity(selection == .sync ? 0 : 1)
+                .allowsHitTesting(selection != .sync)
+                .animation(.spring(duration: 0.35), value: selection == .sync)
+                .padding(20)
         }
         .animation(.spring(duration: 0.35), value: selection)
         .background {

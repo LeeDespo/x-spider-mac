@@ -11,6 +11,8 @@ import AppKit
 struct SyncView: View {
     @State private var store = SyncStore.shared
     @State private var showAddSheet = false
+    @State private var showListSheet = false
+    @State private var showFailureSheet = false
     @State private var input = ""
     @State private var appStore = AppStore.shared
     @State private var settingsStore = SettingsStore.shared
@@ -60,6 +62,8 @@ struct SyncView: View {
                 .offset(x: 52, y: geo.size.height * 0.25)
             }
             .navigationTitle(L("同步"))
+            .sheet(isPresented: $showListSheet) { SyncListManagerSheet() }
+            .sheet(isPresented: $showFailureSheet) { SyncFailureSheet() }
             .sheet(isPresented: $showAddSheet) { addSheet }
             .task {
                 store.syncOnLaunchIfNeeded()
@@ -175,17 +179,25 @@ struct SyncView: View {
     @ViewBuilder
     private func avatarView(_ user: SyncUser, index: Int, size: CGFloat, edgeT: Double) -> some View {
         let isActive = store.phase == .syncing && store.currentUser == user.screenName
+        let isDone = store.completedUsers.contains(user.screenName) && store.failedUsers[user.screenName] == nil
+        let isFailed = store.failedUsers[user.screenName] != nil && !store.ignoredFailures.contains(user.screenName)
         let avatar = CachedAvatarView(urlString: user.avatar, size: size)
             .clipShape(Circle())
             .overlay {
                 if isActive {
                     Circle().strokeBorder(Color.accentColor, lineWidth: 3).padding(-6)
+                } else if isFailed {
+                    // 失败红框(与同步中蓝框同形)
+                    Circle().strokeBorder(Color.red, lineWidth: 3).padding(-6)
+                } else if isDone {
+                    // 成功绿框
+                    Circle().strokeBorder(Color.green, lineWidth: 3).padding(-6)
                 }
             }
         let hovered = avatar
             .onHover { h in
-                guard HexRing.ringNumber(index: index) <= 5 else { return }
                 if h {
+                    hoverDebounceTask?.cancel()
                     withAnimation(.spring(duration: 0.18)) { hoveredIndex = index }
                 } else {
                     // 去抖：给悬停桥区（按钮/标签）接管的时间；新悬停取消旧任务，切目标不卡
@@ -199,7 +211,7 @@ struct SyncView: View {
                     }
                 }
             }
-            .help(HexRing.ringNumber(index: index) > 5 ? user.name : "")
+            .help("")
         // 边缘模糊：始终挂载（条件挂载会让进入/离开边缘带时视图树结构突变 → 闪烁缩动）
         return hovered
             .blur(radius: 8 * edgeT)
@@ -381,6 +393,12 @@ struct SyncView: View {
             Text(phaseLabel)
                 .font(.caption)
                 .lineLimit(1)
+            if store.phase == .done && !store.users.isEmpty {
+                Text(L("成功") + " \(store.succeededCount) · " + L("失败") + " \(store.failureCount)")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
             if store.phase == .syncing {
                 let progress = store.users.isEmpty ? 0 : Double(store.currentUserIndex + 1) / Double(max(1, store.users.count))
                 ProgressView(value: progress)
@@ -412,9 +430,14 @@ struct SyncView: View {
 
     // MARK: - 中性玻璃按钮（新增 / 同步，44pt，与卡片同高族）
 
+    /// 清单按钮：完成且存在未忽略失败 → 失败清单；否则同步清单
     private var addButton: some View {
-        glassDiscButton(icon: "plus", help: L("添加同步用户")) {
-            showAddSheet = true
+        glassDiscButton(icon: "list.bullet", help: L("同步清单")) {
+            if store.phase == .done && store.hasFailures {
+                showFailureSheet = true
+            } else {
+                showListSheet = true
+            }
         }
     }
 
@@ -557,9 +580,9 @@ enum HexRing {
         return anchors[4].s
     }
 
-    /// 环间距：全环固定 35pt（恒定,不随环号变化）
+    /// 环间距：全环固定 55pt（恒定,不随环号变化）
     static func ringGap(ring: Int) -> CGFloat {
-        35
+        55
     }
 
     /// 环 r 的中心距（环 0→1 = 中心尺寸/2 + 环1尺寸/2 + 间隙；环间 = 两环尺寸/2 之和 + 间隙）

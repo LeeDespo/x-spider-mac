@@ -82,6 +82,8 @@ final class Aria2Engine: @unchecked Sendable {
 
     var progressHandler: ((String, Int64, Int64) -> Void)?
     var completionHandler: ((String, Result<URL, Error>) -> Void)?
+    /// 优雅暂停回调（aria2 exit 7）
+    var pauseHandler: ((String) -> Void)?
 
     /// 启动 aria2c 下载
     func start(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int = 8, minSplitSizeMB: Int = 1, fileAllocation: String = "none") {
@@ -96,9 +98,11 @@ final class Aria2Engine: @unchecked Sendable {
 
         try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
         let destPath = (destDir as NSString).appendingPathComponent(fileName)
-        // 同名任务重复启动时必须连控制文件一起清掉，否则 --continue 读到旧控制文件产生"假完成"
-        try? FileManager.default.removeItem(atPath: destPath)
-        try? FileManager.default.removeItem(atPath: destPath + ".aria2")
+        // 控制文件存在 = 上次优雅暂停 → 保留以便续传；否则清掉同名残留（避免 --continue 读到旧控制文件"假完成"）
+        if !FileManager.default.fileExists(atPath: destPath + ".aria2") {
+            try? FileManager.default.removeItem(atPath: destPath)
+            try? FileManager.default.removeItem(atPath: destPath + ".aria2")
+        }
 
         let perServer = min(16, max(1, connections))
         let p = Process()
@@ -148,11 +152,14 @@ final class Aria2Engine: @unchecked Sendable {
             self?.outputBuffers.removeValue(forKey: gid)
             self?.lock.unlock()
 
-            let succeeded = process.terminationStatus == 0 && FileManager.default.fileExists(atPath: destPath)
-            if succeeded {
+            let status = process.terminationStatus
+            if status == 0 && FileManager.default.fileExists(atPath: destPath) {
                 self?.completionHandler?(gid, .success(URL(fileURLWithPath: destPath)))
+            } else if status == 7 {
+                // aria2 exit 7 = 用户暂停（SIGINT 优雅退出,控制文件已保存）
+                self?.pauseHandler?(gid)
             } else {
-                self?.completionHandler?(gid, .failure(EngineError.failed("aria2c exit \(process.terminationStatus)")))
+                self?.completionHandler?(gid, .failure(EngineError.failed("aria2c exit \(status)")))
             }
         }
 
@@ -199,11 +206,15 @@ final class Aria2Engine: @unchecked Sendable {
 
     // MARK: - 控制
 
+    /// 暂停：发 SIGINT 让 aria2 优雅保存控制文件（SIGTERM 会留下混乱状态:进度归零+红字报错）
     func pause(gid: String) {
         lock.lock()
         let p = processes.removeValue(forKey: gid)
         lock.unlock()
-        p?.terminate()
+        guard let p else { return }
+        if let pid = p.isRunning ? p.processIdentifier : nil {
+            kill(pid, SIGINT)
+        }
     }
 
     func cancel(gid: String) {

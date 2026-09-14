@@ -35,6 +35,15 @@ enum L10n {
 
 
         // 侧边栏 / 导航
+        ("已创建任务", "已建立任務"),
+        ("同步判定依据", "同步判定依據"),
+        ("按同步记录文件", "按同步記錄檔案"),
+        ("成功", "成功"),
+        ("删除记录和源文件（含未完成临时文件）", "刪除記錄和原始檔案（含未完成暫存檔）"),
+        ("按文件名：与下载判定依据的「按文件名」一致。", "按檔名：與下載判定依據的「按檔名」一致。"),
+        ("按同步记录文件：在保存路径维护 .synced.json（记录每用户最新媒体日期与当天全部媒体 ID），同步只检索该日期之后的时间线，当天媒体按资源索引排除，可显著加快同步速度。", "按同步記錄檔案：在儲存路徑維護 .synced.json（記錄每使用者最新媒體日期與當天全部媒體 ID），同步只檢索該日期之後的時間線，當天媒體按資源索引排除，可顯著加快同步速度。"),
+        ("按文件名：强制在文件名末尾增加资源索引。", "按檔名：強制在檔名末尾增加資源索引。"),
+        ("按下载记录文件：在保存路径创建并维护 .downloaded.json 文件（全量记录已下载媒体的资源索引），改文件名模板也不影响判定。", "按下載記錄檔案：在儲存路徑建立並維護 .downloaded.json 檔案（全量記錄已下載媒體的資源索引），改檔名範本也不影響判定。"),
         ("主页", "主頁"),
         ("下载管理", "下載管理"),
         ("设置", "設定"),
@@ -439,6 +448,16 @@ enum L10n {
         ("快速分配（推荐 SSD）", "Fallocate (SSD)"),
         ("不分配", "None"),
         ("液态玻璃外观", "Liquid Glass appearance"),
+        ("已创建任务", "Task Created"),
+        ("同步判定依据", "Sync Check Basis"),
+        ("按同步记录文件", "By Sync Record File"),
+        ("成功", "OK"),
+        ("删除记录和源文件（含未完成临时文件）", "Delete records and files (including temp files)"),
+        ("按文件名：与下载判定依据的「按文件名」一致。", "By file name: same as the download check's file-name basis."),
+        ("按同步记录文件：在保存路径维护 .synced.json（记录每用户最新媒体日期与当天全部媒体 ID），同步只检索该日期之后的时间线，当天媒体按资源索引排除，可显著加快同步速度。", "By sync record file: maintains .synced.json in the save path (latest media date per user plus that day's media IDs); sync only fetches the timeline after that date and de-duplicates same-day media by ID, greatly speeding up sync."),
+        ("按文件名：强制在文件名末尾增加资源索引。", "By file name: forces a media index suffix on file names."),
+        ("按下载记录文件：在保存路径创建并维护 .downloaded.json 文件（全量记录已下载媒体的资源索引），改文件名模板也不影响判定。", "By download record file: maintains a .downloaded.json file in the save path (full record of downloaded media IDs); renaming the file template does not affect the check."),
+
         ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "macOS below 26 (Tahoe) does not support Liquid Glass; standard materials are used."),
         ("当前系统版本不支持液态玻璃，已自动使用普通材质。", "The current system does not support Liquid Glass; regular materials are used."),
         ("同步完成后自动关闭应用", "Quit app after sync completes"),

@@ -77,7 +77,7 @@ struct FloatingDownloadBar: View {
             }
         }
         .onAppear {
-            visible = !store.tasks.isEmpty
+            withAnimation(.spring(duration: 0.35)) { visible = !store.tasks.isEmpty }
         }
     }
 

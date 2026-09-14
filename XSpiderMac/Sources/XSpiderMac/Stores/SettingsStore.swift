@@ -50,9 +50,17 @@ final class SettingsStore {
 
     private var savedSettings: Settings?
 
+    /// 模板等连续输入时每次按键都会触发 save——JSON 全量编码+写盘造成卡顿。
+    /// 写盘防抖 300ms 合并；语言/日志等旁路立即生效。
+    private var saveDebounceTask: Task<Void, Never>?
     private func save() {
-        if let data = try? JSONEncoder().encode(settings) {
-            storage.set(data, forKey: key)
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task { [settings] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            if let data = try? JSONEncoder().encode(settings) {
+                self.storage.set(data, forKey: self.key)
+            }
         }
         AppLogger.fileLoggingEnabled = settings.app.writeLogs
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload

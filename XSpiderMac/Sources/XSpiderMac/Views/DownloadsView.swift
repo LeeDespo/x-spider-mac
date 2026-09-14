@@ -191,18 +191,12 @@ struct DownloadsView: View {
             case L("下载中"):
                 Button(L("全部暂停")) { store.pauseAll() }
                 Button(L("全部恢复")) { store.unpauseAll() }
-                Button(L("删除当前记录"), role: .destructive) {
-                    store.removeVisibleRecords(statuses: currentStatuses)
-                }
+                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
             case L("已完成"):
-                Button(L("删除当前记录"), role: .destructive) {
-                    store.removeVisibleRecords(statuses: currentStatuses)
-                }
+                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
             case L("失败"):
                 Button(L("全部重试")) { Task { await store.batchRedownload(store.tasksForCurrentTab(statuses: currentStatuses).map(\.gid)) } }
-                Button(L("删除当前记录"), role: .destructive) {
-                    store.removeVisibleRecords(statuses: currentStatuses)
-                }
+                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
             default:
                 EmptyView()
             }
@@ -210,7 +204,22 @@ struct DownloadsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .confirmationDialog(
+            L("删除 \(store.tasksForCurrentTab(statuses: currentStatuses).count) 条记录？"),
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(L("仅删除记录"), role: .destructive) {
+                store.removeVisibleRecords(statuses: currentStatuses)
+            }
+            Button(L("删除记录和源文件（含未完成临时文件）"), role: .destructive) {
+                store.removeVisibleRecords(statuses: currentStatuses, alsoDeleteFiles: true)
+            }
+            Button(L("取消"), role: .cancel) {}
+        }
     }
+
+    @State private var showDeleteConfirm = false
 }
 
 // MARK: - 用户筛选小窗（头像 + 加粗昵称 + 用户名，点击切换筛选）
