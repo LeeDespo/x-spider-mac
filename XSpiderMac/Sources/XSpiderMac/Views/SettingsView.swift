@@ -688,14 +688,24 @@ struct SyncListManagerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var store = SyncStore.shared
     @State private var searchText = ""
+    /// 排序：addition（默认，最新添加在最前）/ alphabet（用户名首字母）
+    @State private var sortOrder: SyncListSortOrder = .addition
 
-    /// 倒序（最新添加在最前）+ 检索过滤（用户名 / 昵称，不分大小写）
+    /// 排序 + 检索过滤（用户名 / 昵称，不分大小写）
     private var filteredUsers: [SyncUser] {
-        let reversed = store.users.reversed()
         let q = searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return Array(reversed) }
+        let base: [SyncUser]
+        switch sortOrder {
+        case .addition:
+            base = Array(store.users.reversed())
+        case .alphabet:
+            base = store.users.sorted {
+                $0.screenName.lowercased().compare($1.screenName.lowercased(), locale: .current) == .orderedAscending
+            }
+        }
+        guard !q.isEmpty else { return base }
         let lowered = q.lowercased()
-        return reversed.filter {
+        return base.filter {
             $0.screenName.lowercased().contains(lowered) || $0.name.lowercased().contains(lowered)
         }
     }
@@ -706,6 +716,12 @@ struct SyncListManagerSheet: View {
             HStack(spacing: 12) {
                 Text(L("同步清单"))
                     .font(.headline)
+                Picker(L("排序"), selection: $sortOrder) {
+                    Text(L("添加顺序")).tag(SyncListSortOrder.addition)
+                    Text(L("用户名首字母")).tag(SyncListSortOrder.alphabet)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
                 Spacer()
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
@@ -811,4 +827,11 @@ struct SyncListManagerSheet: View {
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
         .transition(.opacity.combined(with: .move(edge: .trailing)))
     }
+}
+
+
+/// 同步清单排序
+enum SyncListSortOrder: Hashable, Sendable {
+    case addition
+    case alphabet
 }

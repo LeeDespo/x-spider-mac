@@ -36,6 +36,11 @@ enum L10n {
 
         // 侧边栏 / 导航
         ("已创建任务", "已建立任務"),
+        ("排序", "排序"),
+        ("添加顺序", "添加順序"),
+        ("用户名首字母", "使用者名稱首字母"),
+        ("文件名重复，已改用序号文件名", "檔名重複，已改用序號檔名"),
+
         ("同步判定依据", "同步判定依據"),
         ("按同步记录文件", "按同步記錄檔案"),
         ("成功", "成功"),
@@ -460,6 +465,11 @@ enum L10n {
 
         ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "macOS below 26 (Tahoe) does not support Liquid Glass; standard materials are used."),
         ("当前系统版本不支持液态玻璃，已自动使用普通材质。", "The current system does not support Liquid Glass; regular materials are used."),
+        ("排序", "Sort"),
+        ("添加顺序", "Add order"),
+        ("用户名首字母", "Username initial"),
+        ("文件名重复，已改用序号文件名", "Filename conflict; renamed with a sequence number"),
+
         ("同步完成后自动关闭应用", "Quit app after sync completes"),
         ("同步页面布局", "Sync Page Layout"),
         ("仿 Dock 布局", "Dock-style Layout"),

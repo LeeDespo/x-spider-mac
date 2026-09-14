@@ -345,7 +345,10 @@ struct SyncView: View {
     /// 滚轮/触控板双指滑动 + 方向键 → 平移蜂窝（弹窗打开时放行；闭包内实时读取最新状态）
     private func installScrollMonitor() {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { event in
-            guard showAddSheet == false, NSApp.keyWindow?.sheets.isEmpty ?? true else { return event }
+            // 任何弹窗(添加/清单/失败,无论挂在哪个视图)打开时都放行——sheet 可能挂在别的视图层,
+            // keyWindow.sheets 不一定反映"有 sheet 在前台"
+            let anySheet = NSApp.windows.contains { !$0.sheets.isEmpty }
+            guard showAddSheet == false, anySheet == false, (NSApp.keyWindow?.sheets.isEmpty ?? true) else { return event }
             let D = HexRing.diameter(userCount: max(1, store.users.count))
             if event.type == .scrollWheel {
                 let dx = -event.scrollingDeltaX * 2.2

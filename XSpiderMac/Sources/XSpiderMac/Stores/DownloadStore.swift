@@ -45,10 +45,40 @@ final class DownloadStore {
         }
     }
 
-    /// 删除当前 Tab + 用户筛选范围内的记录；alsoDeleteFiles = 同时删除源文件与未完成临时文件
+    /// 删除当前 Tab + 用户筛选范围内的记录；alsoDeleteFiles = 同时删除源文件与未完成临时文件。
+    /// 文件删除在后台线程批量执行（UI 不卡顿）：先同步摘除记录与引擎任务，再异步清盘。
     func removeVisibleRecords(statuses: [DownloadStatus], alsoDeleteFiles: Bool = false) {
         let targets = tasksForCurrentTab(statuses: statuses).map(\.gid)
-        for gid in targets { remove(gid, alsoDeleteFiles: alsoDeleteFiles) }
+        // 先摘记录/停引擎（同步,快）,收集要删的文件路径
+        var pathsToDelete: [String] = []
+        if alsoDeleteFiles {
+            for gid in targets {
+                if let task = tasks.first(where: { $0.gid == gid }) {
+                    pathsToDelete.append((task.dir as NSString).appendingPathComponent(task.fileName))
+                    let tmpName = tmpFileName(for: task)
+                    let dirURL = URL(fileURLWithPath: task.dir)
+                    pathsToDelete.append(dirURL.appendingPathComponent(tmpName).path)
+                    pathsToDelete.append(dirURL.appendingPathComponent(tmpName + ".aria2").path)
+                    // 旧版 staging 位置兼容清理
+                    let legacy = AppDirectories.staging.appendingPathComponent(aria2FileName(for: task))
+                    pathsToDelete.append(legacy.path)
+                    pathsToDelete.append(legacy.path + ".aria2")
+                    // URLSession 引擎的新位置 tmp(带 UUID 无法精确匹配,按前缀清理交给 resolveStale)
+                }
+            }
+        }
+        for gid in targets { remove(gid, alsoDeleteFiles: false) }
+        if alsoDeleteFiles && !pathsToDelete.isEmpty {
+            let paths = pathsToDelete
+            Task.detached(priority: .utility) {
+                let fm = FileManager.default
+                var removed = 0
+                for p in paths {
+                    if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p); removed += 1 }
+                }
+                AppLogger.info("已删除记录和源文件", category: "DL", ["files": "\(removed)"])
+            }
+        }
         AppLogger.info("删除历史记录", category: "DL", [
             "count": "\(targets.count)", "files": alsoDeleteFiles ? "yes" : "no",
             "user": userFilterScreenName ?? "all",
@@ -135,6 +165,17 @@ final class DownloadStore {
             fileName = lockedFileName(fileName, mediaId: media.id)
         }
 
+        // sameFileSkip：按当前判定依据决定跳过（用解析后的原名判定）
+        if settings.download.sameFileSkip {
+            if isDuplicate(media: media, fileName: fileName, dir: dir) {
+                return nil
+            }
+        }
+
+        // 文件名重复消解：模板不含媒体 ID/索引时（如「用户名.扩展名」）同用户多媒体会同名——
+        // 目标位置已存在文件、或任务列表里有同路径未完成任务 → 追加「 (2)」「 (3)」序号
+        fileName = uniquedFileName(fileName, dir: dir)
+
         let task = DownloadTask(
             gid: UUID().uuidString,
             post: post,
@@ -149,13 +190,6 @@ final class DownloadStore {
             downloadUrl: downloadUrl,
             retryCountRemains: 5
         )
-
-        // sameFileSkip：按当前判定依据决定跳过
-        if settings.download.sameFileSkip {
-            if isDuplicate(media: media, fileName: fileName, dir: dir) {
-                return nil
-            }
-        }
 
         AppLogger.info("创建下载任务", category: "DL", ["file": fileName, "dir": dir, "url": downloadUrl, "mediaId": media.id ?? "?"])
         tasks.append(task)
@@ -267,6 +301,26 @@ final class DownloadStore {
     /// 文件名是否已包含 %MEDIA_ID% 模板变量
     private func templateHasMediaId() -> Bool {
         settings.download.fileNameTemplate.contains("%MEDIA_ID%")
+    }
+
+    /// 文件名重复消解：同路径冲突时追加「 (n)」序号（(2) 起）；检查文件系统与未完成任务表
+    private func uniquedFileName(_ fileName: String, dir: String) -> String {
+        func taken(_ name: String) -> Bool {
+            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(name)) { return true }
+            return tasks.contains {
+                $0.dir == dir && $0.fileName == name &&
+                $0.status != .error && $0.status != .removed
+            }
+        }
+        guard taken(fileName) else { return fileName }
+        let stem = (fileName as NSString).deletingPathExtension
+        let ext = (fileName as NSString).pathExtension
+        var n = 2
+        while true {
+            let candidate = ext.isEmpty ? "\(stem) (\(n))" : "\(stem) (\(n)).\(ext)"
+            if !taken(candidate) { return candidate }
+            n += 1
+        }
     }
 
     /// recordFile 模式下给文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 时保持原样）
@@ -402,11 +456,12 @@ final class DownloadStore {
             } else {
                 proxyArg = nil
             }
-            let stagingURL = AppDirectories.staging.appendingPathComponent(aria2FileName(for: task))
+            // 临时文件直接放目标目录（免拷贝）;文件名前缀 .xspider-tmp- 防与正式文件重名
+            let stagingURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpFileName(for: task)))
             aria2StagingPaths[task.gid] = stagingURL
             aria2.start(
                 gid: task.gid, urlString: task.downloadUrl,
-                destDir: AppDirectories.staging.path,
+                destDir: task.dir,
                 fileName: aria2FileName(for: task),
                 proxy: proxyArg,
                 connections: settings.aria2Split,
@@ -419,7 +474,15 @@ final class DownloadStore {
         launchBuiltIn(task, url: url)
     }
 
-    /// aria2 暂存文件名：gid 前缀 + 简化名，避免多任务同名竞态（文件名中的 / 等替换掉）
+    /// 引擎临时文件名：.xspider-tmp-<gid>-<原名>（目标目录内,隐藏前缀防与正式文件重名/误识别）
+    private func tmpFileName(for task: DownloadTask) -> String {
+        let safe = task.fileName
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return ".xspider-tmp-\(task.gid)-\(safe)"
+    }
+
+    /// 兼容旧调用（删除旧 staging 残留时仍按旧名找一遍）
     private func aria2FileName(for task: DownloadTask) -> String {
         let safe = task.fileName
             .replacingOccurrences(of: "/", with: "_")
@@ -442,7 +505,7 @@ final class DownloadStore {
         }
 
         let gid = task.gid
-        let delegate = DownloadDelegate(store: self, gid: gid)
+        let delegate = DownloadDelegate(store: self, gid: gid, dir: task.dir)
         sessionTask.delegate = delegate
         sessionTask.resume()
         sessionTasks[gid] = sessionTask
@@ -476,20 +539,24 @@ final class DownloadStore {
         sessionTasks[gid]?.cancel()
         sessionTasks.removeValue(forKey: gid)
         aria2.cancel(gid: gid)
-        if let staging = aria2StagingPaths.removeValue(forKey: gid) {
-            try? fm.removeItem(at: staging)
-            try? fm.removeItem(at: URL(fileURLWithPath: staging.path + ".aria2"))
+        // 引擎临时文件(现在位于目标目录内;兼容旧版 staging 位置)
+        if let tmp = aria2StagingPaths.removeValue(forKey: gid) {
+            try? fm.removeItem(at: tmp)
+            try? fm.removeItem(at: URL(fileURLWithPath: tmp.path + ".aria2"))
         }
         resumeDataMap.removeValue(forKey: gid)
         if let index = tasks.firstIndex(where: { $0.gid == gid }) {
             let task = tasks[index]
             if alsoDeleteFiles {
-                // 源文件 + URL之中置引擎临时文件(.aria2 控制文件已随 staging 删)
+                // 源文件 + 目标目录内引擎临时文件 + 旧 staging 残留
                 let destURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(task.fileName))
                 try? fm.removeItem(at: destURL)
-                let stagingName = aria2FileName(for: task)
-                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(stagingName))
-                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(stagingName + ".aria2"))
+                let tmpName = tmpFileName(for: task)
+                try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName)))
+                try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName + ".aria2")))
+                let legacyStaging = aria2FileName(for: task)
+                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging))
+                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging + ".aria2"))
             }
             tasks.remove(at: index)
         }
@@ -570,7 +637,10 @@ final class DownloadStore {
     func handleDownloadCompleted(gid: String, localURL: URL?, response: URLResponse?, error: Error?) {
         defer {
             sessionTasks.removeValue(forKey: gid)
-            if let localURL, localURL.deletingLastPathComponent() == AppDirectories.staging {
+            // 失败路径：目标目录内的稳定临时文件清理（成功路径由 finalizeDownload rename 消化）
+            if let localURL,
+               localURL.lastPathComponent.hasPrefix(".xspider-tmp-"),
+               error != nil {
                 try? fm.removeItem(at: localURL)
             }
         }
@@ -690,10 +760,13 @@ final class DownloadStore {
 final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let store: DownloadStore
     let gid: String
+    /// 目标目录（稳定临时文件直接放这里,免二次拷贝）
+    let taskDir: String
 
-    init(store: DownloadStore, gid: String) {
+    init(store: DownloadStore, gid: String, dir: String) {
         self.store = store
         self.gid = gid
+        self.taskDir = dir
         super.init()
     }
 
@@ -708,10 +781,13 @@ final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked S
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         // 关键：必须在回调返回前同步处理——回调返回后系统会删除 location 临时文件。
-        // 先同步拷贝到稳定位置，再投递到 MainActor 更新状态。
-        let stableURL = AppDirectories.staging
-            .appendingPathComponent("xspider-dl-\(UUID().uuidString)")
+        // 稳定位置直接放目标目录（.xspider-tmp- 前缀）：这一次拷贝是跨卷/跨目录的必经一步,
+        // 之后的 finalize 是同卷 rename,零拷贝。
+        let destDir = self.taskDir
+        let stableURL = URL(fileURLWithPath: (destDir as NSString)
+            .appendingPathComponent(".xspider-tmp-urlsession-\(UUID().uuidString)"))
         do {
+            try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: stableURL)
             try FileManager.default.copyItem(at: location, to: stableURL)
             Task { @MainActor in
