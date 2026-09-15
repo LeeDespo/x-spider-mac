@@ -3,6 +3,16 @@ import SwiftUI
 /// 上游 Account.tsx 的移植：auth_token + ct0 双字段登录，在线验证后更新账户卡。
 struct CookieImportView: View {
     @Binding var isPresented: Bool
+
+    var body: some View {
+        CookieImportForm()
+            .frame(width: 480)
+    }
+}
+
+/// 手动 Cookie 输入表单（CookieLoginSheet 复用）
+struct CookieImportForm: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var authToken: String = ""
     @State private var ct0: String = ""
     @State private var loading = false
@@ -39,7 +49,7 @@ struct CookieImportView: View {
 
             HStack {
                 Spacer()
-                Button(L("取消")) { isPresented = false }
+                Button(L("取消")) { dismiss() }
                     .compatGlassButton()
                 Button(loading ? L("验证中…") : L("登录")) {
                     Task { await login() }
@@ -49,7 +59,6 @@ struct CookieImportView: View {
             }
         }
         .padding()
-        .frame(width: 480)
     }
 
     private func login() async {
@@ -62,7 +71,7 @@ struct CookieImportView: View {
         ])
         do {
             _ = try await AppStore.shared.login(cookieString: cookieString)
-            isPresented = false
+            dismiss()
         } catch {
             errorMessage = L("登录失败：") + "\(error.localizedDescription)" + L("。请检查 auth_token 和 ct0 是否正确、是否过期。")
         }
@@ -73,3 +82,4 @@ struct CookieImportView: View {
 #Preview {
     CookieImportView(isPresented: .constant(true))
 }
+

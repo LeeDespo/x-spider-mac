@@ -166,6 +166,8 @@ final class DownloadStore {
         // sameFileSkip：按当前判定依据决定跳过（用解析后的原名判定）
         if settings.download.sameFileSkip {
             if isDuplicate(media: media, fileName: fileName, dir: dir) {
+                // 单媒体点击下载被跳过时给可见反馈（否则用户以为按钮失灵）
+                notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + fileName)
                 return nil
             }
         }

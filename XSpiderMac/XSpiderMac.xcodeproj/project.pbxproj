@@ -10,6 +10,7 @@
 		000A80B75B44F4533CF03039 /* AppDirectories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */; };
 		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
+		0F47BB2443DF850442B690E6 /* CookieLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */; };
 		157A8BC0BB28D7BB7F4A1762 /* SelectiveDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9584DB531B7E025682E82DD2 /* SelectiveDownloadSheet.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
 		19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */; };
@@ -126,6 +127,7 @@
 		E70DBBE98EADA3D2FD08805F /* NumberStepperField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberStepperField.swift; sourceTree = "<group>"; };
 		E91AFBC2B087ACA54EA1554D /* SleepPreventer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepPreventer.swift; sourceTree = "<group>"; };
 		EA025EF3ECBDC3FAB302A622 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieLoginSheet.swift; sourceTree = "<group>"; };
 		F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadFilter.swift; sourceTree = "<group>"; };
 		F1A6494CC89C67122E3F3122 /* HomepageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomepageStore.swift; sourceTree = "<group>"; };
 		F52E6EBC6E44EE82061C8673 /* L10nTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10nTests.swift; sourceTree = "<group>"; };
@@ -166,6 +168,7 @@
 				13AD8E0566B641889F9C73FB /* AboutView.swift */,
 				49F384578208B4323FB9E377 /* ContentView.swift */,
 				CD11699500B1791EFEAA1F95 /* CookieImportView.swift */,
+				EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */,
 				85CFC477417C1D3E25F35D77 /* DockSyncLayout.swift */,
 				BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */,
 				66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */,
@@ -399,6 +402,7 @@
 				1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */,
 				EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */,
 				EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */,
+				0F47BB2443DF850442B690E6 /* CookieLoginSheet.swift in Sources */,
 				AF65BEB030CCF1A1B6A8CCA8 /* CreationTask.swift in Sources */,
 				642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */,
 				7F2FF43F7FDAF1C56D8BAAFD /* DockSyncLayout.swift in Sources */,

@@ -33,7 +33,7 @@ struct SidebarView: View {
         .frame(minWidth: 200, idealWidth: 220)
         .background(.clear)
         .sheet(isPresented: $showCookieSheet) {
-            CookieImportView(isPresented: $showCookieSheet)
+            CookieLoginSheet()
         }
         .onAppear {
             account = AppStore.shared.account

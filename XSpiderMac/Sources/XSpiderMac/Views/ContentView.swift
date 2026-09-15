@@ -47,7 +47,7 @@ struct ContentView: View {
         }
         .transparentWindowBackground()
         .sheet(isPresented: $showCookieSheet) {
-            CookieImportView(isPresented: $showCookieSheet)
+            CookieLoginSheet()
         }
         .sheet(isPresented: $showFeatureIntro) {
             FeatureIntroSheet()

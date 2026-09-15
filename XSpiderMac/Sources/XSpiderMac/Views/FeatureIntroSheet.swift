@@ -10,13 +10,12 @@ struct FeatureIntroSheet: View {
         VStack(spacing: 0) {
             TabView(selection: $page) {
                 introPage(
-                    icon: "magnifyingglass.circle.fill",
+                    icon: "house.circle.fill",
                     tint: .accentColor,
-                    title: L("搜索与浏览"),
+                    title: L("主页"),
                     lines: [
-                        L("在主页搜索框输入用户 @用户名 或推文链接。"),
-                        L("网格展示媒体；双击任意媒体卡片可查看推文详情：左侧切换高清图或播放视频，右侧浏览正文与评论。"),
-                        L("下载配置可按日期范围、媒体类型、数据源筛选；「选择下载」可勾选部分媒体单独下载。"),
+                        L("搜索用户浏览其媒体，或在下载配置中按日期、类型筛选后开始下载。"),
+                        L("「选择下载」可勾选部分媒体单独下载。"),
                     ]
                 )
                 .tag(0)
@@ -24,23 +23,21 @@ struct FeatureIntroSheet: View {
                 introPage(
                     icon: "arrow.down.circle.fill",
                     tint: .green,
-                    title: L("下载与同步"),
+                    title: L("下载"),
                     lines: [
-                        L("下载引擎可选内置引擎或 aria2Next（多连接，大文件更快更稳）。"),
-                        L("同步页把关注用户排成队列，逐个同步其媒体时间线；仿 Dock 布局或蜂窝布局可在设置中切换。"),
-                        L("重复判定支持按文件名或按记录文件，避免重复下载。"),
+                        L("下载页管理任务进度、历史与失败重试。"),
+                        L("引擎可选内置引擎或 aria2Next（多连接，大文件更快更稳）。"),
                     ]
                 )
                 .tag(1)
 
                 introPage(
-                    icon: "gearshape.circle.fill",
+                    icon: "arrow.triangle.2.circlepath.circle.fill",
                     tint: .orange,
-                    title: L("设置与个性化"),
+                    title: L("同步"),
                     lines: [
-                        L("设置 - 外观：液态玻璃、字号、语言即时生效。"),
-                        L("设置 - 代理：支持系统代理或手动代理（含身份验证）。"),
-                        L("设置 - 隐私：自动清除搜索/下载历史。"),
+                        L("同步页把清单里的用户逐个同步最新媒体，仿 Dock 与蜂窝布局可切换。"),
+                        L("判定依据建议保持「按同步记录文件」，只检索新内容，速度更快。"),
                     ]
                 )
                 .tag(2)
