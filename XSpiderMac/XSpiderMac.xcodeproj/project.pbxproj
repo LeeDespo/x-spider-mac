@@ -46,6 +46,7 @@
 		AF65BEB030CCF1A1B6A8CCA8 /* CreationTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 184CF2D9F3C06EC179D10B36 /* CreationTask.swift */; };
 		B021AB66B3B7029A22C6D093 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC206AB57040EA940F7C8BC6 /* AppLogger.swift */; };
 		B6F79EF95045436E10971ED0 /* DownloadFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */; };
+		BF54EF745C13947AC292D2CB /* SavedAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 692D8C0DFF9BA1F0210A7FAE /* SavedAccount.swift */; };
 		C8F2418BC5ABEBBA7B4B405B /* MediaDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF89D7F6225AE828A18C02A6 /* MediaDetailView.swift */; };
 		C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */; };
 		CA437AE628E377F593756EA1 /* HomeTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAED927235E402A41F636ED /* HomeTimelineView.swift */; };
@@ -97,6 +98,7 @@
 		65114E0D2408F2AD861228F0 /* DownloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadStore.swift; sourceTree = "<group>"; };
 		65CBC9960CB839075452DECD /* TwitterPost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterPost.swift; sourceTree = "<group>"; };
 		66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureIntroSheet.swift; sourceTree = "<group>"; };
+		692D8C0DFF9BA1F0210A7FAE /* SavedAccount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedAccount.swift; sourceTree = "<group>"; };
 		69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassBackground.swift; sourceTree = "<group>"; };
 		6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterMedia.swift; sourceTree = "<group>"; };
 		72BF360634AFA8E3C4715248 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
@@ -262,6 +264,7 @@
 				F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */,
 				13C99C4BFC75F391787FD663 /* DownloadTask.swift */,
 				E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */,
+				692D8C0DFF9BA1F0210A7FAE /* SavedAccount.swift */,
 				BE73393E6DBB7A16308C178D /* SearchHistoryItem.swift */,
 				B5AD5B19BDF7FCCA2E95AE62 /* Settings.swift */,
 				93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */,
@@ -432,6 +435,7 @@
 				1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */,
 				695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */,
 				E950C166A4EFDCD28FA5B3C4 /* NumberStepperField.swift in Sources */,
+				BF54EF745C13947AC292D2CB /* SavedAccount.swift in Sources */,
 				4290761DA5D4747D2608F590 /* SearchHistoryItem.swift in Sources */,
 				EB90013BFE5E8249FE9A8F85 /* SearchHistoryPopover.swift in Sources */,
 				157A8BC0BB28D7BB7F4A1762 /* SelectiveDownloadSheet.swift in Sources */,

@@ -56,6 +56,7 @@ struct SidebarView: View {
     // MARK: - 账户卡（上游 Account.tsx：头像 + 昵称 + screen_name，点击可登出）
 
     @State private var accountMenuVisible = false
+    @State private var switchingAccount: SavedAccount?
 
     private var accountCard: some View {
         HStack(spacing: 12) {
@@ -96,9 +97,44 @@ struct SidebarView: View {
                 accountMenuVisible = true
             }
         }
-        // 已登录：点击弹菜单（切换账号 / 登出）；未登录：点击导入 Cookie
+        // 已登录：点击弹菜单（已存账户列表 / 导入新账号 / 登出销毁）；未登录：点击导入 Cookie
         .popover(isPresented: $accountMenuVisible, arrowEdge: .bottom) {
             VStack(spacing: 2) {
+                // 1) 已登录过的账户（点击切换,cookie 保留切换不丢）
+                let saved = AppStore.shared.savedAccounts
+                if !saved.isEmpty {
+                    Text(L("已登录的账户"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
+                    ForEach(saved) { acc in
+                        Button {
+                            accountMenuVisible = false
+                            switchingAccount = acc
+                        } label: {
+                            HStack(spacing: 8) {
+                                CachedAvatarView(urlString: acc.avatar, size: 22)
+                                Text("@\(acc.screenName)")
+                                    .font(.callout)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if acc.screenName == account?.screenName {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                    }
+                    Divider()
+                }
+
+                // 2) 导入/登录新账号（保留当前 cookie）
                 Button {
                     accountMenuVisible = false
                     showCookieSheet = true
@@ -113,6 +149,7 @@ struct SidebarView: View {
 
                 Divider()
 
+                // 3) 登出 = 销毁当前账户的 cookie
                 Button(role: .destructive) {
                     accountMenuVisible = false
                     AppStore.shared.logout()
@@ -128,7 +165,26 @@ struct SidebarView: View {
                 .padding(.vertical, 7)
             }
             .padding(.vertical, 6)
-            .frame(width: 180)
+            .frame(width: 200)
+        }
+        // 切换账户确认(可能要重新验证)
+        .confirmationDialog(
+            L("切换到 @\(switchingAccount?.screenName ?? "")？"),
+            isPresented: Binding(get: { switchingAccount != nil }, set: { if !$0 { switchingAccount = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button(L("切换")) {
+                if let target = switchingAccount {
+                    Task {
+                        try? await AppStore.shared.switchToAccount(target)
+                        self.account = AppStore.shared.account
+                    }
+                }
+                switchingAccount = nil
+            }
+            Button(L("取消"), role: .cancel) { switchingAccount = nil }
+        } message: {
+            Text(L("当前账户的 Cookie 会保留，可随时切回。"))
         }
     }
 }

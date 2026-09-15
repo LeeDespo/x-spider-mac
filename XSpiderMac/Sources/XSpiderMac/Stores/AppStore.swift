@@ -107,13 +107,49 @@ final class AppStore {
         let info = try await TwitterAPI.shared.getAccountInfo(cookieStringOverride: cookieString)
         self.cookieString = cookieString
         self.account = info
+        rememberCurrentAccount()
         return info
     }
 
     /// 登出（上游 handleLogout：清 cookie + 账户信息）
     func logout() {
+        // 登出 = 销毁当前账户的 cookie(含已存列表中的该账户)
+        if let sn = account?.screenName {
+            savedAccounts.removeAll { $0.screenName == sn }
+        }
         cookieString = ""
         account = nil
+    }
+
+    // MARK: - 多账户管理
+
+    /// 已登录过的账户（cookie 保留,可随时切换;当前账户也在其中）
+    var savedAccounts: [SavedAccount] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "app.savedAccounts"),
+               let list = try? JSONDecoder().decode([SavedAccount].self, from: data) {
+                return list
+            }
+            return []
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "app.savedAccounts")
+            }
+        }
+    }
+
+    /// 登录成功后把当前账户加入已存列表（cookie 保存在当前 cookieString;多账户需各自保存 cookie）
+    func rememberCurrentAccount() {
+        guard let acc = account, !cookieString.isEmpty else { return }
+        var list = savedAccounts.filter { $0.screenName != acc.screenName }
+        list.insert(SavedAccount(screenName: acc.screenName, avatar: acc.avatar, cookie: cookieString), at: 0)
+        savedAccounts = list
+    }
+
+    /// 切换到已存账户：恢复其 cookie 并验证
+    func switchToAccount(_ target: SavedAccount) async throws {
+        _ = try await login(cookieString: target.cookie)
     }
 
     /// 启动时恢复：如果已有 cookie，静默重新验证（上游 App.tsx useMount 行为）

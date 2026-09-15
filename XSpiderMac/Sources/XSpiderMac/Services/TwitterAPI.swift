@@ -221,6 +221,16 @@ actor TwitterAPI {
         )
     }
 
+    /// 取消点赞（UnfavoriteTweet）
+    func unfavoriteTweet(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/ZYKSe-w7KEslx3JhSIk5LA/UnfavoriteTweet",
+            variables: """
+            {"tweet_id":"\(id)","dark_request":false}
+            """
+        )
+    }
+
     /// 转推 / 撤销转推
     func createRetweet(id: String) async throws {
         try await mutate(

@@ -14,8 +14,10 @@ struct HomeView: View {
     /// 双击媒体 → 推文详情弹窗
     @State private var detailPost: TwitterPost?
     @State private var detailMediaIndex = 0
-    /// 选择性下载弹窗
-    @State private var showSelectiveDownload = false
+    /// 选择性下载模式（媒体卡缩小变暗表示"后退",点击选中恢复）
+    @State private var selectiveMode = false
+    /// 已勾选待下载的媒体 (post.id, media.id)
+    @State private var selectedMediaKeys: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,9 +27,7 @@ struct HomeView: View {
                 .padding(.bottom, 8)
 
             if !appStore.cookieString.isEmpty {
-                if store.tweetSearchMode {
-                    tweetResultView
-                } else if store.userInfoLoading {
+                if store.userInfoLoading {
                     loadingView
                 } else if let user = store.userInfo {
                     userInfoCard(user)
@@ -62,9 +62,36 @@ struct HomeView: View {
         .sheet(item: $detailPost) { post in
             MediaDetailView(post: post, initialMediaIndex: detailMediaIndex)
         }
-        .sheet(isPresented: $showSelectiveDownload) {
-            SelectiveDownloadSheet(store: store, filter: store.filter)
+        .overlay(alignment: .bottom) {
+            if selectiveMode {
+                // 选择模式操作条:全选/完成/取消
+                HStack(spacing: 14) {
+                    Button(L("全选")) {
+                        selectedMediaKeys = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
+                    }
+                    .compatGlassButton()
+                    Button(L("全不选")) { selectedMediaKeys = [] }
+                        .compatGlassButton()
+                    Spacer()
+                    Button(L("取消")) {
+                        selectiveMode = false
+                        selectedMediaKeys = []
+                    }
+                    .compatGlassButton()
+                    Button(L("下载所选(\(selectedMediaKeys.count))")) { downloadSelected() }
+                        .compatGlassProminentButton()
+                        .disabled(selectedMediaKeys.isEmpty)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .shadow(color: .black.opacity(0.2), radius: 10, y: 3)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 14)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.spring(duration: 0.35, bounce: 0.15), value: selectiveMode)
         .overlay(alignment: .bottomTrailing) {
             // 搜索用户/推文后:返回时间线悬浮钮
             if store.userInfo != nil || store.tweetSearchMode {
@@ -85,39 +112,36 @@ struct HomeView: View {
         .animation(.spring(duration: 0.3), value: store.userInfo != nil || store.tweetSearchMode)
     }
 
-    /// 搜索分流：推文链接/ID → 推文模式；否则按用户 screen_name
+    /// 选择模式键
+    private func selectionKey(_ post: TwitterPost, _ media: TwitterMedia) -> String {
+        post.id + "/" + (media.id ?? media.url ?? UUID().uuidString)
+    }
+
+    /// 下载勾选的媒体
+    private func downloadSelected() {
+        let items = store.flatMediaList.filter { selectedMediaKeys.contains(selectionKey($0.post, $0.media)) }
+        Task {
+            for item in items {
+                _ = await downloadStore.createDownloadTask(post: item.post, media: item.media)
+            }
+            selectiveMode = false
+            selectedMediaKeys = []
+        }
+    }
+
+    /// 搜索分流：推文链接/ID → 直接弹出推文详情卡（不切换页面）；否则按用户 screen_name
     private func submitSearch(keyword: String? = nil) {
         let text = (keyword ?? store.keyword).trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         if let tweetID = HomepageStore.extractTweetID(from: text) {
-            Task { await store.loadTweet(tweetID: tweetID) }
+            Task {
+                if let post = await store.fetchTweet(tweetID: tweetID) {
+                    detailMediaIndex = 0
+                    detailPost = post
+                }
+            }
         } else {
             Task { await store.loadUser(screenName: text) }
-        }
-    }
-
-    /// 推文搜索结果（独立布局：单卡网格，无用户信息卡/下载配置）
-    private var tweetResultView: some View {
-        VStack(spacing: 0) {
-            if store.postListLoading {
-                loadingView
-            } else if let post = store.postList.first {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
-                        ForEach(Array((post.medias ?? []).enumerated()), id: \.element.id) { idx, media in
-                            MediaGridItem(post: post, media: media, index: idx + 1,
-                                          onDoubleClick: {
-                                              detailPost = post
-                                              detailMediaIndex = idx
-                                          })
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-                }
-            } else {
-                emptyState
-            }
         }
     }
 
@@ -264,7 +288,7 @@ struct HomeView: View {
                 }
 
                 Button(L("选择下载")) {
-                    showSelectiveDownload = true
+                    withAnimation(.spring(duration: 0.35, bounce: 0.15)) { selectiveMode = true }
                 }
                 .compatGlassButton()
             }
@@ -401,6 +425,10 @@ struct MediaGridItem: View {
     let index: Int
     /// 单击 → 推文详情弹窗（HomeView 层弹出;hover 按钮在上层不受影响）
     var onDoubleClick: (() -> Void)? = nil
+    /// 选择性下载模式:true=卡片缩小变暗(后退感),点击=勾选(恢复正常大小)
+    var selectionMode: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelect: (() -> Void)? = nil
     @State private var isHovering = false
     @State private var thumbnail: NSImage?
 
@@ -465,10 +493,26 @@ struct MediaGridItem: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
+        .scaleEffect(selectionMode && !isSelected ? 0.86 : 1.0)
+        .opacity(selectionMode && !isSelected ? 0.45 : 1.0)
+        .animation(.spring(duration: 0.32, bounce: 0.18), value: selectionMode)
+        .animation(.spring(duration: 0.3, bounce: 0.2), value: isSelected)
         .aspectRatio(4/5, contentMode: .fit)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture { onDoubleClick?() }
+        .onTapGesture {
+            if selectionMode { onToggleSelect?() }
+            else { onDoubleClick?() }
+        }
+        .overlay(alignment: .topTrailing) {
+            if selectionMode && isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(.green, .white)
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
     }
 
     /// 圆形玻璃图标按钮（36pt）

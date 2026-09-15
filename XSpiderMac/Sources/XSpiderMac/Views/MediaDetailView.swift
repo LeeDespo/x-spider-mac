@@ -36,26 +36,59 @@ struct MediaDetailView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
 
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
+                // 左:媒体卡(独立卡片)
                 mediaCard
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                VStack(spacing: 14) {
+                // 右:推文卡 + 评论卡(两张独立卡)
+                VStack(spacing: 16) {
                     tweetCard
-                        .frame(height: 240)
+                        .frame(height: 250)
                     repliesCard
                         .frame(maxHeight: .infinity)
                 }
                 .frame(width: 400)
             }
             .padding(18)
+            // 下载胶囊:独立悬浮在整个布局底部中央(不属于任何卡片,绝不遮挡媒体)
+            .overlay(alignment: .bottom) {
+                downloadCapsule
+                    .padding(.bottom, 6)
+            }
         }
         .frame(minWidth: 980, minHeight: 640)
-        .background(.ultraThinMaterial)
         .task {
             await loadReplies()
-            liked = detail?.favorited ?? false
-            retweeted = detail?.retweeted ?? false
         }
+    }
+
+    /// 悬浮下载胶囊(独立于卡片之外)
+    private var downloadCapsule: some View {
+        HStack(spacing: 12) {
+            if let media = current {
+                Button {
+                    Task { await store.createDownloadTask(post: detail ?? post, media: media) }
+                } label: {
+                    Label(L("下载当前"), systemImage: "arrow.down.circle")
+                }
+            }
+            Button {
+                Task {
+                    for m in medias {
+                        _ = await store.createDownloadTask(post: detail ?? post, media: m)
+                    }
+                }
+            } label: {
+                Label(L("下载全部(\(medias.count))"), systemImage: "arrow.down.heart")
+            }
+        }
+        .labelStyle(.titleAndIcon)
+        .font(.callout)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .liquidGlass(interactive: true, cornerRadius: 22)
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
     }
 
     // MARK: - 左：媒体卡
@@ -68,7 +101,8 @@ struct MediaDetailView: View {
                 if let media = current {
                     MediaContentView(media: media)
                         .padding(10)
-                        .gesture(
+                        .id(mediaIndex)
+                        .simultaneousGesture(
                             DragGesture(minimumDistance: 40)
                                 .onEnded { value in
                                     let dx = value.translation.width
@@ -96,34 +130,8 @@ struct MediaDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(alignment: .bottom) {
-                // 悬浮下载按钮（媒体下方,不遮挡内容:半透明胶囊悬浮在卡底缘）
-                HStack(spacing: 10) {
-                    if let media = current {
-                        Button {
-                            Task { await store.createDownloadTask(post: detail ?? post, media: media) }
-                        } label: {
-                            Label(L("下载当前"), systemImage: "arrow.down.circle")
-                        }
-                    }
-                    Button {
-                        Task {
-                            for m in medias {
-                                _ = await store.createDownloadTask(post: detail ?? post, media: m)
-                            }
-                        }
-                    } label: {
-                        Label(L("下载全部(\(medias.count))"), systemImage: "arrow.down.heart")
-                    }
-                }
-                .labelStyle(.titleAndIcon)
-                .font(.callout)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.thinMaterial, in: Capsule())
-                .padding(.bottom, 12)
-            }
         }
+        .liquidGlass(interactive: false, cornerRadius: 18)
     }
 
     // MARK: - 右上：推文卡
@@ -150,32 +158,47 @@ struct MediaDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // 互动行
-            HStack(spacing: 22) {
-                actionButton("heart", active: liked, tint: .pink, activeIcon: "heart.fill") { toggleLike() }
-                actionButton("arrow.triangle.2.squarepath", active: retweeted, tint: .green,
-                             activeIcon: "arrow.triangle.2.squarepath") { toggleRetweet() }
-                actionButton("bookmark", active: bookmarked, tint: .blue, activeIcon: "bookmark.fill") { toggleBookmark() }
-                actionButton("square.and.arrow.up", active: false, tint: .primary, activeIcon: "square.and.arrow.up") { shareTweet() }
+            // 计数行（回复 · 转推 · 赞 · 浏览）
+            HStack(spacing: 14) {
+                if let rc = detail?.replyCount ?? post.replyCount { Label("\(rc)", systemImage: "bubble.right").labelStyle(.titleAndIcon) }
+                if let tc = detail?.retweetCount ?? post.retweetCount { Label("\(tc)", systemImage: "arrow.triangle.2.squarepath").labelStyle(.titleAndIcon) }
+                if let lc = detail?.favoriteCount ?? post.favoriteCount { Label("\(lc)", systemImage: "heart").labelStyle(.titleAndIcon) }
+                if let vc = detail?.views ?? post.views { Label("\(vc)", systemImage: "chart.bar").labelStyle(.titleAndIcon) }
+                Spacer()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            // 互动行:液态玻璃图标钮(点赞 / 书签 / 分享)
+            HStack(spacing: 12) {
+                glassIconButton(icon: liked ? "heart.fill" : "heart", tint: liked ? .pink : .secondary,
+                                help: L("点赞")) { toggleLike() }
+                glassIconButton(icon: bookmarked ? "bookmark.fill" : "bookmark", tint: bookmarked ? .blue : .secondary,
+                                help: L("书签")) { toggleBookmark() }
+                glassIconButton(icon: "square.and.arrow.up", tint: .secondary,
+                                help: L("分享")) { shareTweet() }
+                Spacer()
+                if let actionMessage {
+                    Text(actionMessage).font(.caption).foregroundStyle(.secondary)
+                }
             }
             .padding(.top, 2)
-
-            if let actionMessage {
-                Text(actionMessage).font(.caption).foregroundStyle(.secondary)
-            }
         }
         .padding(16)
         .liquidGlass(interactive: true, cornerRadius: 18)
     }
 
-    private func actionButton(_ icon: String, active: Bool, tint: Color, activeIcon: String, action: @escaping () -> Void) -> some View {
+    /// 液态玻璃圆形图标按钮（36pt）
+    private func glassIconButton(icon: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: active ? activeIcon : icon)
-                .foregroundStyle(active ? tint : .secondary)
-                .font(.system(size: 15, weight: .medium))
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 36, height: 36)
+                .liquidGlass(interactive: true, cornerRadius: 18)
         }
         .buttonStyle(.plain)
-        .help("")
+        .help(help)
     }
 
     // MARK: - 右下：评论卡
@@ -237,8 +260,10 @@ struct MediaDetailView: View {
     private func toggleLike() {
         liked.toggle()
         Task {
-            do { liked ? try await TwitterAPI.shared.favoriteTweet(id: post.id) : () }
-            catch { liked.toggle(); actionMessage = L("操作失败：") + error.localizedDescription }
+            do {
+                if liked { try await TwitterAPI.shared.favoriteTweet(id: post.id) }
+                else { try await TwitterAPI.shared.unfavoriteTweet(id: post.id) }
+            } catch { liked.toggle(); actionMessage = L("操作失败：") + error.localizedDescription }
         }
     }
 
@@ -286,15 +311,17 @@ struct MediaDetailView: View {
     }
 }
 
-/// 媒体内容视图:图片自适应 / 视频 AVKit
+/// 媒体内容视图:图片自适应 / 视频(AppKit AVPlayerView——SwiftUI VideoPlayer 在 sheet 内初始化崩溃 SIGABRT)
 struct MediaContentView: View {
     let media: TwitterMedia
     @State private var image: NSImage?
+    @State private var player: AVPlayer?
 
     var body: some View {
         Group {
             if media.type == .video || media.type == .gif, let videoUrl = bestVideoURL(media) {
-                VideoPlayer(player: AVPlayer(url: videoUrl))
+                VideoPlayerContainer(url: videoUrl, player: $player)
+                    .aspectRatio(videoAspect, contentMode: .fit)
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -322,5 +349,34 @@ struct MediaContentView: View {
             .filter { $0.contentType?.contains("mp4") == true && $0.url != nil }
             .max { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
             .flatMap { URL(string: $0.url!) }
+    }
+
+    private var videoAspect: CGFloat {
+        let ar = media.videoInfo?.aspectRatio ?? [16, 9]
+        guard ar.count == 2, ar[1] != 0 else { return 16 / 9 }
+        return CGFloat(ar[0]) / CGFloat(ar[1])
+    }
+}
+
+/// AppKit AVPlayerView 包装(规避 SwiftUI VideoPlayer 的 sheet 崩溃)
+struct VideoPlayerContainer: NSViewRepresentable {
+    let url: URL
+    @Binding var player: AVPlayer?
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let v = AVPlayerView()
+        v.controlsStyle = .inline
+        let p = AVPlayer(url: url)
+        v.player = p
+        player = p
+        p.play()
+        return v
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {}
+
+    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
+        nsView.player?.pause()
+        nsView.player = nil
     }
 }

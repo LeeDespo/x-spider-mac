@@ -37,6 +37,13 @@ enum L10n {
         // 侧边栏 / 导航
         ("已创建任务", "已建立任務"),
         ("排序", "排序"),
+        ("已登录的账户", "已登入的帳戶"),
+        ("点赞", "點讚"),
+        ("书签", "書籤"),
+        ("分享", "分享"),
+        ("切换", "切換"),
+        ("当前账户的 Cookie 会保留，可随时切回。", "目前帳戶的 Cookie 會保留，可隨時切回。"),
+
         ("代理用户名（可选）", "代理使用者名稱（可選）"),
         ("代理密码（可选）", "代理密碼（可選）"),
         ("aria2Next 连接正常", "aria2Next 連線正常"),
@@ -492,6 +499,13 @@ enum L10n {
         ("当前 macOS 版本低于 26（Tahoe），不支持液态玻璃，已自动使用标准材质。", "macOS below 26 (Tahoe) does not support Liquid Glass; standard materials are used."),
         ("当前系统版本不支持液态玻璃，已自动使用普通材质。", "The current system does not support Liquid Glass; regular materials are used."),
         ("排序", "Sort"),
+        ("已登录的账户", "Signed-in accounts"),
+        ("点赞", "Like"),
+        ("书签", "Bookmark"),
+        ("分享", "Share"),
+        ("切换", "Switch"),
+        ("当前账户的 Cookie 会保留，可随时切回。", "The current account's cookie is kept; you can switch back anytime."),
+
         ("代理用户名（可选）", "Proxy username (optional)"),
         ("代理密码（可选）", "Proxy password (optional)"),
         ("aria2Next 连接正常", "aria2Next connected"),

@@ -94,6 +94,16 @@ final class HomepageStore {
         return nil
     }
 
+    /// 只获取推文(不入页面状态)——搜索推文直接弹详情卡用
+    func fetchTweet(tweetID: String) async -> TwitterPost? {
+        do {
+            return try await TwitterAPI.shared.getTweet(id: tweetID)
+        } catch {
+            lastError = L("推文加载失败")
+            return nil
+        }
+    }
+
     /// 搜索指定推文的媒体
     func loadTweet(tweetID: String) async {
         userGeneration += 1
