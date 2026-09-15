@@ -198,7 +198,6 @@ final class HomepageStore {
         defer { postListLoading = false }
 
         let userId = userInfo?.id ?? ""
-        let generation = userGeneration
         guard !userId.isEmpty else { return }
 
         do {
@@ -212,32 +211,10 @@ final class HomepageStore {
                 posts = r.posts
                 nextCursor = r.cursor
             }
-            guard generation == userGeneration else {
-                AppLogger.debug("丢弃过期的翻页响应", category: "HOME", ["userId": userId])
-                return
-            }
-            // 按推文 ID 去重（重叠页容错：pinned/置顶推文会重复出现,fresh 为空不算到底）
-            let existing = Set(postList.map(\.id))
-            let fresh = posts.filter { !existing.contains($0.id) }
-            // 终止只看 cursor:空/重复 = 到底。fresh 空但 cursor 前进 → 继续翻(否则深翻被误停)
-            if posts.isEmpty || nextCursor == nil || nextCursor == cursor {
-                postListCursor = nil
-                consecutiveEmptyPages = 0
-                AppLogger.info("媒体时间线已到底", category: "HOME", ["screenName": userInfo?.screenName ?? "?"])
-                return
-            }
-            postList.append(contentsOf: fresh)
+            // 早期版本语义:直接追加,cursor 交给服务端;nil = 到底。
+            postList.append(contentsOf: posts)
             postListCursor = nextCursor
-            AppLogger.debug("媒体时间线追加翻页", category: "HOME", [
-                "screenName": userInfo?.screenName ?? "?",
-                "posts": "\(posts.count)",
-                "total": "\(postList.count)",
-            ])
         } catch {
-            guard generation == userGeneration else { return }
-            // 翻页失败：保留 cursor 但停止自动加载（onAppear 触发会在下次滚动重试），
-            // 不再无限循环请求
-            lastError = nil
             AppLogger.warn("媒体时间线翻页失败", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?", "error": error.localizedDescription,
             ])

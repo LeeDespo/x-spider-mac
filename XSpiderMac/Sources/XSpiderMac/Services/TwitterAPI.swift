@@ -212,13 +212,15 @@ actor TwitterAPI {
         try ensureResponse(resp)
     }
 
-    /// 关注 / 取关（v1.1 friendships REST）
+    /// 关注 / 取关（v1.1 friendships REST;走 api.twitter.com,X web 同款端点）
     func followUser(screenName: String) async throws {
-        try await formPost(path: "/1.1/friendships/create.json", fields: ["screen_name": screenName])
+        try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/create.json",
+                           fields: ["screen_name": screenName, "skip_status": "true"])
     }
 
     func unfollowUser(screenName: String) async throws {
-        try await formPost(path: "/1.1/friendships/destroy.json", fields: ["screen_name": screenName])
+        try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/destroy.json",
+                           fields: ["screen_name": screenName, "skip_status": "true"])
     }
 
     /// 当前账户 restId(账户信息缺 id 时用 UserByScreenName 补查)
@@ -293,7 +295,8 @@ actor TwitterAPI {
     /// 是否已关注（v1.1 friendships/show）
     func isFollowing(screenName: String) async throws -> Bool {
         try await ensureXClIdLoaded()
-        let url = URL(string: "https://\(host)/1.1/friendships/show.json")!
+        // v1.1 friendships 系列须走 api.twitter.com(x.com 域名对该端点 401)
+        let url = URL(string: "https://api.twitter.com/1.1/friendships/show.json")!
         let me = await MainActor.run { AppStore.shared.account?.screenName ?? "" }
         let resp = try await client.request(
             url: url,
@@ -303,14 +306,15 @@ actor TwitterAPI {
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any],
               let rel = json["relationship"] as? [String: Any],
-              let target = rel["target"] as? [String: Any] else { return false }
-        return target["following"] as? Bool ?? false
+              let source = rel["source"] as? [String: Any] else { return false }
+        // source.following = 我是否关注 target
+        return source["following"] as? Bool ?? false
     }
 
-    /// v1.1 form-urlencoded POST
-    private func formPost(path: String, fields: [String: String]) async throws {
+    /// v1.1 form-urlencoded POST(baseHost 默认 x.com;v1.1 friendships 系列须走 api.twitter.com)
+    private func formPost(baseHost: String? = nil, path: String, fields: [String: String]) async throws {
         try await ensureXClIdLoaded()
-        let url = URL(string: "https://\(host)\(path)")!
+        let url = URL(string: "https://\(baseHost ?? host)\(path)")!
         let body = fields.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
             .joined(separator: "&")
         var headers = await commonHeaders(method: "POST", path: path)
@@ -613,27 +617,52 @@ actor TwitterAPI {
     static func mapTwitterPost(_ item: [String: Any]) -> TwitterPost? {
         let legacy = item["legacy"] as? [String: Any] ?? [:]
         let coreUser = Self.path(item, ["core", "user_results", "result"]) as? [String: Any]
-        // 新版 TweetDetail 用户结构：字段在 result.core / result.avatar 下（无 legacy）
-        let newUserCore = coreUser?["core"] as? [String: Any]
+        // 用户字段:legacy 与新版 core 双结构逐字段回退(新版 legacy 里 name/screen_name 缺失,在 core.core)
         let userLegacy = coreUser?["legacy"] as? [String: Any]
-            ?? newUserCore  // 新版回退：{name, screen_name, created_at}
+        let newUserCore = coreUser?["core"] as? [String: Any]
         let avatarField = (coreUser?["avatar"] as? [String: Any])?["image_url"] as? String
+            ?? ((coreUser?["profile_image_url_https"] as? String))
         let legacyAvatar = userLegacy?["profile_image_url_https"] as? String
+            ?? ((newUserCore?["avatar"] as? [String: Any])?["url"] as? String)
         let entities = legacy["entities"] as? [String: Any] ?? [:]
+
+        // 长推文全文在 note_tweet.note_text;full_text 尾部 t.co 短链剥离
+        var fullText = (item["note_tweet"] as? [String: Any])?["note_text"] as? String
+            ?? legacy["full_text"] as? String
+            ?? ""
+        if !fullText.isEmpty {
+            // 剥离末尾媒体/链接 t.co 短链(X 对媒体链接必然附加在文末)
+            if let mediaEntities = entities["media"] as? [[String: Any]] {
+                for m in mediaEntities {
+                    if let url = m["url"] as? String { fullText = fullText.replacingOccurrences(of: url, with: "") }
+                }
+            }
+            if let urls = ((entities["urls"] as? [String: Any])?["urls"] as? [[String: Any]]) {
+                for u in urls {
+                    if let url = u["url"] as? String, let expanded = u["expanded_url"] as? String {
+                        // 普通 t.co 链接替换为原文链接;媒体链接直接剥
+                        fullText = fullText.replacingOccurrences(of: url, with: expanded)
+                    }
+                }
+            }
+            fullText = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         return TwitterPost(
             id: item["rest_id"] as? String ?? "",
             user: TwitterUser(
-                screenName: userLegacy?["screen_name"] as? String ?? "",
+                screenName: userLegacy?["screen_name"] as? String
+                    ?? newUserCore?["screen_name"] as? String ?? "",
                 avatar: legacyAvatar ?? avatarField ?? "",
-                name: userLegacy?["name"] as? String ?? "",
+                name: userLegacy?["name"] as? String ?? newUserCore?["name"] as? String ?? "",
                 id: coreUser?["rest_id"] as? String ?? "",
                 mediaCount: userLegacy?["media_count"] as? Int
                     ?? (coreUser?["tweet_counts"] as? [String: Any])?["media_tweets"] as? Int,
-                registerTime: TwitterDate.parse(userLegacy?["created_at"] as? String)
+                registerTime: TwitterDate.parse(userLegacy?["created_at"] as? String
+                    ?? newUserCore?["created_at"] as? String)
             ),
             createdAt: TwitterDate.parse(legacy["created_at"] as? String),
-            fullText: legacy["full_text"] as? String,
+            fullText: fullText.isEmpty ? nil : fullText,
             tags: (entities["hashtags"] as? [[String: Any]])?.compactMap { $0["text"] as? String } ?? [],
             views: ((item["views"] as? [String: Any])?["count"] as? String).flatMap(Int.init),
             lang: legacy["lang"] as? String,

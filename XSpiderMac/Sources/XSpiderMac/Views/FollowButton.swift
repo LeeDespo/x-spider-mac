@@ -32,8 +32,8 @@ struct FollowButton: View {
                 .foregroundStyle(following ? Color.secondary : Color.accentColor)
         }
         .buttonStyle(.plain)
-        .disabled(busy || checking)
-        .opacity(checking ? 0.5 : 1)
+        .disabled(busy)
+        .opacity(checking ? 0.55 : 1)
         .task {
             // 初始状态:查关系(轻量;失败默认未关注)
             following = (try? await TwitterAPI.shared.isFollowing(screenName: screenName)) ?? false

@@ -124,6 +124,21 @@ struct TimelinePostCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if let tags = post.tags, !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(tags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+
             // 媒体行(最多 4 张,1:1 收纳)
             if let medias = post.medias, !medias.isEmpty {
                 HStack(spacing: 6) {

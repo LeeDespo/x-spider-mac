@@ -33,30 +33,25 @@ struct MediaDetailView: View {
     private var current: TwitterMedia? { medias.indices.contains(mediaIndex) ? medias[mediaIndex] : medias.first }
 
     var body: some View {
-        ZStack {
-            // 透明命中层:点击三卡之外的应用区域即退出(不暗化背景,保持分离观感)
-            Color.clear
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { dismiss() }
-
-            HStack(spacing: 18) {
-                // 左:媒体卡(独立卡片)
-                mediaCard
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // 右:推文卡 + 评论卡(两张独立卡)
-                VStack(spacing: 18) {
-                    tweetCard
-                        .frame(height: 250)
-                    repliesCard
-                        .frame(maxHeight: .infinity)
-                }
-                .frame(width: 400)
+        // 点击 sheet 任何空白处退出;三卡内部各自吃掉点击(onTapGesture {})
+        HStack(spacing: 20) {
+            // 左:媒体卡(独立玻璃卡片)
+            mediaCard
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 右:推文卡 + 评论卡(两张独立玻璃卡片)
+            VStack(spacing: 20) {
+                tweetCard
+                    .frame(height: 260)
+                repliesCard
+                    .frame(maxHeight: .infinity)
             }
-            .padding(20)
+            .frame(width: 410)
         }
-        .frame(minWidth: 980, minHeight: 640)
-        // sheet 底透明:三卡浮在暗色遮罩上,视觉上完全分离
+        .padding(22)
+        .frame(minWidth: 1000, minHeight: 660)
+        .contentShape(Rectangle())
+        .onTapGesture { dismiss() }
+        // sheet 底透明:三卡浮在应用内容上,视觉完全分离
         .presentationBackground(.clear)
         .background(
             WindowAccessor { window in
@@ -74,6 +69,7 @@ struct MediaDetailView: View {
 
     private var mediaCard: some View {
         VStack(spacing: 10) {
+            // 媒体区(手势挂在这一层,不影响 AVPlayerView 内部点击/控制)
             ZStack {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(Color.black.opacity(0.65))
@@ -81,12 +77,39 @@ struct MediaDetailView: View {
                     MediaContentView(media: media)
                         .padding(10)
                         .id(mediaIndex)
+                        .transition(.opacity)
+                }
+                // 多媒体页码(右上)
+                if medias.count > 1 {
+                    Text("\(mediaIndex + 1) / \(medias.count)")
+                        .font(.caption.monospacedDigit())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
+                // 左右切换箭头(多媒体时显示;可靠,不依赖手势竞争)
+                if medias.count > 1 {
+                    HStack {
+                        if mediaIndex > 0 {
+                            arrowButton("chevron.left") { withAnimation(.spring(duration: 0.3)) { mediaIndex -= 1 } }
+                        }
+                        Spacer()
+                        if mediaIndex < medias.count - 1 {
+                            arrowButton("chevron.right") { withAnimation(.spring(duration: 0.3)) { mediaIndex += 1 } }
+                        }
+                    }
+                    .padding(.horizontal, 10)
                 }
             }
-            // 左右滑切换媒体(挂在整卡层,不被播放器/图片吞)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            // 左右滑手势:挂在媒体区容器(simultaneous 不与播放器互斥;drag 阈值 40)
             .contentShape(Rectangle())
             .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
+                DragGesture(minimumDistance: 40)
                     .onEnded { value in
                         let dx = value.translation.width
                         if dx < -40, mediaIndex < medias.count - 1 {
@@ -96,7 +119,7 @@ struct MediaDetailView: View {
                         }
                     }
             )
-            // 下载胶囊:媒体正下方居中(仍属媒体卡矩形,与媒体间有 10pt 间隙)
+            // 下载胶囊:媒体正下方居中(同一面板内,与媒体有 10pt 间隙)
             downloadCapsule
         }
         .contentShape(RoundedRectangle(cornerRadius: 18))
@@ -104,14 +127,21 @@ struct MediaDetailView: View {
         .liquidGlass(interactive: false, cornerRadius: 18)
     }
 
+    /// 媒体切换圆形箭头钮
+    private func arrowButton(_ system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.45), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var downloadCapsule: some View {
         HStack(spacing: 14) {
-            // 页码
-            if medias.count > 1 {
-                Text("\(mediaIndex + 1) / \(medias.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
             Button {
                 if let media = current { downloadCurrent(media) }
             } label: {
@@ -124,7 +154,7 @@ struct MediaDetailView: View {
             Button {
                 downloadAllInTweet()
             } label: {
-                Label(L("下载全部(N)") + "\(medias.count)", systemImage: "arrow.down.circle.fill")
+                Label(L("下载全部(\(medias.count))"), systemImage: "arrow.down.circle.fill")
                     .font(.callout)
             }
             .buttonStyle(.plain)
@@ -177,6 +207,21 @@ struct MediaDetailView: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let tags = post.tags, !tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(tags, id: \.self) { tag in
+                                Text("#\(tag)")
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
 
             // 计数行（回复 · 转推 · 赞 · 浏览）
@@ -248,12 +293,16 @@ struct MediaDetailView: View {
                         ForEach(replies) { reply in
                             HStack(alignment: .top, spacing: 10) {
                                 CachedAvatarView(urlString: reply.user.avatar, size: 30)
+                                    .contentShape(Circle())
+                                    .onTapGesture { onSearchUser?(reply.user.screenName) }
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack {
                                         Text(reply.user.name).font(.subheadline.weight(.semibold))
                                         Text("@\(reply.user.screenName)")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { onSearchUser?(reply.user.screenName) }
                                     Text(reply.fullText ?? "")
                                         .font(.callout)
                                         .fixedSize(horizontal: false, vertical: true)
