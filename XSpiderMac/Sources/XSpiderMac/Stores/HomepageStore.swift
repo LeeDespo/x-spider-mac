@@ -235,6 +235,16 @@ final class HomepageStore {
         }
     }
 
+    /// 清空搜索状态回到主页时间线
+    func clearSearch() {
+        userGeneration += 1
+        userInfo = nil
+        userInfoLoading = false
+        tweetSearchMode = false
+        clearPostList()
+        listOwnerScreenName = nil
+    }
+
     func clearPostList() {
         postList = []
         postListCursor = nil

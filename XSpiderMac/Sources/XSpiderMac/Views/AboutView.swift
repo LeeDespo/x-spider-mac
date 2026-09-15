@@ -33,6 +33,7 @@ struct AboutView: View {
                 labeledRow(L("开源协议"), "GPL-3.0-only", url: licenseURL)
             }
             .font(.callout)
+            .fixedSize(horizontal: true, vertical: true)
             .padding(.horizontal, 28)
             .padding(.vertical, 18)
             .liquidGlass(cornerRadius: 20)

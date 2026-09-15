@@ -194,6 +194,132 @@ actor TwitterAPI {
         )
     }
 
+    // MARK: - 推文互动（点赞/转推/书签）
+
+    /// POST GraphQL 突变操作的公共封装
+    private func mutate(path: String, variables: String, features: String? = nil) async throws {
+        try await ensureXClIdLoaded()
+        let url = URL(string: "https://\(host)\(path)")!
+        var query: [String: String] = ["variables": variables]
+        if let features { query["features"] = features }
+        let resp = try await client.request(
+            method: "POST",
+            url: url,
+            query: query,
+            headers: await commonHeaders(method: "POST", path: path)
+        )
+        try ensureResponse(resp)
+    }
+
+    /// 点赞 / 取消点赞
+    func favoriteTweet(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+            variables: """
+            {"tweet_id":"\(id)"}
+            """
+        )
+    }
+
+    /// 转推 / 撤销转推
+    func createRetweet(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/mbRO74GrOvSfRcJnlMapnQ/CreateRetweet",
+            variables: """
+            {"tweet_id":"\(id)","dark_request":false}
+            """
+        )
+    }
+
+    func deleteRetweet(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/ZyZigVsNiFO6v1dEks1eWg/DeleteRetweet",
+            variables: """
+            {"source_tweet_id":"\(id)","dark_request":false}
+            """
+        )
+    }
+
+    /// 书签 / 移除书签
+    func createBookmark(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/aoDbu3RHznuiSkQ9aNM67Q/CreateBookmark",
+            variables: """
+            {"tweet_id":"\(id)"}
+            """
+        )
+    }
+
+    func deleteBookmark(id: String) async throws {
+        try await mutate(
+            path: "/i/api/graphql/Wlmlj2-xzyS1GN3a6cj-mQ/DeleteBookmark",
+            variables: """
+            {"tweet_id":"\(id)"}
+            """
+        )
+    }
+
+    /// TweetDetail 会话时间线的全部推文（focal + 回复）。评论面板用。
+    func getTweetReplies(id: String) async throws -> [TwitterPost] {
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
+        let url = URL(string: "https://\(host)\(path)")!
+        let variables = Self.encodeJSON([
+            "focalTweetId": id,
+            "with_rux_injections": true,
+            "includePromotedContent": true,
+            "withCommunity": true,
+            "withQuickPromoteEligibilityTweetFields": true,
+            "withBirdwatchNotes": true,
+            "withVoice": true,
+            "withV2Timeline": true,
+        ] as [String: Any]) ?? "{}"
+        let resp = try await client.request(
+            url: url,
+            query: ["variables": variables, "features": Self.tweetDetailFeatures],
+            headers: await commonHeaders(method: "GET", path: path)
+        )
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any] else {
+            throw TwitterAPIError.parseFailure
+        }
+        let instructions = Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? []
+        return Self.extractPostsFromTweetEntries(instructions)
+    }
+
+    // MARK: - 主页时间线
+
+    /// 主页 For You(推荐)/Following(关注) 时间线
+    func getHomeTimeline(mode: HomeTimelineMode, cursor: String? = nil) async throws -> (posts: [TwitterPost], cursor: String?) {
+        try await ensureXClIdLoaded()
+        let queryId = mode == .forYou ? "7zlnp2TxC044W4C1ZUJMHw" : "0dateTVgvXjpkf7kyBZy0g"
+        let opName = mode == .forYou ? "HomeTimeline" : "HomeLatestTimeline"
+        let path = "/i/api/graphql/\(queryId)/\(opName)"
+        let url = URL(string: "https://\(host)\(path)")!
+        var vars: [String: Any] = [
+            "count": 20,
+            "includePromotedContent": true,
+            "latestControlAvailable": true,
+            "requestContext": "launch",
+        ]
+        if let cursor { vars["cursor"] = cursor }
+        let variables = Self.encodeJSON(vars) ?? "{}"
+        let resp = try await client.request(
+            url: url,
+            query: [
+                "variables": variables,
+                "features": Self.tweetDetailFeatures,
+            ],
+            headers: await commonHeaders(method: "GET", path: path)
+        )
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any] else { throw TwitterAPIError.parseFailure }
+        let instructions = Self.path(json, ["data", "home", "home_timeline_urt", "instructions"]) as? [[String: Any]] ?? []
+        let posts = Self.extractPostsFromTweetEntries(instructions)
+        let bottom = Self.extractBottomCursor(instructions)
+        return (posts, bottom)
+    }
+
     // MARK: - 媒体时间线
 
     /// 上游 UserMedia（queryId cEjpJXA15Ok78yO4TUQPeQ）。
@@ -553,4 +679,11 @@ enum TwitterAPIError: LocalizedError {
         case .parseFailure: return "响应解析失败"
         }
     }
+}
+
+
+/// 主页时间线模式
+enum HomeTimelineMode: String, CaseIterable, Sendable {
+    case forYou      // 推荐(HomeTimeline)
+    case following   // 关注(HomeLatestTimeline)
 }

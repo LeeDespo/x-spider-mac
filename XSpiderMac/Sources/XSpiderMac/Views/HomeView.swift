@@ -51,7 +51,7 @@ struct HomeView: View {
                         postListGrid
                     }
                 } else {
-                    emptyState
+                    HomeTimelineView()
                 }
             } else {
                 loginPrompt
@@ -65,6 +65,24 @@ struct HomeView: View {
         .sheet(isPresented: $showSelectiveDownload) {
             SelectiveDownloadSheet(store: store, filter: store.filter)
         }
+        .overlay(alignment: .bottomTrailing) {
+            // 搜索用户/推文后:返回时间线悬浮钮
+            if store.userInfo != nil || store.tweetSearchMode {
+                Button {
+                    store.clearSearch()
+                } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                        .background(.regularMaterial, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                }
+                .buttonStyle(.plain)
+                .padding(20)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.3), value: store.userInfo != nil || store.tweetSearchMode)
     }
 
     /// 搜索分流：推文链接/ID → 推文模式；否则按用户 screen_name
@@ -381,7 +399,7 @@ struct MediaGridItem: View {
     let post: TwitterPost
     let media: TwitterMedia
     let index: Int
-    /// 双击 → 推文详情弹窗（HomeView 层弹出）
+    /// 单击 → 推文详情弹窗（HomeView 层弹出;hover 按钮在上层不受影响）
     var onDoubleClick: (() -> Void)? = nil
     @State private var isHovering = false
     @State private var thumbnail: NSImage?
@@ -450,7 +468,7 @@ struct MediaGridItem: View {
         .aspectRatio(4/5, contentMode: .fit)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) { onDoubleClick?() }
+        .onTapGesture { onDoubleClick?() }
     }
 
     /// 圆形玻璃图标按钮（36pt）
