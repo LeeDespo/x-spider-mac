@@ -31,17 +31,18 @@ struct MediaDetailView: View {
 
     var body: some View {
         ZStack {
-            // 点击空白退出
-            Color.black.opacity(0.001)
+            // 暗色遮罩:可点击退出(卡片会挡住点击,不会穿透)
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
 
-            HStack(spacing: 16) {
+            HStack(spacing: 18) {
                 // 左:媒体卡(独立卡片)
                 mediaCard
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // 右:推文卡 + 评论卡(两张独立卡)
-                VStack(spacing: 16) {
+                VStack(spacing: 18) {
                     tweetCard
                         .frame(height: 250)
                     repliesCard
@@ -49,14 +50,23 @@ struct MediaDetailView: View {
                 }
                 .frame(width: 400)
             }
-            .padding(18)
+            .padding(20)
             // 下载胶囊:独立悬浮在整个布局底部中央(不属于任何卡片,绝不遮挡媒体)
             .overlay(alignment: .bottom) {
                 downloadCapsule
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
             }
         }
         .frame(minWidth: 980, minHeight: 640)
+        // sheet 底透明:三卡浮在暗色遮罩上,视觉上完全分离
+        .presentationBackground(.clear)
+        .background(
+            WindowAccessor { window in
+                guard let window else { return }
+                window.isOpaque = false
+                window.backgroundColor = .clear
+            }
+        )
         .task {
             await loadReplies()
         }
@@ -131,6 +141,8 @@ struct MediaDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 18))
         }
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .onTapGesture {} // 卡内点击不穿透到遮罩层(空操作)
         .liquidGlass(interactive: false, cornerRadius: 18)
     }
 
@@ -185,6 +197,8 @@ struct MediaDetailView: View {
             .padding(.top, 2)
         }
         .padding(16)
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .onTapGesture {} // 卡内点击不穿透到遮罩层
         .liquidGlass(interactive: true, cornerRadius: 18)
     }
 
@@ -252,6 +266,8 @@ struct MediaDetailView: View {
             }
             .padding(12)
         }
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .onTapGesture {} // 卡内点击不穿透到遮罩层
         .liquidGlass(interactive: true, cornerRadius: 18)
     }
 

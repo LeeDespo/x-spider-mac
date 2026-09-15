@@ -38,6 +38,11 @@ enum L10n {
         ("已创建任务", "已建立任務"),
         ("排序", "排序"),
         ("已登录的账户", "已登入的帳戶"),
+        ("评论加载失败", "評論載入失敗"),
+        ("发布你的评论…", "發佈你的評論…"),
+        ("发送", "發送"),
+        ("下载当前", "下載目前"),
+
         ("点赞", "點讚"),
         ("书签", "書籤"),
         ("分享", "分享"),
@@ -500,6 +505,11 @@ enum L10n {
         ("当前系统版本不支持液态玻璃，已自动使用普通材质。", "The current system does not support Liquid Glass; regular materials are used."),
         ("排序", "Sort"),
         ("已登录的账户", "Signed-in accounts"),
+        ("评论加载失败", "Failed to load replies"),
+        ("发布你的评论…", "Post your reply…"),
+        ("发送", "Post"),
+        ("下载当前", "Download this"),
+
         ("点赞", "Like"),
         ("书签", "Bookmark"),
         ("分享", "Share"),

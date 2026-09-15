@@ -294,7 +294,8 @@ actor TwitterAPI {
             throw TwitterAPIError.parseFailure
         }
         let instructions = Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? []
-        return Self.extractPostsFromTweetEntries(instructions)
+        // 评论 = 纯文字回复也要 → requireMedia: false
+        return Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
     }
 
     // MARK: - 主页时间线
@@ -438,8 +439,8 @@ actor TwitterAPI {
     }
 
     /// UserTweets 专用：entryId 以 tweet- 开头取单推文；profile-conversation- 开头取会话内全部推文。
-    /// 过滤转推（retweeted_status_result 存在）与无媒体推文（与上游一致）。
-    static func extractPostsFromTweetEntries(_ instructions: [[String: Any]]) -> [TwitterPost] {
+    /// 过滤转推（retweeted_status_result 存在）；requireMedia=false 时不滤无媒体推文（评论面板要纯文字回复）。
+    static func extractPostsFromTweetEntries(_ instructions: [[String: Any]], requireMedia: Bool = true) -> [TwitterPost] {
         var rawResults: [[String: Any]] = []
 
         guard let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
@@ -464,10 +465,12 @@ actor TwitterAPI {
             }
         }
 
-        return rawResults
+        var filtered = rawResults
             .filter { !Self.hasPath($0, ["legacy", "retweeted_status_result"]) }
-            .filter { Self.hasPath($0, ["legacy", "entities", "media"]) }
-            .compactMap(Self.mapTwitterPost)
+        if requireMedia {
+            filtered = filtered.filter { Self.hasPath($0, ["legacy", "entities", "media"]) }
+        }
+        return filtered.compactMap(Self.mapTwitterPost)
     }
 
     static func extractBottomCursor(_ instructions: [[String: Any]]) -> String? {
