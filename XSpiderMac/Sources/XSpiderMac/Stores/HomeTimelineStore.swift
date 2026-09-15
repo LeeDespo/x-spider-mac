@@ -35,6 +35,12 @@ final class HomeTimelineStore {
     func initialLoad() async {
         guard posts.isEmpty else { return }
         await reload()
+        // 首载偶发空/失败(X 端抖动):间隔 1.5s 自动重试一次
+        if posts.isEmpty {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard posts.isEmpty else { return }
+            await reload()
+        }
     }
 
     func reload() async {

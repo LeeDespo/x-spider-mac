@@ -72,7 +72,6 @@ final class CreationTaskStore {
         var nextCursor: String? = nil
         // 翻页防御:X 偶发对"无更多内容"返回重复/非空 cursor,导致无限检索(用户实测上千页)
         var seenCursors = Set<String>()
-        let maxPages = 500  // 安全上限(≈1 万条推文);正常翻完提前 break,防服务端异常时无限跑
 
         while nextCursor != nil || completeCount + skipCount == 0 {
             if Task.isCancelled { return }
@@ -160,7 +159,6 @@ final class CreationTaskStore {
                 // 到达日期下限：停止翻页（上游 while 条件 now.isAfter(since)）
                 if now < since { break }
                 if nextCursor == nil { break }
-                if seenCursors.count > maxPages { break }
             } catch {
                 NSLog("CreationTask error: \(error.localizedDescription)")
                 break

@@ -75,7 +75,10 @@ struct HomeTimelineView: View {
             }
         }
         .sheet(item: $detailPost) { post in
-            MediaDetailView(post: post)
+            MediaDetailView(post: post, onSearchUser: { screenName in
+                detailPost = nil
+                onAvatarTap?(screenName)
+            })
         }
         .task {
             if store.posts.isEmpty { await store.initialLoad() }

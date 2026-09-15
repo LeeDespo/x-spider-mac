@@ -9,6 +9,8 @@ import AVKit
 /// 液态玻璃：跟随设置；不支持系统自动退化普通材质。
 struct MediaDetailView: View {
     @State private var store = DownloadStore.shared
+    /// 点击头像 → 搜索该用户(HomeView 注入;nil = 不响应)
+    var onSearchUser: ((String) -> Void)? = nil
     let post: TwitterPost
     @State private var mediaIndex: Int
     @State private var detail: TwitterPost?
@@ -21,9 +23,10 @@ struct MediaDetailView: View {
     @State private var repliesError: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(post: TwitterPost, initialMediaIndex: Int = 0) {
+    init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil) {
         self.post = post
         _mediaIndex = State(initialValue: initialMediaIndex)
+        self.onSearchUser = onSearchUser
     }
 
     private var medias: [TwitterMedia] { (detail?.medias ?? post.medias) ?? [] }
@@ -51,11 +54,6 @@ struct MediaDetailView: View {
                 .frame(width: 400)
             }
             .padding(20)
-            // 下载胶囊:独立悬浮在整个布局底部中央(不属于任何卡片,绝不遮挡媒体)
-            .overlay(alignment: .bottom) {
-                downloadCapsule
-                    .padding(.bottom, 4)
-            }
         }
         .frame(minWidth: 980, minHeight: 640)
         // sheet 底透明:三卡浮在暗色遮罩上,视觉上完全分离
@@ -72,7 +70,6 @@ struct MediaDetailView: View {
         }
     }
 
-    /// 悬浮下载胶囊(独立于卡片之外)
     // MARK: - 左：媒体卡
 
     private var mediaCard: some View {
@@ -161,10 +158,13 @@ struct MediaDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 CachedAvatarView(urlString: post.user.avatar, size: 40)
+                    .contentShape(Circle())
+                    .onTapGesture { onSearchUser?(post.user.screenName) }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(post.user.name).font(.headline)
                     Text("@\(post.user.screenName)").font(.caption).foregroundStyle(.secondary)
                 }
+                FollowButton(screenName: post.user.screenName)
                 Spacer()
                 if let created = post.createdAt {
                     Text(created.formatted(.dateTime.month().day()))

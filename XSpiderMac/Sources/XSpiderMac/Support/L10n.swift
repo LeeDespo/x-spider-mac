@@ -61,6 +61,9 @@ enum L10n {
         ("全部完成后关闭应用", "全部完成後關閉應用"),
         ("将逐个账户创建全部媒体的下载任务，所有任务完成后自动关闭应用。", "將逐個帳戶建立全部媒體的下載任務，所有任務完成後自動關閉應用。"),
         ("关注清单", "關注清單"),
+        ("下载全部", "下載全部"),
+        ("加载中…", "載入中…"),
+
 
         ("搜索用户浏览媒体网格，或直接看推荐/关注时间线。点击媒体打开推文详情：左滑右滑切换媒体、点赞、书签、下载。", "搜尋使用者瀏覽媒體網格，或直接看推薦/關注時間線。點擊媒體開啟推文詳情：左右滑動切換媒體、點讚、書籤、下載。"),
         ("配置日期范围、媒体类型与数据源后开始下载；引擎可选 aria2Next（多连接更稳更快）。重复判定避免重复下载，记录可随时管理。", "設定日期範圍、媒體類型與資料來源後開始下載；引擎可選 aria2Next（多連線更穩更快）。重複判定避免重複下載，記錄可隨時管理。"),
@@ -556,6 +559,9 @@ enum L10n {
         ("全部完成后关闭应用", "Quit when everything finishes"),
         ("将逐个账户创建全部媒体的下载任务，所有任务完成后自动关闭应用。", "Creates download tasks for every account's media one by one, then quits the app when all tasks finish."),
         ("关注清单", "Follow List"),
+        ("下载全部", "Download All"),
+        ("加载中…", "Loading…"),
+
 
         ("搜索用户浏览媒体网格，或直接看推荐/关注时间线。点击媒体打开推文详情：左滑右滑切换媒体、点赞、书签、下载。", "Search a user to browse their media grid, or view the For You / Following timeline. Tap media to open the tweet detail: swipe to switch media, like, bookmark, download."),
         ("配置日期范围、媒体类型与数据源后开始下载；引擎可选 aria2Next（多连接更稳更快）。重复判定避免重复下载，记录可随时管理。", "Set date range, media types and source, then start downloading; choose aria2Next (multi-connection, faster and steadier). Duplicate checks avoid re-downloads, and records are easy to manage."),

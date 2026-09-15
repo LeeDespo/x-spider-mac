@@ -6,7 +6,13 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - Sources
-      - Resources
+      - path: Resources
+        excludes:
+          - "Binaries"
+      - path: Resources/Binaries/aria2next
+        buildPhase: resources
+        attributes:
+          - CodeSignOnCopy
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac
       INFOPLIST_KEY_CFBundleDisplayName: "X-Spider"
@@ -17,6 +23,8 @@ targets:
       ENABLE_HARDENED_RUNTIME: YES
       SWIFT_VERSION: "6.0"
       MACOSX_DEPLOYMENT_TARGET: "14.0"
+      # 内置 aria2Next:保持可执行位,随应用签名
+      OTHER_CODE_SIGN_FLAGS: "--deep"
     entitlements:
       path: XSpiderMac.entitlements
       properties:

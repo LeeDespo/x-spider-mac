@@ -13,11 +13,17 @@ final class Aria2Engine: @unchecked Sendable {
 
     /// aria2Next 可执行文件路径（bundle 内置优先，其次 homebrew;不回退老 aria2c）
     static let binaryURL: URL? = {
-        var candidates: [URL] = []
-        for name in ["aria2next"] {
-            candidates.append(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/\(name)"))
-            candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/\(name)"))
-            candidates.append(URL(fileURLWithPath: "/usr/local/bin/\(name)"))
+        var candidates: [URL] = [
+            // 内置:Contents/Resources/aria2next(随应用分发,自动签名)
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/aria2next"),
+            // 开发时直接跑源码树
+            URL(fileURLWithPath: "Resources/Binaries/aria2next"),
+            // homebrew 安装
+            URL(fileURLWithPath: "/opt/homebrew/bin/aria2next"),
+            URL(fileURLWithPath: "/usr/local/bin/aria2next"),
+        ]
+        if let execURL = Bundle.main.executableURL?.deletingLastPathComponent() {
+            candidates.insert(execURL.appendingPathComponent("aria2next"), at: 0)
         }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }()

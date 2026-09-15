@@ -236,8 +236,14 @@ actor TwitterAPI {
             ?? (core["screen_name"] as? String)
         guard let sn = screenName, !sn.isEmpty else { return nil }
         let name = (legacy["name"] as? String) ?? (core["name"] as? String) ?? sn
-        let avatar = (legacy["profile_image_url_https"] as? String)
-            ?? ((core["avatar"] as? [String: Any])?["url"] as? String) ?? ""
+        var avatar = (legacy["profile_image_url_https"] as? String)
+            ?? ((core["avatar"] as? [String: Any])?["url"] as? String)
+            ?? ((result["avatar"] as? [String: Any])?["image_url"] as? String)
+            ?? ((result["profile_image_url_https"] as? String))
+            ?? ""
+        // 协议相对 URL 补 https;_normal(48px) 提升为 _bigger(73px)清晰些
+        if avatar.hasPrefix("//") { avatar = "https:" + avatar }
+        if avatar.contains("_normal") { avatar = avatar.replacingOccurrences(of: "_normal", with: "_bigger") }
         return TwitterUser(
             screenName: sn,
             avatar: avatar,
@@ -561,7 +567,8 @@ actor TwitterAPI {
                 if let result = Self.path(content, ["itemContent", "tweet_results", "result"]) as? [String: Any] {
                     rawResults.append(Self.unwrapVisibility(result))
                 }
-            } else if entryId.hasPrefix("profile-conversation") {
+            } else if entryId.hasPrefix("profile-conversation") || entryId.hasPrefix("conversationthread") {
+                // profile-conversation = UserTweets 会话模块;conversationthread = TweetDetail 回复模块
                 if let items = content["items"] as? [[String: Any]] {
                     for item in items {
                         if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {

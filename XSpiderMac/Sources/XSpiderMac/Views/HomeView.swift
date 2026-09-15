@@ -22,6 +22,7 @@ struct HomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
+                .animation(.spring(duration: 0.28), value: store.userInfo != nil || store.tweetSearchMode)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -62,7 +63,10 @@ struct HomeView: View {
         .navigationTitle(L("主页"))
         .frame(minWidth: 600)
         .sheet(item: $detailPost) { post in
-            MediaDetailView(post: post, initialMediaIndex: detailMediaIndex)
+            MediaDetailView(post: post, initialMediaIndex: detailMediaIndex) { screenName in
+                detailPost = nil
+                Task { await store.loadUser(screenName: screenName) }
+            }
         }
         .overlay(alignment: .bottom) {
             if selectiveMode {
@@ -86,26 +90,13 @@ struct HomeView: View {
             }
         }
         .animation(.spring(duration: 0.35, bounce: 0.15), value: selectiveMode)
-        .overlay(alignment: .bottomTrailing) {
-            // 搜索用户/推文后:返回时间线悬浮钮
-            if store.userInfo != nil || store.tweetSearchMode {
-                Button {
-                    store.clearSearch()
-                } label: {
-                    Image(systemName: "chevron.backward")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 42, height: 42)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .liquidGlass(interactive: true, cornerRadius: 21)
-                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
-                .help(L("返回时间线"))
-                .padding(20)
-                .transition(.scale.combined(with: .opacity))
+        .onChange(of: store.filter.source) { _, _ in
+            // 切换数据源自动退出选择模式(推文时间线不支持逐媒体选择)
+            if selectiveMode {
+                selectiveMode = false
+                selectedMediaKeys.removeAll()
             }
         }
-        .animation(.spring(duration: 0.3), value: store.userInfo != nil || store.tweetSearchMode)
     }
 
     /// 选择模式键
@@ -148,8 +139,24 @@ struct HomeView: View {
 
     private var searchBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+            // 搜索态:返回时间线(替换放大镜图标,退出搜索后还原)
+            if store.userInfo != nil || store.tweetSearchMode {
+                Button {
+                    store.clearSearch()
+                } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .liquidGlass(interactive: true, cornerRadius: 13)
+                .help(L("返回时间线"))
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+            }
             TextField(L("输入用户 ID 或推文链接"), text: Binding(
                 get: { store.keyword },
                 set: { store.keyword = $0 }
@@ -273,7 +280,7 @@ struct HomeView: View {
                     .compatGlassProminentButton()
                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                 } else {
-                    Button(L("开始下载")) {
+                    Button(L("下载全部")) {
                         if let user = store.userInfo {
                             creationStore.createCreationTask(user: user, filter: store.filter)
                         }
@@ -283,10 +290,13 @@ struct HomeView: View {
                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
 
+                // 选择下载:仅媒体时间线数据源可用(推文时间线渲染推文卡,无逐媒体勾选语义)
                 Button(L("选择下载")) {
                     withAnimation(.spring(duration: 0.35, bounce: 0.15)) { selectiveMode = true }
                 }
                 .compatGlassButton()
+                .disabled(store.filter.source != .medias)
+                .opacity(store.filter.source != .medias ? 0.4 : 1)
             }
 
             HStack(spacing: 16) {
@@ -323,24 +333,23 @@ struct HomeView: View {
 
     /// 无限滚动底栏(媒体网格/推文列表共用)
     private var bottomLoader: some View {
-        HStack {
+        Group {
             if store.postListLoading {
-                ProgressView()
-                    .controlSize(.small)
-            } else if store.postListCursor != nil, !autoLoadAttempted {
+                HStack { ProgressView().controlSize(.small); Text(L("加载中…")).font(.caption).foregroundStyle(.secondary) }
+                    .frame(maxWidth: .infinity)
+            } else if store.postListCursor != nil {
                 Color.clear
-                    .frame(height: 1)
+                    .frame(height: 40)
                     .onAppear {
-                        autoLoadAttempted = true
                         Task { await store.loadMorePostList() }
                     }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
             }
         }
-        .frame(maxWidth: .infinity)
         .frame(height: 36)
         .animation(nil, value: store.postListLoading)
     }

@@ -55,6 +55,7 @@
 		D236BCE7DDFBA0790729E5EB /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B628263D9561601F809C4F8 /* AppStore.swift */; };
 		D625E6C7196AEF0C785F359B /* HomeTimelineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29B9F72E780FE56434B59E8A /* HomeTimelineStore.swift */; };
 		D93184638E9AB84916BF28F6 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */; };
+		DAE2BA28975D47562C0A956F /* aria2next in Resources */ = {isa = PBXBuildFile; fileRef = 8DA00850E75F336A45F75713 /* aria2next */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		DFE2F534E1C4BE0F7D032E38 /* SyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17C8CCC2EAAB122A6FF0E343 /* SyncStore.swift */; };
 		E04E855AB238056433E1596E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1BBD226AD033835C037F4E7E /* Assets.xcassets */; };
 		E950C166A4EFDCD28FA5B3C4 /* NumberStepperField.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70DBBE98EADA3D2FD08805F /* NumberStepperField.swift */; };
@@ -109,6 +110,7 @@
 		81B2DDA1453BB065CBE42323 /* FileNameTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplate.swift; sourceTree = "<group>"; };
 		82F18809605044A1B3F2B7A5 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		85CFC477417C1D3E25F35D77 /* DockSyncLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockSyncLayout.swift; sourceTree = "<group>"; };
+		8DA00850E75F336A45F75713 /* aria2next */ = {isa = PBXFileReference; path = aria2next; sourceTree = "<group>"; };
 		90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDirectories.swift; sourceTree = "<group>"; };
 		93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAccountInfo.swift; sourceTree = "<group>"; };
 		9400B7A22AAE4F79E7F30449 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -151,6 +153,7 @@
 		0A88B03F17E29512367B0991 = {
 			isa = PBXGroup;
 			children = (
+				9F13414C7672E7F4FBE835E8 /* Binaries */,
 				C4660C9AB449A714A0F5BF9D /* Resources */,
 				ABCF6C537659FC9845E66F49 /* Sources */,
 				C3ACA30BA64BF7D4ED63B691 /* Tests */,
@@ -223,6 +226,15 @@
 				491496E19FE861DE65FB5614 /* WindowConfig.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		9F13414C7672E7F4FBE835E8 /* Binaries */ = {
+			isa = PBXGroup;
+			children = (
+				8DA00850E75F336A45F75713 /* aria2next */,
+			);
+			name = Binaries;
+			path = Resources/Binaries;
 			sourceTree = "<group>";
 		};
 		ABCF6C537659FC9845E66F49 /* Sources */ = {
@@ -388,6 +400,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E04E855AB238056433E1596E /* Assets.xcassets in Resources */,
+				DAE2BA28975D47562C0A956F /* aria2next in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -575,6 +588,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 6.0;
@@ -617,6 +631,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 6.0;

@@ -442,11 +442,15 @@ struct DownloadTaskRow: View {
                 // QuickLook 失败（如文件异常）→ 落到下面的网络封面
             }
         }
-        // 网络封面（media.url 是视频封面图 / 图片原图）
-        guard let urlString = task.media.url, let url = URL(string: urlString) else { return }
+        // 网络封面（media.url 是视频封面图 / 图片原图）— 用 name=small 变体减流量,再 downsample
+        guard var urlString = task.media.url else { return }
+        if urlString.contains("pbs.twimg.com/media/"), !urlString.contains("name=") {
+            urlString += "?name=small"
+        }
+        guard let url = URL(string: urlString) else { return }
         do {
             let (data, resp) = try await URLSession.shared.data(from: url)
-            if let img = NSImage(data: data) {
+            if let img = Self.decodedSmall(data) {
                 thumbnail = img
                 ThumbnailCache.shared.store(img, forKey: task.gid)
             } else {
@@ -499,6 +503,18 @@ final class ThumbnailCache: @unchecked Sendable {
 }
 
 extension DownloadTaskRow {
+    /// 网络图片 downsample 解码(避免主线程大图)
+    static func decodedSmall(_ data: Data) -> NSImage? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 192,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
     /// CGImageSource downsample:只解码到目标像素,几 MB 原图零压力
     static func downsampledImage(path: String, pixelSize: Int) -> NSImage? {
         let opts: [CFString: Any] = [
