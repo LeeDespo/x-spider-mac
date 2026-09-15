@@ -216,19 +216,18 @@ final class HomepageStore {
                 AppLogger.debug("丢弃过期的翻页响应", category: "HOME", ["userId": userId])
                 return
             }
-            // 按推文 ID 去重：Twitter 偶发返回重复页；重复内容会导致无限加载
+            // 按推文 ID 去重（重叠页容错：pinned/置顶推文会重复出现,fresh 为空不算到底）
             let existing = Set(postList.map(\.id))
             let fresh = posts.filter { !existing.contains($0.id) }
-            if fresh.isEmpty { consecutiveEmptyPages += 1 } else { consecutiveEmptyPages = 0 }
-            // 连续 2 页无新内容（无论 cursor 是否变化）→ 判定到底，停止翻页
-            if posts.isEmpty || consecutiveEmptyPages >= 2 {
+            // 终止只看 cursor:空/重复 = 到底。fresh 空但 cursor 前进 → 继续翻(否则深翻被误停)
+            if posts.isEmpty || nextCursor == nil || nextCursor == cursor {
                 postListCursor = nil
                 consecutiveEmptyPages = 0
                 AppLogger.info("媒体时间线已到底", category: "HOME", ["screenName": userInfo?.screenName ?? "?"])
                 return
             }
             postList.append(contentsOf: fresh)
-            postListCursor = nextCursor != cursor ? nextCursor : nil
+            postListCursor = nextCursor
             AppLogger.debug("媒体时间线追加翻页", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?",
                 "posts": "\(posts.count)",
@@ -264,7 +263,12 @@ final class HomepageStore {
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）
 
     func setFilter(_ filter: DownloadFilter) {
+        let sourceChanged = filter.source != self.filter.source
         self.filter = filter
+        // 数据源切换后重载列表(媒体时间线/推文时间线内容不同)
+        if sourceChanged, userInfo != nil {
+            Task { await loadPostList() }
+        }
     }
 
     // MARK: - 展示用的媒体平面列表（上游 PostListGridView mediaList 计算）

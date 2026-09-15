@@ -3,6 +3,8 @@ import SwiftUI
 /// 主页时间线(X 式):推荐 / 关注 分段;关注下可切热门/最新。
 /// 每帖 = 聚合推文(正文) + 媒体行的卡片;点击卡片进入推文详情弹窗。
 struct HomeTimelineView: View {
+    /// 点击头像 → 搜索该用户(HomeView 注入)
+    var onAvatarTap: ((String) -> Void)? = nil
     @State private var store = HomeTimelineStore.shared
     @State private var detailPost: TwitterPost?
 
@@ -52,9 +54,11 @@ struct HomeTimelineView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(store.visiblePosts) { post in
-                            TimelinePostCard(post: post) {
+                            TimelinePostCard(post: post, onTap: {
                                 detailPost = post
-                            }
+                            }, onAvatar: {
+                                onAvatarTap?(post.user.screenName)
+                            }, showFollowButton: true)
                             .onAppear {
                                 if post.id == store.visiblePosts.last?.id {
                                     Task { await store.loadMore() }
@@ -83,6 +87,10 @@ struct HomeTimelineView: View {
 struct TimelinePostCard: View {
     let post: TwitterPost
     let onTap: () -> Void
+    /// 点击头像 → 跳转搜索该用户(可空)
+    var onAvatar: (() -> Void)? = nil
+    /// 关注按钮(可空:主页时间线卡片显示)
+    var showFollowButton: Bool = false
     @State private var hovering = false
 
     var body: some View {
@@ -90,9 +98,14 @@ struct TimelinePostCard: View {
             // 作者行 + 正文
             HStack(spacing: 10) {
                 CachedAvatarView(urlString: post.user.avatar, size: 38)
+                    .contentShape(Circle())
+                    .onTapGesture { onAvatar?() }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(post.user.name).font(.subheadline.weight(.semibold))
-                    Text("@\\(post.user.screenName)").font(.caption).foregroundStyle(.secondary)
+                    Text("@\(post.user.screenName)").font(.caption).foregroundStyle(.secondary)
+                }
+                if showFollowButton {
+                    FollowButton(screenName: post.user.screenName)
                 }
                 Spacer()
                 if let created = post.createdAt {
@@ -122,9 +135,12 @@ struct TimelinePostCard: View {
 
             // 互动计数行
             HStack(spacing: 18) {
-                Label("\\(post.replyCount ?? 0)", systemImage: "bubble.left")
-                Label("\\(post.retweetCount ?? 0)", systemImage: "arrow.triangle.2.squarepath")
-                Label("\\(post.favoriteCount ?? 0)", systemImage: "heart")
+                Label("\(post.replyCount ?? 0)", systemImage: "bubble.left")
+                Label("\(post.retweetCount ?? 0)", systemImage: "arrow.2.squarepath")
+                Label("\(post.favoriteCount ?? 0)", systemImage: "heart")
+                if let views = post.views {
+                    Label(views > 9999 ? String(format: "%.1f万", Double(views) / 10000) : "\(views)", systemImage: "chart.bar")
+                }
                 Spacer()
             }
             .font(.caption)

@@ -42,6 +42,14 @@ struct CookieLoginSheet: View {
             .padding(.horizontal, 30)
 
             Spacer()
+
+            HStack {
+                Button(L("取消")) { dismiss() }
+                    .compatGlassButton()
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)

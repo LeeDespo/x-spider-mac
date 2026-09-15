@@ -31,8 +31,8 @@ struct MediaDetailView: View {
 
     var body: some View {
         ZStack {
-            // 暗色遮罩:可点击退出(卡片会挡住点击,不会穿透)
-            Color.black.opacity(0.45)
+            // 透明命中层:点击三卡之外的应用区域即退出(不暗化背景,保持分离观感)
+            Color.clear
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
@@ -73,38 +73,10 @@ struct MediaDetailView: View {
     }
 
     /// 悬浮下载胶囊(独立于卡片之外)
-    private var downloadCapsule: some View {
-        HStack(spacing: 12) {
-            if let media = current {
-                Button {
-                    Task { await store.createDownloadTask(post: detail ?? post, media: media) }
-                } label: {
-                    Label(L("下载当前"), systemImage: "arrow.down.circle")
-                }
-            }
-            Button {
-                Task {
-                    for m in medias {
-                        _ = await store.createDownloadTask(post: detail ?? post, media: m)
-                    }
-                }
-            } label: {
-                Label(L("下载全部(\(medias.count))"), systemImage: "arrow.down.heart")
-            }
-        }
-        .labelStyle(.titleAndIcon)
-        .font(.callout)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .liquidGlass(interactive: true, cornerRadius: 22)
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
-    }
-
     // MARK: - 左：媒体卡
 
     private var mediaCard: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(Color.black.opacity(0.65))
@@ -112,38 +84,75 @@ struct MediaDetailView: View {
                     MediaContentView(media: media)
                         .padding(10)
                         .id(mediaIndex)
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 40)
-                                .onEnded { value in
-                                    let dx = value.translation.width
-                                    if dx < -50, mediaIndex < medias.count - 1 {
-                                        withAnimation(.spring(duration: 0.35)) { mediaIndex += 1 }
-                                    } else if dx > 50, mediaIndex > 0 {
-                                        withAnimation(.spring(duration: 0.35)) { mediaIndex -= 1 }
-                                    }
-                                }
-                        )
-                }
-                if medias.count > 1 {
-                    VStack {
-                        Spacer()
-                        Text("\(mediaIndex + 1) / \(medias.count)")
-                            .font(.caption.monospacedDigit())
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(.black.opacity(0.55), in: Capsule())
-                            .foregroundStyle(.white)
-                            .padding(10)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            // 左右滑切换媒体(挂在整卡层,不被播放器/图片吞)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        if dx < -40, mediaIndex < medias.count - 1 {
+                            withAnimation(.spring(duration: 0.35)) { mediaIndex += 1 }
+                        } else if dx > 40, mediaIndex > 0 {
+                            withAnimation(.spring(duration: 0.35)) { mediaIndex -= 1 }
+                        }
+                    }
+            )
+            // 下载胶囊:媒体正下方居中(仍属媒体卡矩形,与媒体间有 10pt 间隙)
+            downloadCapsule
         }
         .contentShape(RoundedRectangle(cornerRadius: 18))
-        .onTapGesture {} // 卡内点击不穿透到遮罩层(空操作)
+        .onTapGesture {} // 卡内点击不穿透
         .liquidGlass(interactive: false, cornerRadius: 18)
+    }
+
+    private var downloadCapsule: some View {
+        HStack(spacing: 14) {
+            // 页码
+            if medias.count > 1 {
+                Text("\(mediaIndex + 1) / \(medias.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                if let media = current { downloadCurrent(media) }
+            } label: {
+                Label(L("下载当前"), systemImage: "arrow.down.circle")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .buttonBorderShape(.capsule)
+
+            Button {
+                downloadAllInTweet()
+            } label: {
+                Label(L("下载全部(N)") + "\(medias.count)", systemImage: "arrow.down.circle.fill")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .buttonBorderShape(.capsule)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .contentShape(Rectangle())
+        .onTapGesture {} // 点击胶囊不退出弹窗
+    }
+
+    private func downloadCurrent(_ media: TwitterMedia) {
+        Task {
+            if let idx = medias.firstIndex(where: { $0.id == media.id }) {
+                _ = await store.createDownloadTask(post: detail ?? post, media: media)
+            }
+        }
+    }
+
+    private func downloadAllInTweet() {
+        Task {
+            let p = detail ?? post
+            await store.batchCreateDownloadTasks((p.medias ?? []).map { (p, $0) })
+        }
     }
 
     // MARK: - 右上：推文卡
@@ -173,7 +182,7 @@ struct MediaDetailView: View {
             // 计数行（回复 · 转推 · 赞 · 浏览）
             HStack(spacing: 14) {
                 if let rc = detail?.replyCount ?? post.replyCount { Label("\(rc)", systemImage: "bubble.right").labelStyle(.titleAndIcon) }
-                if let tc = detail?.retweetCount ?? post.retweetCount { Label("\(tc)", systemImage: "arrow.triangle.2.squarepath").labelStyle(.titleAndIcon) }
+                if let tc = detail?.retweetCount ?? post.retweetCount { Label("\(tc)", systemImage: "arrow.2.squarepath").labelStyle(.titleAndIcon) }
                 if let lc = detail?.favoriteCount ?? post.favoriteCount { Label("\(lc)", systemImage: "heart").labelStyle(.titleAndIcon) }
                 if let vc = detail?.views ?? post.views { Label("\(vc)", systemImage: "chart.bar").labelStyle(.titleAndIcon) }
                 Spacer()

@@ -211,6 +211,49 @@ actor TwitterAPI {
         try ensureResponse(resp)
     }
 
+    /// 关注 / 取关（v1.1 friendships REST）
+    func followUser(screenName: String) async throws {
+        try await formPost(path: "/1.1/friendships/create.json", fields: ["screen_name": screenName])
+    }
+
+    func unfollowUser(screenName: String) async throws {
+        try await formPost(path: "/1.1/friendships/destroy.json", fields: ["screen_name": screenName])
+    }
+
+    /// 是否已关注（v1.1 friendships/show）
+    func isFollowing(screenName: String) async throws -> Bool {
+        try await ensureXClIdLoaded()
+        let url = URL(string: "https://\(host)/1.1/friendships/show.json")!
+        let me = await MainActor.run { AppStore.shared.account?.screenName ?? "" }
+        let resp = try await client.request(
+            url: url,
+            query: ["source_screen_name": me, "target_screen_name": screenName],
+            headers: await commonHeaders(method: "GET", path: "/1.1/friendships/show.json")
+        )
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any],
+              let rel = json["relationship"] as? [String: Any],
+              let target = rel["target"] as? [String: Any] else { return false }
+        return target["following"] as? Bool ?? false
+    }
+
+    /// v1.1 form-urlencoded POST
+    private func formPost(path: String, fields: [String: String]) async throws {
+        try await ensureXClIdLoaded()
+        let url = URL(string: "https://\(host)\(path)")!
+        let body = fields.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
+        var headers = await commonHeaders(method: "POST", path: path)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        let resp = try await client.request(
+            method: "POST",
+            url: url,
+            headers: headers,
+            body: Data(body.utf8)
+        )
+        try ensureResponse(resp)
+    }
+
     /// 点赞 / 取消点赞
     func favoriteTweet(id: String) async throws {
         try await mutate(

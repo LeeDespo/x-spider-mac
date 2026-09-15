@@ -1,5 +1,6 @@
 import SwiftUI
 import QuickLookThumbnailing
+import ImageIO
 
 /// 上游 DownloadManagement.tsx 的移植：三 Tab（下载中/已完成/失败）+ 任务创建进度 + 任务列表。
 /// 新增：按推特用户名筛选历史（头像小窗）、显示全部、删除当前视图记录。
@@ -417,18 +418,25 @@ struct DownloadTaskRow: View {
     }
 
     private func loadThumbnail() async {
-        // 已完成且有本地文件：优先本地，不发网络请求
+        // 缩略图缓存命中(任务 gid 键)直接用,滚动不重解码
+        if let cached = ThumbnailCache.shared.image(forKey: task.gid) {
+            thumbnail = cached
+            return
+        }
+        // 已完成且有本地文件：优先本地,downsample 解码(只解 96px,不全图)
         if task.status == .complete {
             let localPath = (task.dir as NSString).appendingPathComponent(task.fileName)
             if task.media.type == .photo {
-                if let img = NSImage(contentsOfFile: localPath) {
+                if let img = Self.downsampledImage(path: localPath, pixelSize: 192) {
                     thumbnail = img
+                    ThumbnailCache.shared.store(img, forKey: task.gid)
                     return
                 }
             } else {
-                // 视频/GIF：NSImage 解码不了 mp4，用 QuickLook 生成缩略图
+                // 视频/GIF：QuickLook 生成缩略图
                 if let img = await Self.quickLookThumbnail(path: localPath) {
                     thumbnail = img
+                    ThumbnailCache.shared.store(img, forKey: task.gid)
                     return
                 }
                 // QuickLook 失败（如文件异常）→ 落到下面的网络封面
@@ -440,6 +448,7 @@ struct DownloadTaskRow: View {
             let (data, resp) = try await URLSession.shared.data(from: url)
             if let img = NSImage(data: data) {
                 thumbnail = img
+                ThumbnailCache.shared.store(img, forKey: task.gid)
             } else {
                 AppLogger.warn("下载列表缩略图解码失败", category: "DL", [
                     "file": task.fileName, "status": "\((resp as? HTTPURLResponse)?.statusCode ?? 0)",
@@ -475,5 +484,30 @@ struct DownloadTaskRow: View {
     private func showInFolder(_ task: DownloadTask) {
         let path = (task.dir as NSString).appendingPathComponent(task.fileName)
         NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: task.dir)
+    }
+}
+
+
+/// 缩略图内存缓存(NSCache 自动清理,滚动不重复解码)
+final class ThumbnailCache: @unchecked Sendable {
+    static let shared = ThumbnailCache()
+    private let cache = NSCache<NSString, NSImage>()
+    private init() { cache.countLimit = 600 }
+
+    func image(forKey key: String) -> NSImage? { cache.object(forKey: key as NSString) }
+    func store(_ image: NSImage, forKey key: String) { cache.setObject(image, forKey: key as NSString) }
+}
+
+extension DownloadTaskRow {
+    /// CGImageSource downsample:只解码到目标像素,几 MB 原图零压力
+    static func downsampledImage(path: String, pixelSize: Int) -> NSImage? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: pixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 }

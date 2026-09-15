@@ -51,7 +51,9 @@ struct HomeView: View {
                         postListGrid
                     }
                 } else {
-                    HomeTimelineView()
+                    HomeTimelineView { screenName in
+                        Task { await store.loadUser(screenName: screenName) }
+                    }
                 }
             } else {
                 loginPrompt
@@ -64,21 +66,14 @@ struct HomeView: View {
         }
         .overlay(alignment: .bottom) {
             if selectiveMode {
-                // 选择模式操作条:全选/完成/取消
+                // 选择模式操作条:撤销 + 全部下载(短条居中)
                 HStack(spacing: 14) {
-                    Button(L("全选")) {
-                        selectedMediaKeys = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
-                    }
-                    .compatGlassButton()
-                    Button(L("全不选")) { selectedMediaKeys = [] }
-                        .compatGlassButton()
-                    Spacer()
-                    Button(L("取消")) {
+                    Button(L("撤销")) {
                         selectiveMode = false
                         selectedMediaKeys = []
                     }
                     .compatGlassButton()
-                    Button(L("下载所选(\(selectedMediaKeys.count))")) { downloadSelected() }
+                    Button(L("全部下载")) { downloadSelected() }
                         .compatGlassProminentButton()
                         .disabled(selectedMediaKeys.isEmpty)
                 }
@@ -86,7 +81,6 @@ struct HomeView: View {
                 .padding(.vertical, 12)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                 .shadow(color: .black.opacity(0.2), radius: 10, y: 3)
-                .padding(.horizontal, 40)
                 .padding(.bottom, 14)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -100,11 +94,13 @@ struct HomeView: View {
                 } label: {
                     Image(systemName: "chevron.backward")
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(.regularMaterial, in: Circle())
-                        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                        .frame(width: 42, height: 42)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .liquidGlass(interactive: true, cornerRadius: 21)
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+                .help(L("返回时间线"))
                 .padding(20)
                 .transition(.scale.combined(with: .opacity))
             }
@@ -325,6 +321,30 @@ struct HomeView: View {
         .padding(.bottom, 8)
     }
 
+    /// 无限滚动底栏(媒体网格/推文列表共用)
+    private var bottomLoader: some View {
+        HStack {
+            if store.postListLoading {
+                ProgressView()
+                    .controlSize(.small)
+            } else if store.postListCursor != nil, !autoLoadAttempted {
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear {
+                        autoLoadAttempted = true
+                        Task { await store.loadMorePostList() }
+                    }
+            } else if !store.postList.isEmpty {
+                Text(L("已加载全部"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .animation(nil, value: store.postListLoading)
+    }
+
     // MARK: - 媒体网格（上游 PostListGridView：LazyVGrid + hover 操作 + 无限滚动）
 
     private var postListGrid: some View {
@@ -334,15 +354,36 @@ struct HomeView: View {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
-                    Text(L("该用户没有媒体内容"))
+                    Text(store.filter.source == .tweets ? L("该用户没有推文") : L("该用户没有媒体内容"))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if store.filter.source == .tweets {
+                // 推文时间线:推文卡列表(没有媒体的推文也显示),点击开详情
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(store.postList) { post in
+                            TimelinePostCard(post: post) {
+                                detailPost = post
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    bottomLoader
+                }
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
                         ForEach(store.flatMediaList, id: \.media.id) { item in
                             MediaGridItem(post: item.post, media: item.media, index: item.index,
+                                          selectionMode: selectiveMode,
+                                          isSelected: selectedMediaKeys.contains(selectionKey(item.post, item.media)),
+                                          onToggleSelect: {
+                                              let k = selectionKey(item.post, item.media)
+                                              if selectedMediaKeys.contains(k) { selectedMediaKeys.remove(k) }
+                                              else { selectedMediaKeys.insert(k) }
+                                          },
                                           onDoubleClick: {
                                               detailPost = item.post
                                               detailMediaIndex = item.index - 1
@@ -351,28 +392,7 @@ struct HomeView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
-
-                    // 无限滚动：固定高度的底部区，避免 loading↔按钮切换时视图抖动闪烁
-                    HStack {
-                        if store.postListLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else if store.postListCursor != nil, !autoLoadAttempted {
-                            Color.clear
-                                .frame(height: 1)
-                                .onAppear {
-                                    autoLoadAttempted = true
-                                    Task { await store.loadMorePostList() }
-                                }
-                        } else if !store.postList.isEmpty {
-                            Text(L("已加载全部"))
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)  // 固定高度：分支切换不改变布局
-                    .animation(nil, value: store.postListLoading)  // 分支切换不做动画，消除闪烁
+                    bottomLoader
                     .onChange(of: cursorKey) { _, _ in autoLoadAttempted = false }
                     .padding(.bottom, 24)
                 }
@@ -423,12 +443,12 @@ struct MediaGridItem: View {
     let post: TwitterPost
     let media: TwitterMedia
     let index: Int
-    /// 单击 → 推文详情弹窗（HomeView 层弹出;hover 按钮在上层不受影响）
-    var onDoubleClick: (() -> Void)? = nil
     /// 选择性下载模式:true=卡片缩小变暗(后退感),点击=勾选(恢复正常大小)
     var selectionMode: Bool = false
     var isSelected: Bool = false
     var onToggleSelect: (() -> Void)? = nil
+    /// 单击 → 推文详情弹窗（HomeView 层弹出;hover 按钮在上层不受影响）
+    var onDoubleClick: (() -> Void)? = nil
     @State private var isHovering = false
     @State private var thumbnail: NSImage?
 

@@ -72,8 +72,7 @@ final class CreationTaskStore {
         var nextCursor: String? = nil
         // 翻页防御:X 偶发对"无更多内容"返回重复/非空 cursor,导致无限检索(用户实测上千页)
         var seenCursors = Set<String>()
-        var emptyPageStreak = 0
-        let maxPages = 60  // 50 媒体用户实测约 3-5 页;60 页 ≈ 1200 条推文,足够深翻
+        let maxPages = 500  // 安全上限(≈1 万条推文);正常翻完提前 break,防服务端异常时无限跑
 
         while nextCursor != nil || completeCount + skipCount == 0 {
             if Task.isCancelled { return }
@@ -102,9 +101,6 @@ final class CreationTaskStore {
                 if let lastPost = posts.last, let createdAt = lastPost.createdAt {
                     now = createdAt
                 }
-                // 空页防御:连续 3 页无新增任务即终止(全是跳过=已下载,没必要继续)
-                let newTasksBefore = completeCount
-
                 // 日期过滤（上游 allPass：until 之前 + since 之后；无 createdAt 放行）
                 let filteredPosts = posts.filter { post in
                     guard let createdAt = post.createdAt else { return true }
@@ -160,11 +156,6 @@ final class CreationTaskStore {
                 skipCount += deduped.count - addedCount
 
                 updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-
-                // 连续多页无新任务(全是已下载跳过) → 深处都是重复,停
-                emptyPageStreak = addedCount == 0 ? emptyPageStreak + 1 : 0
-                if emptyPageStreak >= 3 { break }
-                _ = newTasksBefore
 
                 // 到达日期下限：停止翻页（上游 while 条件 now.isAfter(since)）
                 if now < since { break }

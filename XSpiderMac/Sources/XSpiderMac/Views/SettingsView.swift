@@ -740,8 +740,6 @@ struct SyncListManagerSheet: View {
         VStack(spacing: 0) {
             // 标题 + 检索框
             HStack(spacing: 12) {
-                Text(L("同步清单"))
-                    .font(.headline)
                 Picker(L("排序"), selection: $sortOrder) {
                     Text(L("添加顺序")).tag(SyncListSortOrder.addition)
                     Text(L("用户名首字母")).tag(SyncListSortOrder.alphabet)

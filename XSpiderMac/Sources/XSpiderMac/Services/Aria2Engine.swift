@@ -11,11 +11,10 @@ final class Aria2Engine: @unchecked Sendable {
     private var outputBuffers: [String: String] = [:]
     private let lock = NSLock()
 
-    /// aria2Next 可执行文件路径（bundle 内置优先，其次 homebrew；老 aria2c 兜底）
+    /// aria2Next 可执行文件路径（bundle 内置优先，其次 homebrew;不回退老 aria2c）
     static let binaryURL: URL? = {
-        let names = ["aria2next", "aria2c"]
         var candidates: [URL] = []
-        for name in names {
+        for name in ["aria2next"] {
             candidates.append(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/\(name)"))
             candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/\(name)"))
             candidates.append(URL(fileURLWithPath: "/usr/local/bin/\(name)"))

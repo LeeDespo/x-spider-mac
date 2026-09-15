@@ -62,6 +62,7 @@
 		EB90013BFE5E8249FE9A8F85 /* SearchHistoryPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD92DA949C8B8D465ABE0C09 /* SearchHistoryPopover.swift */; };
 		EC28A95C1C6ACEBDB757F6C4 /* FeatureIntroSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */; };
 		EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD11699500B1791EFEAA1F95 /* CookieImportView.swift */; };
+		F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C685570A33E16C638B5293CD /* FollowButton.swift */; };
 		F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D769C342F080744CE4324F /* FloatingDownloadBar.swift */; };
 		FDB03CDFF7F2C83FA65C4297 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */; };
 /* End PBXBuildFile section */
@@ -120,6 +121,7 @@
 		BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		BE73393E6DBB7A16308C178D /* SearchHistoryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchHistoryItem.swift; sourceTree = "<group>"; };
+		C685570A33E16C638B5293CD /* FollowButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowButton.swift; sourceTree = "<group>"; };
 		CBBE72B5CC65256D2AE66924 /* XClientTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XClientTransaction.swift; sourceTree = "<group>"; };
 		CC206AB57040EA940F7C8BC6 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
 		CC4B91779185027CBBA49B18 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */,
 				66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */,
 				76D769C342F080744CE4324F /* FloatingDownloadBar.swift */,
+				C685570A33E16C638B5293CD /* FollowButton.swift */,
 				AAAED927235E402A41F636ED /* HomeTimelineView.swift */,
 				FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */,
 				CF89D7F6225AE828A18C02A6 /* MediaDetailView.swift */,
@@ -422,6 +425,7 @@
 				EC28A95C1C6ACEBDB757F6C4 /* FeatureIntroSheet.swift in Sources */,
 				7B23E6A11881F0FEC654415F /* FileNameTemplate.swift in Sources */,
 				F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */,
+				F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */,
 				19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */,
 				28FD816424E84727DEABCCA7 /* GlassCompat.swift in Sources */,
 				D625E6C7196AEF0C785F359B /* HomeTimelineStore.swift in Sources */,

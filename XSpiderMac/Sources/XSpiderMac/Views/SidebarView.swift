@@ -3,7 +3,8 @@ import SwiftUI
 struct SidebarView: View {
     @Binding var selection: NavigationItem?
     @State private var showCookieSheet = false
-    @State private var account: TwitterAccountInfo?
+    @State private var appStore = AppStore.shared
+    private var account: TwitterAccountInfo? { appStore.account }
     @State private var avatarImage: NSImage?
 
     var body: some View {
@@ -35,12 +36,7 @@ struct SidebarView: View {
         .sheet(isPresented: $showCookieSheet) {
             CookieLoginSheet()
         }
-        .onAppear {
-            account = AppStore.shared.account
-        }
-        .onChange(of: AppStore.shared.account) { _, newAccount in
-            account = newAccount
-        }
+
     }
 
     private func navTitle(_ item: NavigationItem) -> String {
@@ -91,7 +87,7 @@ struct SidebarView: View {
         .liquidGlass(cornerRadius: 16)
         .contentShape(Rectangle())
         .onTapGesture {
-            if AppStore.shared.account == nil {
+            if appStore.account == nil {
                 showCookieSheet = true
             } else {
                 accountMenuVisible = true
@@ -101,7 +97,7 @@ struct SidebarView: View {
         .popover(isPresented: $accountMenuVisible, arrowEdge: .bottom) {
             VStack(spacing: 2) {
                 // 1) 已登录过的账户（点击切换,cookie 保留切换不丢）
-                let saved = AppStore.shared.savedAccounts
+                let saved = appStore.savedAccounts
                 if !saved.isEmpty {
                     Text(L("已登录的账户"))
                         .font(.caption)
@@ -139,7 +135,7 @@ struct SidebarView: View {
                     accountMenuVisible = false
                     showCookieSheet = true
                 } label: {
-                    Label(L("切换账号"), systemImage: "person.crop.circle.badge.plus")
+                    Label(L("添加账户"), systemImage: "person.crop.circle.badge.plus")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                 }
@@ -152,8 +148,7 @@ struct SidebarView: View {
                 // 3) 登出 = 销毁当前账户的 cookie
                 Button(role: .destructive) {
                     accountMenuVisible = false
-                    AppStore.shared.logout()
-                    self.account = nil
+                    appStore.logout()
                 } label: {
                     Label(L("登出"), systemImage: "rectangle.portrait.and.arrow.right")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -177,7 +172,6 @@ struct SidebarView: View {
                 if let target = switchingAccount {
                     Task {
                         try? await AppStore.shared.switchToAccount(target)
-                        self.account = AppStore.shared.account
                     }
                 }
                 switchingAccount = nil

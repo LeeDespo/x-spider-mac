@@ -28,7 +28,7 @@ struct SelectiveDownloadSheet: View {
             HStack {
                 Text(L("选择下载"))
                     .font(.headline)
-                Text(L("已选 \\(selectedCount) / \\(items.count)"))
+                Text(L("已选 \(selectedCount) / \(items.count)"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -71,7 +71,7 @@ struct SelectiveDownloadSheet: View {
                         Label(L("已创建任务"), systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Text(L("下载所选 (\\(selectedCount))"))
+                        Text(L("下载所选 (\(selectedCount))"))
                     }
                 }
                 .disabled(selectedCount == 0 || created)
@@ -92,7 +92,7 @@ struct SelectiveDownloadSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: selected[id] ?? true ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(selected[id] ?? true ? Color.accentColor : .secondary)
-                Text("#\\(item.index)")
+                Text("#\(item.index)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 34, alignment: .leading)
