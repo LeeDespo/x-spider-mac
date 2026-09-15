@@ -36,6 +36,9 @@ struct SidebarView: View {
         .sheet(isPresented: $showCookieSheet) {
             CookieLoginSheet()
         }
+        .sheet(isPresented: $showFollowingList) {
+            FollowingListSheet()
+        }
 
     }
 
@@ -52,6 +55,7 @@ struct SidebarView: View {
     // MARK: - 账户卡（上游 Account.tsx：头像 + 昵称 + screen_name，点击可登出）
 
     @State private var accountMenuVisible = false
+    @State private var showFollowingList = false
     @State private var switchingAccount: SavedAccount?
 
     private var accountCard: some View {
@@ -136,6 +140,23 @@ struct SidebarView: View {
                     showCookieSheet = true
                 } label: {
                     Label(L("添加账户"), systemImage: "person.crop.circle.badge.plus")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+                Divider()
+
+                Divider()
+
+                // 关注清单管理
+                Button {
+                    accountMenuVisible = false
+                    showFollowingList = true
+                } label: {
+                    Label(L("关注清单"), systemImage: "person.2.circle")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                 }

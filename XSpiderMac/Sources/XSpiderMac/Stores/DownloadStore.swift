@@ -740,6 +740,14 @@ final class DownloadStore {
         }
     }
 
+    /// 等到所有任务离开 active/waiting(下载完成或失败)。
+    /// 每 2s 轮询;用于批量下载后关机前的等待。
+    func waitUntilAllSettled() async {
+        while tasks.contains(where: { $0.status == .active || $0.status == .waiting }) {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+
     // MARK: - 系统通知（上游 notification.sendNotification）
 
     private func notify(title: String, body: String) {

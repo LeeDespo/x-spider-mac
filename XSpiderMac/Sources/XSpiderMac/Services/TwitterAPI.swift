@@ -153,7 +153,8 @@ actor TwitterAPI {
         guard let avatar = extract(pattern: #""profile_image_url_https":"(.*?)""#, from: html) else {
             throw TwitterAPIError.missingAvatar
         }
-        return TwitterAccountInfo(screenName: screenName, avatar: avatar)
+        let restId = extract(pattern: #""rest_id":"(\d+)""#, from: html)
+        return TwitterAccountInfo(screenName: screenName, avatar: avatar, id: restId)
     }
 
     // MARK: - 用户查询
@@ -218,6 +219,69 @@ actor TwitterAPI {
 
     func unfollowUser(screenName: String) async throws {
         try await formPost(path: "/1.1/friendships/destroy.json", fields: ["screen_name": screenName])
+    }
+
+    /// 当前账户 restId(账户信息缺 id 时用 UserByScreenName 补查)
+    func currentUserId() async -> String? {
+        if let id = await MainActor.run(body: { AppStore.shared.account?.id }), !id.isEmpty { return id }
+        guard let sn = await MainActor.run(body: { AppStore.shared.account?.screenName }) else { return nil }
+        return (try? await getUser(screenName: sn).id) ?? nil
+    }
+
+    /// 用户 result dict → TwitterUser(兼容 legacy 与新版 core 结构)
+    static func mapTwitterUser(_ result: [String: Any]) -> TwitterUser? {
+        let legacy = result["legacy"] as? [String: Any] ?? [:]
+        let core = result["core"] as? [String: Any] ?? [:]
+        let screenName = (legacy["screen_name"] as? String)
+            ?? (core["screen_name"] as? String)
+        guard let sn = screenName, !sn.isEmpty else { return nil }
+        let name = (legacy["name"] as? String) ?? (core["name"] as? String) ?? sn
+        let avatar = (legacy["profile_image_url_https"] as? String)
+            ?? ((core["avatar"] as? [String: Any])?["url"] as? String) ?? ""
+        return TwitterUser(
+            screenName: sn,
+            avatar: avatar,
+            name: name,
+            id: result["rest_id"] as? String ?? "",
+            mediaCount: legacy["media_count"] as? Int,
+            registerTime: TwitterDate.parse(legacy["created_at"] as? String)
+        )
+    }
+
+    /// 关注列表(Following GraphQL;返回用户数组+cursor)
+    func getFollowing(userId: String, cursor: String? = nil, count: Int = 100) async throws -> (users: [TwitterUser], cursor: String?) {
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/F42cDX8PDFxkbjjq6JrM2w/Following"
+        let url = URL(string: "https://\(host)\(path)")!
+        var vars: [String: Any] = ["userId": userId, "count": count, "includePromotedContent": false]
+        if let cursor { vars["cursor"] = cursor }
+        let resp = try await client.request(
+            url: url,
+            query: [
+                "variables": Self.encodeJSON(vars) ?? "{}",
+                "features": Self.userMediaFeatures,
+            ],
+            headers: await commonHeaders(method: "GET", path: path)
+        )
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any] else { throw TwitterAPIError.parseFailure }
+        let instructions = Self.path(json, ["data", "user", "result", "timeline", "timeline", "instructions"]) as? [[String: Any]]
+            ?? Self.path(json, ["data", "user", "result", "timeline", "instructions"]) as? [[String: Any]]
+            ?? []
+        var users: [TwitterUser] = []
+        if let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
+           let entries = addEntries["entries"] as? [[String: Any]] {
+            for entry in entries {
+                let entryId = entry["entryId"] as? String ?? ""
+                guard entryId.hasPrefix("user-") else { continue }
+                let content = entry["content"] as? [String: Any] ?? [:]
+                if let result = Self.path(content, ["itemContent", "user_results", "result"]) as? [String: Any] {
+                    if let u = Self.mapTwitterUser(result) { users.append(u) }
+                }
+            }
+        }
+        let bottom = Self.extractBottomCursor(instructions)
+        return (users, bottom)
     }
 
     /// 是否已关注（v1.1 friendships/show）

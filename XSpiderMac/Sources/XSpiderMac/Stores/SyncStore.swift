@@ -81,6 +81,12 @@ final class SyncStore {
 
     // MARK: - 清单管理
 
+    /// 从 TwitterUser 添加(去重)
+    func addUser(user: TwitterUser) {
+        guard !users.contains(where: { $0.screenName.lowercased() == user.screenName.lowercased() }) else { return }
+        users.append(SyncUser(screenName: user.screenName, name: user.name, avatar: user.avatar))
+    }
+
     /// 输入框添加：支持中英文逗号分隔多个用户名
     func addUsers(fromInput input: String) -> Int {
         let parts = input

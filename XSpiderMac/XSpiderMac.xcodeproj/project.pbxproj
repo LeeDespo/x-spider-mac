@@ -22,6 +22,7 @@
 		3C0EA7AEE313B7BD2BE6BF5C /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */; };
 		3EC52913D8CA572C228C444F /* HomepageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A6494CC89C67122E3F3122 /* HomepageStore.swift */; };
 		4290761DA5D4747D2608F590 /* SearchHistoryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE73393E6DBB7A16308C178D /* SearchHistoryItem.swift */; };
+		4542D74E1CC9876031503518 /* FollowingListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61396F40ACC197957633E4F6 /* FollowingListSheet.swift */; };
 		4D84E5E91E214D3D3D8C8AFD /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4B91779185027CBBA49B18 /* L10n.swift */; };
 		5A10313AC85910D71F6B950B /* String+Path.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C71F4FE1A0AD871AA29345 /* String+Path.swift */; };
 		642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */; };
@@ -95,6 +96,7 @@
 		491496E19FE861DE65FB5614 /* WindowConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowConfig.swift; sourceTree = "<group>"; };
 		49F384578208B4323FB9E377 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		583B467661B41B8F17D31BDF /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		61396F40ACC197957633E4F6 /* FollowingListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowingListSheet.swift; sourceTree = "<group>"; };
 		644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweetDetailUserTests.swift; sourceTree = "<group>"; };
 		65114E0D2408F2AD861228F0 /* DownloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadStore.swift; sourceTree = "<group>"; };
 		65CBC9960CB839075452DECD /* TwitterPost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterPost.swift; sourceTree = "<group>"; };
@@ -182,6 +184,7 @@
 				66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */,
 				76D769C342F080744CE4324F /* FloatingDownloadBar.swift */,
 				C685570A33E16C638B5293CD /* FollowButton.swift */,
+				61396F40ACC197957633E4F6 /* FollowingListSheet.swift */,
 				AAAED927235E402A41F636ED /* HomeTimelineView.swift */,
 				FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */,
 				CF89D7F6225AE828A18C02A6 /* MediaDetailView.swift */,
@@ -426,6 +429,7 @@
 				7B23E6A11881F0FEC654415F /* FileNameTemplate.swift in Sources */,
 				F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */,
 				F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */,
+				4542D74E1CC9876031503518 /* FollowingListSheet.swift in Sources */,
 				19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */,
 				28FD816424E84727DEABCCA7 /* GlassCompat.swift in Sources */,
 				D625E6C7196AEF0C785F359B /* HomeTimelineStore.swift in Sources */,
