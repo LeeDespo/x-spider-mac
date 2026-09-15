@@ -11,6 +11,11 @@ struct HomeView: View {
     @State private var downloadStore = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
     @State private var creationTaskCreated = false
+    /// 双击媒体 → 推文详情弹窗
+    @State private var detailPost: TwitterPost?
+    @State private var detailMediaIndex = 0
+    /// 选择性下载弹窗
+    @State private var showSelectiveDownload = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +59,12 @@ struct HomeView: View {
         }
         .navigationTitle(L("主页"))
         .frame(minWidth: 600)
+        .sheet(item: $detailPost) { post in
+            MediaDetailView(post: post, initialMediaIndex: detailMediaIndex)
+        }
+        .sheet(isPresented: $showSelectiveDownload) {
+            SelectiveDownloadSheet(store: store, filter: store.filter)
+        }
     }
 
     /// 搜索分流：推文链接/ID → 推文模式；否则按用户 screen_name
@@ -76,7 +87,11 @@ struct HomeView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
                         ForEach(Array((post.medias ?? []).enumerated()), id: \.element.id) { idx, media in
-                            MediaGridItem(post: post, media: media, index: idx + 1)
+                            MediaGridItem(post: post, media: media, index: idx + 1,
+                                          onDoubleClick: {
+                                              detailPost = post
+                                              detailMediaIndex = idx
+                                          })
                         }
                     }
                     .padding(.horizontal, 16)
@@ -229,6 +244,11 @@ struct HomeView: View {
                     .compatGlassProminentButton()
                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
+
+                Button(L("选择下载")) {
+                    showSelectiveDownload = true
+                }
+                .compatGlassButton()
             }
 
             HStack(spacing: 16) {
@@ -254,6 +274,7 @@ struct HomeView: View {
                     Text(L("推文时间线")).tag(DownloadFilter.Source.tweets)
                 }
                 .pickerStyle(.radioGroup)
+                .infoHint(L("媒体时间线：加载快，直达媒体内容。\n推文时间线：可检索到更久远的媒体，翻页更慢。"))
             }
         }
         .padding(16)
@@ -279,7 +300,11 @@ struct HomeView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
                         ForEach(store.flatMediaList, id: \.media.id) { item in
-                            MediaGridItem(post: item.post, media: item.media, index: item.index)
+                            MediaGridItem(post: item.post, media: item.media, index: item.index,
+                                          onDoubleClick: {
+                                              detailPost = item.post
+                                              detailMediaIndex = item.index - 1
+                                          })
                         }
                     }
                     .padding(.horizontal, 16)
@@ -356,6 +381,8 @@ struct MediaGridItem: View {
     let post: TwitterPost
     let media: TwitterMedia
     let index: Int
+    /// 双击 → 推文详情弹窗（HomeView 层弹出）
+    var onDoubleClick: (() -> Void)? = nil
     @State private var isHovering = false
     @State private var thumbnail: NSImage?
 
@@ -421,7 +448,9 @@ struct MediaGridItem: View {
             }
         }
         .aspectRatio(4/5, contentMode: .fit)
+        .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        .onTapGesture(count: 2) { onDoubleClick?() }
     }
 
     /// 圆形玻璃图标按钮（36pt）
@@ -494,6 +523,8 @@ struct MediaGridItem: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
+
+extension TwitterPost: Identifiable {}
 
 // MARK: - DownloadFilter 便捷操作
 

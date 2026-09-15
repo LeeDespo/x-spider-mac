@@ -4,6 +4,9 @@ struct ProxySettings: Codable, Sendable {
     var enable: Bool = true
     var url: String = "http://127.0.0.1:7890"
     var useSystem: Bool = true
+    /// 代理身份验证（可选）
+    var username: String?
+    var password: String?
 }
 
 /// 下载引擎
@@ -14,7 +17,7 @@ enum DownloadEngine: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .builtIn: return L("内置引擎")
-        case .aria2: return "aria2"
+        case .aria2: return "aria2Next"
         }
     }
 }

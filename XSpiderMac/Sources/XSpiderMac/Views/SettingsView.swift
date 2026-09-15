@@ -101,7 +101,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .padding(.leading, 16)
-                .infoHint(L("按文件名：强制在文件名末尾增加资源索引。\n按下载记录文件：在保存路径创建并维护 .downloaded.json 文件（全量记录已下载媒体的资源索引），改文件名模板也不影响判定。"))
+                .infoHint(L("按文件名：目标文件已存在则跳过；即使文件被意外删除或移动，也能重新判定无误。\n按下载记录文件：在保存路径创建并维护 .downloaded.json 文件，全量记录已下载媒体的资源索引，改文件名模板不影响判定。"))
 
                     .padding(.leading, 16)
             }
@@ -124,7 +124,25 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .infoHint(L("aria2：多连接分块下载，大文件更快更稳（推荐）；内置引擎：系统原生 URLSession，单连接。切换引擎后新任务生效。"))
+            .infoHint(L("aria2Next：aria2 的现代分支，多连接分块下载，大文件更快更稳（推荐）。\n内置引擎：系统原生 URLSession，单连接。\n切换引擎后新任务生效。"))
+
+            if settingsStore.settings.download.engine == .aria2 {
+                HStack {
+                    // 连接状态：内核可执行文件在 + 可执行 = 绿灯
+                    Circle()
+                        .fill(Aria2Engine.isAvailable ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(Aria2Engine.isAvailable ? L("aria2Next 连接正常") : L("aria2Next 内核未找到"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L("重启内核")) {
+                        Aria2Engine.shared.restart()
+                    }
+                    .compatGlassButton()
+                }
+                .padding(.leading, 16)
+            }
 
             // 同时并发下载数（− 数字 +，数字可点击输入）
             NumberStepperField(
@@ -232,6 +250,14 @@ struct SettingsView: View {
                     TextField(L("代理地址"), text: Binding(
                         get: { settingsStore.settings.proxy.url },
                         set: { settingsStore.settings.proxy.url = $0 }
+                    ))
+                    TextField(L("代理用户名（可选）"), text: Binding(
+                        get: { settingsStore.settings.proxy.username ?? "" },
+                        set: { settingsStore.settings.proxy.username = $0.isEmpty ? nil : $0 }
+                    ))
+                    SecureField(L("代理密码（可选）"), text: Binding(
+                        get: { settingsStore.settings.proxy.password ?? "" },
+                        set: { settingsStore.settings.proxy.password = $0.isEmpty ? nil : $0 }
                     ))
                 }
             }

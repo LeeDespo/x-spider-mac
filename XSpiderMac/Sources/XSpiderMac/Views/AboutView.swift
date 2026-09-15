@@ -25,12 +25,12 @@ struct AboutView: View {
             Text(L("macOS 原生版 X 媒体下载器"))
                 .foregroundStyle(.secondary)
 
-            // 短而居中的链接行：不固定标题列宽，整块内容居中
-            VStack(alignment: .center, spacing: 8) {
-                linkRow("LeeDespo", url: developerURL)
-                linkRow("LeeDespo/x-spider-mac", url: projectURL)
-                linkRow("GPL-3.0-only", url: licenseURL)
-                linkRow("MiningCattiva/x-spider", url: upstreamURL)
+            // 项目信息：开发 → 项目 → 上游 → 开源协议（自上而下）
+            VStack(alignment: .leading, spacing: 10) {
+                labeledRow(L("开发"), "LeeDespo", url: developerURL)
+                labeledRow(L("项目"), "LeeDespo/x-spider-mac", url: projectURL)
+                labeledRow(L("上游"), "MiningCattiva/x-spider", url: upstreamURL)
+                labeledRow(L("开源协议"), "GPL-3.0-only", url: licenseURL)
             }
             .font(.callout)
             .padding(.horizontal, 28)
@@ -41,13 +41,17 @@ struct AboutView: View {
         .navigationTitle(L("关于"))
     }
 
-    private func linkRow(_ label: String, url: URL) -> some View {
-        HStack(spacing: 6) {
+    private func labeledRow(_ title: String, _ label: String, url: URL) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
             Link(label, destination: url)
                 .foregroundStyle(Color.accentColor)
             Image(systemName: "arrow.up.right.square")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Spacer()
         }
     }
 }

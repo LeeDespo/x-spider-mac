@@ -54,6 +54,43 @@ actor TwitterAPI {
         xclidReady = true
     }
 
+    /// TweetDetail：返回 focal 推文 + conversation 时间线里的回复（媒体详情弹窗评论区用）
+    func getTweetWithReplies(id: String) async throws -> (focal: TwitterPost, replies: [TwitterPost]) {
+        try await ensureXClIdLoaded()
+        let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
+        let url = URL(string: "https://\(host)\(path)")!
+        let variables = Self.encodeJSON([
+            "focalTweetId": id,
+            "with_rux_injections": true,
+            "includePromotedContent": true,
+            "withCommunity": true,
+            "withQuickPromoteEligibilityTweetFields": true,
+            "withBirdwatchNotes": true,
+            "withVoice": true,
+            "withV2Timeline": true,
+        ] as [String: Any]) ?? "{}"
+
+        let resp = try await client.request(
+            url: url,
+            query: [
+                "variables": variables,
+                "features": Self.tweetDetailFeatures,
+            ],
+            headers: await commonHeaders(method: "GET", path: path)
+        )
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any] else {
+            throw TwitterAPIError.parseFailure
+        }
+        let instructions = Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]]
+            ?? (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? [])
+        let posts = Self.extractPostsFromTweetEntries(instructions)
+        guard let focal = posts.first(where: { $0.id == id }) ?? posts.first else {
+            throw TwitterAPIError.parseFailure
+        }
+        return (focal, posts.filter { $0.id != focal.id })
+    }
+
     // MARK: - 单条推文（TweetDetail，用于推文链接搜索）
 
     /// 上游 op XMOz5h24KAZ86qKffKTLdQ/TweetDetail。返回 focal 推文（含媒体）。

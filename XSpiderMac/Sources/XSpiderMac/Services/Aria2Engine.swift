@@ -11,15 +11,31 @@ final class Aria2Engine: @unchecked Sendable {
     private var outputBuffers: [String: String] = [:]
     private let lock = NSLock()
 
-    /// aria2c 可执行文件路径（bundle 内置优先，其次 homebrew）
+    /// aria2Next 可执行文件路径（bundle 内置优先，其次 homebrew；老 aria2c 兜底）
     static let binaryURL: URL? = {
-        let candidates: [URL] = [
-            Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/aria2c"),
-            URL(fileURLWithPath: "/opt/homebrew/bin/aria2c"),
-            URL(fileURLWithPath: "/usr/local/bin/aria2c"),
-        ]
+        let names = ["aria2next", "aria2c"]
+        var candidates: [URL] = []
+        for name in names {
+            candidates.append(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/\(name)"))
+            candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/\(name)"))
+            candidates.append(URL(fileURLWithPath: "/usr/local/bin/\(name)"))
+        }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }()
+
+    /// 当前二进制是否为 aria2Next（设置页显示连接状态子项用）
+    static var isNext: Bool {
+        guard let url = binaryURL else { return false }
+        return url.lastPathComponent.lowercased().contains("next")
+    }
+
+    /// 代理身份验证凭证（DownloadStore 在引擎设置时注入；底层锁保护并发安全）
+    private static let credLock = NSLock()
+    private nonisolated(unsafe) static var _proxyCredential: (username: String, password: String)?
+    static var proxyCredential: (username: String, password: String)? {
+        get { credLock.lock(); defer { credLock.unlock() }; return _proxyCredential }
+        set { credLock.lock(); _proxyCredential = newValue; credLock.unlock() }
+    }
 
     static var isAvailable: Bool { binaryURL != nil }
 
@@ -126,6 +142,13 @@ final class Aria2Engine: @unchecked Sendable {
         ]
         if let proxy, !proxy.isEmpty {
             p.arguments?.append("--all-proxy=\(proxy)")
+            // aria2Next 显式代理认证参数
+            if let cred = Self.proxyCredential, !cred.username.isEmpty {
+                p.arguments?.append("--all-proxy-user=\(cred.username)")
+            }
+            if let cred = Self.proxyCredential, !cred.password.isEmpty {
+                p.arguments?.append("--all-proxy-pass=\(cred.password)")
+            }
         }
 
         let pipe = Pipe()
@@ -153,7 +176,8 @@ final class Aria2Engine: @unchecked Sendable {
             self?.lock.unlock()
 
             let status = process.terminationStatus
-            if status == 0 && FileManager.default.fileExists(atPath: destPath) {
+            // exit 1 常见于极小文件：还没输出 summary 就下完了。只要目标文件存在就按成功收尾
+            if (status == 0 || status == 1) && FileManager.default.fileExists(atPath: destPath) {
                 self?.completionHandler?(gid, .success(URL(fileURLWithPath: destPath)))
             } else if status == 7 {
                 // aria2 exit 7 = 用户暂停（SIGINT 优雅退出,控制文件已保存）
@@ -174,6 +198,26 @@ final class Aria2Engine: @unchecked Sendable {
         } catch {
             completionHandler?(gid, .failure(EngineError.failed("aria2c 启动失败: \(error.localizedDescription)")))
         }
+    }
+
+    /// 重启内核：终止全部活跃 aria2Next 子进程并清空会话状态。
+    /// 下载中的任务由 DownloadStore 的错误回调重排队；下次任务启动时自动拉起新内核。
+    func restart() {
+        lock.lock()
+        let procs = Array(processes.values)
+        processes.removeAll()
+        outputBuffers.removeAll()
+        lock.unlock()
+        for p in procs {
+            if p.isRunning {
+                // 先 SIGINT(优雅暂停语义)兜底,600ms 后强制终止
+                kill(p.processIdentifier, SIGINT)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) {
+                    if p.isRunning { p.terminate() }
+                }
+            }
+        }
+        AppLogger.info("aria2Next 内核已重启", category: "DL", ["procs": "\(procs.count)"])
     }
 
     // MARK: - 进度解析

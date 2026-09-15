@@ -155,7 +155,7 @@ extension URLSessionConfiguration {
         }
         guard let url = URL(string: proxy.url), let host = url.host else { return }
         let port = url.port ?? 80
-        connectionProxyDictionary = [
+        var dict: [AnyHashable: Any] = [
             kCFNetworkProxiesHTTPEnable: true,
             kCFNetworkProxiesHTTPProxy: host,
             kCFNetworkProxiesHTTPPort: port,
@@ -163,6 +163,14 @@ extension URLSessionConfiguration {
             kCFNetworkProxiesHTTPSProxy: host,
             kCFNetworkProxiesHTTPSPort: port,
         ]
+        // 代理身份验证（可选； undocumented-ish 公开键 kCFProxyUsernameKey）
+        if let user = proxy.username, !user.isEmpty {
+            dict["kCFProxyUsernameKey" as CFString] = user
+            if let pass = proxy.password, !pass.isEmpty {
+                dict["kCFProxyPasswordKey" as CFString] = pass
+            }
+        }
+        connectionProxyDictionary = dict as? [String: Any]
     }
 }
 

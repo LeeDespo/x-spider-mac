@@ -160,10 +160,8 @@ final class DownloadStore {
         let templateData = FileNameTemplateData(post: post, media: media)
         let dir = targetDir(for: post)
         var fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
-        // 仅记录文件模式追加媒体 ID 锁定段（保证同名歧义下唯一；按文件名模式不加）
-        if settings.download.sameFileSkip, settings.sameFileCheckModeValue == .recordFile {
-            fileName = lockedFileName(fileName, mediaId: media.id)
-        }
+        // 记录文件模式判定靠记录文件本身，文件名不追加媒体 ID 锁定段（同名场景由
+        // uniquedFileName 的序号消解兜底，不污染用户模板）
 
         // sameFileSkip：按当前判定依据决定跳过（用解析后的原名判定）
         if settings.download.sameFileSkip {
@@ -323,16 +321,6 @@ final class DownloadStore {
         }
     }
 
-    /// recordFile 模式下给文件名追加媒体 ID 锁定段（模板已有 %MEDIA_ID% 时保持原样）
-    private func lockedFileName(_ fileName: String, mediaId: String?) -> String {
-        guard settings.download.sameFileSkip,
-              !templateHasMediaId(),
-              let mediaId, !mediaId.isEmpty else { return fileName }
-        let stem = (fileName as NSString).deletingPathExtension
-        let ext = (fileName as NSString).pathExtension
-        let locked = ext.isEmpty ? "\(stem) [\(mediaId)]" : "\(stem) [\(mediaId)].\(ext)"
-        return locked
-    }
 
     // MARK: - 历史持久化（重启后恢复记录；进行中的任务恢复为等待态，用户手动继续）
 
@@ -423,6 +411,13 @@ final class DownloadStore {
         ])
 
         if SettingsStore.shared.settings.engine == .aria2, Aria2Engine.isAvailable {
+            // 手动代理(非系统)时的身份验证凭证注入
+            let proxy = settings.proxy
+            if !proxy.useSystem, proxy.enable, let user = proxy.username, !user.isEmpty {
+                Aria2Engine.proxyCredential = (user, proxy.password ?? "")
+            } else {
+                Aria2Engine.proxyCredential = nil
+            }
             aria2.progressHandler = { [weak self] gid, done, total in
                 Task { @MainActor in
                     self?.update(gid: gid) {

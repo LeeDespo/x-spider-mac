@@ -72,12 +72,32 @@ struct XSpiderMacApp: App {
                 ImageCache.shared.clearAll()
             }
         }
-        } // commands
+        // 应用菜单：功能介绍 + 关于卡片(替换默认 About 链接)
+            CommandGroup(replacing: .appInfo) {
+                Button(L("关于 XSpiderMac")) {
+                    NotificationCenter.default.post(name: .openAboutTab, object: nil)
+                }
+                Divider()
+                Button(L("功能介绍")) {
+                    NotificationCenter.default.post(name: .showFeatureIntro, object: nil)
+                }
+            }
+
+        // 移除系统默认注入的菜单项（设置/服务/隐藏/窗口字母排序/编辑/新窗口等非用户指定项）
+            CommandGroup(replacing: .appVisibility) {}
+            CommandGroup(replacing: .appTermination) {}
+            CommandGroup(replacing: .systemServices) {}
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .windowArrangement) {}
+            CommandGroup(replacing: .windowList) {}
+                                            } // commands
     }
 }
 
 /// 菜单栏动作通知
 extension Notification.Name {
+    static let showFeatureIntro = Notification.Name("showFeatureIntro")
+    static let openAboutTab = Notification.Name("openAboutTab")
     static let openDownloadsTab = Notification.Name("menu.openDownloadsTab")
     static let focusSearchField = Notification.Name("menu.focusSearchField")
     static let openCookieImport = Notification.Name("menu.openCookieImport")

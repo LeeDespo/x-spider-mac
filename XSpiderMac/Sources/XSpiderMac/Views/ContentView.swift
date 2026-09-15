@@ -4,6 +4,7 @@ struct ContentView: View {
     @State private var selection: NavigationItem? = .home
     @State private var appStore = AppStore.shared
     @State private var showCookieSheet = false
+    @State private var showFeatureIntro = false
 
     @State private var settingsStore = SettingsStore.shared
 
@@ -47,6 +48,22 @@ struct ContentView: View {
         .transparentWindowBackground()
         .sheet(isPresented: $showCookieSheet) {
             CookieImportView(isPresented: $showCookieSheet)
+        }
+        .sheet(isPresented: $showFeatureIntro) {
+            FeatureIntroSheet()
+        }
+        .onAppear {
+            // 首次打开应用 → 功能介绍
+            if !UserDefaults.standard.bool(forKey: "app.welcomeShown") {
+                showFeatureIntro = true
+                UserDefaults.standard.set(true, forKey: "app.welcomeShown")
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showFeatureIntro)) { _ in
+            showFeatureIntro = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openAboutTab)) { _ in
+            selection = .about
         }
         .onReceive(NotificationCenter.default.publisher(for: .openDownloadsTab)) { _ in
             selection = .downloads

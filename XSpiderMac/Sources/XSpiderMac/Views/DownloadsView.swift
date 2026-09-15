@@ -213,13 +213,27 @@ struct DownloadsView: View {
                 store.removeVisibleRecords(statuses: currentStatuses)
             }
             Button(L("删除记录和源文件（含未完成临时文件）"), role: .destructive) {
+                pendingFilesDelete = true
+            }
+            Button(L("取消"), role: .cancel) {}
+        }
+        // 二次确认：记录文件不会随源文件删除而回改,可能影响后续判定
+        .confirmationDialog(
+            L("确认删除源文件？"),
+            isPresented: $pendingFilesDelete,
+            titleVisibility: .visible
+        ) {
+            Button(L("仍要删除"), role: .destructive) {
                 store.removeVisibleRecords(statuses: currentStatuses, alsoDeleteFiles: true)
             }
             Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(L("删除源文件后，下载/同步记录文件不会自动更新，可能影响后续的重复判定。是否继续？"))
         }
     }
 
     @State private var showDeleteConfirm = false
+    @State private var pendingFilesDelete = false
 }
 
 // MARK: - 用户筛选小窗（头像 + 加粗昵称 + 用户名，点击切换筛选）
