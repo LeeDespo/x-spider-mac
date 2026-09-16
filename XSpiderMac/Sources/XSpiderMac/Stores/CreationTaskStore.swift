@@ -123,13 +123,13 @@ final class CreationTaskStore {
                 let pageIds = posts.map(\.id)
                 if pageIds.isEmpty {
                     dupPageStreak += 1
-                    if dupPageStreak >= 2 { break }
-                } else if seenPostIds.isDisjoint(with: pageIds) {
+                } else if pageIds.allSatisfy({ seenPostIds.contains($0) }) {
+                    // 整页全是本次扫描已见过的推文(X 深翻重复发牌,cursor 仍前进)
                     dupPageStreak += 1
-                    if dupPageStreak >= 2 { break }
                 } else {
                     dupPageStreak = 0
                 }
+                if dupPageStreak >= 2 { break }
                 seenPostIds.formUnion(pageIds)
                 if let lastPost = posts.last, let createdAt = lastPost.createdAt {
                     now = createdAt
