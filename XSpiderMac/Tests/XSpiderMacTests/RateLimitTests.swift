@@ -275,39 +275,135 @@ final class RateLimitTests: XCTestCase {
     @MainActor
     func testRateLimitedSurvivesUnrelatedSuccess() {
         let store = AccountStatusStore.shared
+        store.reset()
         store.noteRateLimited(until: Date().addingTimeInterval(300))
-        XCTAssertEqual(store.badgeText, L("429 限流"))
+        XCTAssertEqual(store.statusText, L("429 限流"))
 
         // 无关请求成功：限流未到期，标签必须保留
         store.noteSuccess()
-        XCTAssertEqual(store.badgeText, L("429 限流"), "未到恢复期限不应被成功响应清除")
+        XCTAssertEqual(store.statusText, L("429 限流"), "未到恢复期限不应被成功响应清除")
     }
 
-    /// 限流到期后标签消失（到期判定 + 一次性刷新）
+    /// 限流到期后状态恢复（确定性：直接构造已过期的截止时间，不依赖真实时钟 sleep）。
+    /// 注意：测试宿主是应用本体，运行时会真实发请求并写单例状态，
+    /// 因此这里不做等待，避免被应用自身的网络活动污染。
     @MainActor
     func testRateLimitClearsAfterDeadline() {
         let store = AccountStatusStore.shared
-        // 已过期的截止时间：noteRateLimited 会用最小保留窗口兜底，因此先设再刷新验证
-        store.noteRateLimited(until: Date().addingTimeInterval(0.05))
-        XCTAssertEqual(store.badgeText, L("429 限流"))
-
-        let exp = expectation(description: "wait for expiry")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { exp.fulfill() }
-        wait(for: [exp], timeout: 3.0)
-
+        store.reset()
+        store.noteRateLimited(until: Date().addingTimeInterval(-1)) // 已过期
         XCTAssertNil(store.rateLimitDeadline, "过期后不应再有待到期状态")
+        XCTAssertEqual(store.effectiveHealth, .normal, "过期后有效状态应为正常")
         store.refreshExpiry()
-        XCTAssertNil(store.badgeText, "到期后标签应消失")
+        XCTAssertEqual(store.effectiveHealth, .normal, "到期后状态应恢复")
     }
 
     /// 登录失效可被下一次成功复位（与限流的语义不同）
     @MainActor
     func testUnauthenticatedClearsOnSuccess() {
         let store = AccountStatusStore.shared
+        store.reset()
         store.noteUnauthenticated(status: 401)
-        XCTAssertEqual(store.badgeText, L("登录失效"))
+        XCTAssertEqual(store.statusText, L("登录失效"))
         store.noteSuccess()
-        XCTAssertNil(store.badgeText, "登录失效应可被成功请求复位")
+        XCTAssertEqual(store.effectiveHealth, .normal, "登录失效应可被成功请求复位")
+    }
+
+    // MARK: - 网络异常分类（全部被动推导，无需额外请求）
+
+    /// 超时与"连不上"分开：前者通常是代理不稳，后者可能是离线/DNS，处置提示不同
+    @MainActor
+    func testTimeoutClassifiedSeparately() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteNetworkFailure(URLError(.timedOut))
+        XCTAssertEqual(store.effectiveHealth, .timedOut)
+        XCTAssertEqual(store.statusText, L("连接 X 超时"))
+        XCTAssertEqual(store.severity, .warning)
+    }
+
+    @MainActor
+    func testOfflineClassification() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        for code in [URLError.Code.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost] {
+            store.noteSuccess()
+            store.noteNetworkFailure(URLError(code))
+            XCTAssertEqual(store.effectiveHealth, .offline, "\(code) 应归为无法连接")
+        }
+        XCTAssertEqual(store.statusText, L("无法连接 X"))
+    }
+
+    /// 服务端异常保留状态码，便于用户判断
+    @MainActor
+    func testServerErrorKeepsCode() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteServerError(status: 503)
+        XCTAssertEqual(store.effectiveHealth, .serverError(503))
+        XCTAssertTrue(store.statusText.contains("503"))
+    }
+
+    /// 网络类异常可被下一次成功复位（与限流不同：不需要等到期）
+    @MainActor
+    func testNetworkErrorClearsOnSuccess() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteNetworkFailure(URLError(.timedOut))
+        store.noteSuccess()
+        XCTAssertEqual(store.effectiveHealth, .normal)
+    }
+
+    /// 状态灯配色语义：正常绿、限流红、其余橙
+    @MainActor
+    func testSeverityMapping() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        XCTAssertEqual(store.severity, .ok)
+        store.noteRateLimited(until: Date().addingTimeInterval(300))
+        XCTAssertEqual(store.severity, .critical)
+        store.noteSuccess() // 限流未到期，不该被清
+        XCTAssertEqual(store.severity, .critical)
+        store.noteServerError(status: 500)
+        XCTAssertEqual(store.severity, .warning)
+    }
+
+    /// 熔断开启时文案带倒计时（需求：429 限流，熔断倒计时 n 秒）
+    @MainActor
+    func testRateLimitTextShowsCountdownWhenBreakerOpen() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteRateLimited(until: Date().addingTimeInterval(300))
+        store.breakerOpen = false
+        XCTAssertEqual(store.statusText, L("429 限流"))
+
+        store.breakerOpen = true
+        XCTAssertTrue(store.statusText.contains("429"), "熔断中应显示倒计时文案：\(store.statusText)")
+        XCTAssertTrue(store.statusText.contains("300") || store.statusText.contains("299"),
+                      "倒计时应反映剩余秒数：\(store.statusText)")
+        XCTAssertFalse(store.statusText.contains("%d"), "占位符必须被替换：\(store.statusText)")
+    }
+
+    // MARK: - 「重试」按钮：结束熔断 + 真实探测
+
+    /// 点重试必须**立即结束熔断**（用户明确要求"别再拦我"），不等倒计时。
+    /// 这里只验证熔断被清空——探测本身要真实联网，不适合放进单测。
+    func testRetryClearsBreaker() async throws {
+        let gate = RequestGate()
+        await gate.update(config: .init(
+            enabled: true, requestsPerWindow: 1000, windowSeconds: 1,
+            serialize: false, breakerEnabled: true, cooldownSeconds: 3600
+        ))
+        await gate.noteRateLimited(kind: .timeline, retryAfter: nil)
+        var open = await gate.isBreakerOpen()
+        XCTAssertTrue(open, "前置条件：应处于熔断")
+
+        await gate.resetBreakers()
+        open = await gate.isBreakerOpen()
+        XCTAssertFalse(open, "重试后熔断应被立即结束")
+        // 结束后同类请求应能通行
+        try await gate.acquire(kind: .timeline)
+        await gate.release(kind: .timeline)
     }
 
     // MARK: - 令牌桶初始化

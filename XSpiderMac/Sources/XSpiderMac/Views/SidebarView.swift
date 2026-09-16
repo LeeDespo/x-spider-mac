@@ -29,7 +29,10 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
 
-            Spacer()
+            Spacer(minLength: 0)
+
+            // 边栏最底端：账号状态栏（状态灯 + 文案 + 重试）
+            accountStatusBar
         }
         .frame(minWidth: 200, idealWidth: 220)
         .background(.clear)
@@ -40,6 +43,90 @@ struct SidebarView: View {
             FollowingListSheet()
         }
 
+    }
+
+    // MARK: - 账号状态栏（边栏最底端）
+
+    /// 状态灯 + 文案 + 「重试」按钮。
+    /// 状态是**被动**采集的（由真实请求遇阻推导），只有点重试才主动探测一次。
+    private var accountStatusBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .padding(.horizontal, 12)
+
+            HStack(spacing: 8) {
+                statusLamp
+
+                statusLabel
+
+                Spacer(minLength: 4)
+
+                Button {
+                    Task { await statusStore.probeAndRecover() }
+                } label: {
+                    if statusStore.probing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(statusStore.probing)
+                .help(L("重试：立即探测与 X 的连接；若正在熔断则同时结束熔断"))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(.thinMaterial)
+    }
+
+    /// 状态文案。熔断中需要每秒刷新倒计时——用 TimelineView **只驱动这一个文本**，
+    /// 不重绘整棵侧边栏；非熔断态走普通 Text，零额外开销。
+    @ViewBuilder
+    private var statusLabel: some View {
+        let base = Text(statusStore.statusText)
+            .font(.caption)
+            .foregroundStyle(statusStore.severity == .ok ? .secondary : .primary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(statusStore.helpText)
+
+        if statusStore.breakerOpen, statusStore.rateLimitDeadline != nil {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                base
+            }
+            // 倒计时归零后把状态真正落回正常（一次性，不是轮询）
+            .task(id: statusStore.rateLimitDeadline) {
+                guard let deadline = statusStore.rateLimitDeadline else { return }
+                let wait = deadline.timeIntervalSinceNow
+                guard wait > 0 else { statusStore.refreshExpiry(); return }
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 200_000_000)
+                guard !Task.isCancelled else { return }
+                statusStore.refreshExpiry()
+            }
+        } else {
+            base
+        }
+    }
+
+    /// 状态灯：绿灯正常 / 红灯限流 / 橙灯其它异常
+    private var statusLamp: some View {
+        Circle()
+            .fill(lampColor)
+            .frame(width: 8, height: 8)
+            .overlay {
+                Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1)
+            }
+    }
+
+    private var lampColor: Color {
+        switch statusStore.severity {
+        case .ok: return .green
+        case .critical: return .red
+        case .warning: return .orange
+        }
     }
 
     private func navTitle(_ item: NavigationItem) -> String {
@@ -58,31 +145,6 @@ struct SidebarView: View {
     @State private var showFollowingList = false
     @State private var switchingAccount: SavedAccount?
     @State private var statusStore = AccountStatusStore.shared
-
-    /// 账号/限流状态标签。被动采集：只在操作遇阻时出现，正常态整个视图不渲染。
-    private func statusBadge(_ text: String) -> some View {
-        let tint: Color = {
-            switch statusStore.severity {
-            case .critical: return .red
-            case .warning: return .orange
-            case .muted: return .secondary
-            case .normal: return .secondary
-            }
-        }()
-        return Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(tint.opacity(0.14), in: Capsule())
-            .help(statusStore.helpText)
-            // 登录失效 → 点击直接去导入 Cookie
-            .onTapGesture {
-                if statusStore.suggestsReLogin {
-                    NotificationCenter.default.post(name: .openCookieImport, object: nil)
-                }
-            }
-    }
 
     private var accountCard: some View {
         HStack(spacing: 12) {
@@ -108,20 +170,6 @@ struct SidebarView: View {
                     Text(L("点击导入 Cookie"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                // 被动状态标签：仅在真实操作遇阻时出现（正常态不渲染 → 无布局开销）
-                if let badge = statusStore.badgeText {
-                    statusBadge(badge)
-                        // 限流有恢复期限：安排**一次**到期刷新（不是轮询）。
-                        // 没有它，期间无新请求时标签会一直留着不消失。
-                        .task(id: statusStore.rateLimitDeadline) {
-                            guard let deadline = statusStore.rateLimitDeadline else { return }
-                            let wait = deadline.timeIntervalSinceNow
-                            guard wait > 0 else { return }
-                            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 200_000_000)
-                            guard !Task.isCancelled else { return }
-                            statusStore.refreshExpiry()
-                        }
                 }
             }
 

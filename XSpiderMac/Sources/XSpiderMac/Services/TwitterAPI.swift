@@ -137,15 +137,28 @@ actor TwitterAPI {
 
     static let tweetDetailFeatures = #"{"articles_preview_enabled":false,"c9s_tweet_anatomy_moderator_badge_enabled":true,"communities_web_enable_tweet_community_results_fetch":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"longform_notetweets_consumption_enabled":true,"longform_notetweets_inline_media_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"responsive_web_enhance_cards_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":false,"responsive_web_media_download_video_enabled":false,"responsive_web_profile_redirect_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"rweb_tipjar_consumption_enabled":true,"rweb_video_timestamps_enabled":true,"standardized_nudges_misinfo":true,"tweet_awards_web_tipping_enabled":false,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"tweet_with_visibility_results_prefer_gql_media_interstitial_enabled":false,"tweetypie_unmention_optimization_enabled":true,"verified_phone_label_enabled":false,"view_counts_everywhere_api_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"premium_content_api_read_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":false,"responsive_web_grok_share_attachment_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":false,"responsive_web_grok_image_annotation_enabled":false,"responsive_web_grok_analysis_button_from_backend":false,"responsive_web_jetfuel_frame":false,"rweb_video_screen_enabled":true,"responsive_web_grok_show_grok_translated_post":true}"#
 
+    // MARK: - 连接探测（仅由用户点「重试」触发，不做轮询）
+
+    /// 探测与 X 的连通性：抓一次首页 HTML 并解析账号信息。
+    /// 选它的原因：这是**已有的登录验证请求**（`getAccountInfo`），不额外引入端点，
+    /// 一次请求即可同时覆盖"能否连通"与"Cookie 是否仍有效"。
+    /// 快速失败（2 次尝试 / 15s 超时），避免按钮长时间转圈。
+    func probeConnection() async throws -> TwitterAccountInfo {
+        try await getAccountInfo(fast: true)
+    }
+
     // MARK: - 账户信息（登录验证）
 
     /// 抓取 x.com 首页 HTML，正则提取 screen_name 与头像。
     /// 与上游一致：cookie 无效时页面不含这些字段 → 抛 missingScreenName。
-    func getAccountInfo(cookieStringOverride: String? = nil) async throws -> TwitterAccountInfo {
+    /// - Parameter fast: true 时单次 15s 超时、最多 2 次（手动探测用，快速给出结论）
+    func getAccountInfo(cookieStringOverride: String? = nil, fast: Bool = false) async throws -> TwitterAccountInfo {
         let url = URL(string: "https://\(host)")!
         var headers = await commonHeaders(withCredentials: false)
         if let cookie = cookieStringOverride { headers["Cookie"] = cookie }
-        let resp = try await client.request(url: url, headers: headers)
+        let resp = try await (fast
+            ? client.requestFast(url: url, headers: headers, bypassGate: true)
+            : client.request(url: url, headers: headers))
         let html = resp.text()
         guard let screenName = extract(pattern: #""screen_name":"(.*?)""#, from: html) else {
             throw TwitterAPIError.missingScreenName

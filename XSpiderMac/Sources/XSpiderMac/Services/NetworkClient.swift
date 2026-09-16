@@ -26,11 +26,13 @@ actor NetworkClient {
         url: URL,
         query: [String: String] = [:],
         headers: [String: String] = [:],
-        body: Data? = nil
+        body: Data? = nil,
+        bypassGate: Bool = false
     ) async throws -> NetworkResponse {
         try await request(method: method, url: url, query: query,
                           headers: headers, body: body,
-                          maxAttempts: 2, perAttemptTimeout: 15)
+                          maxAttempts: 2, perAttemptTimeout: 15,
+                          bypassGate: bypassGate)
     }
 
     /// 上游 network.ts request：16 次重试、指数退避（100ms 起、16s 封顶）。
@@ -46,7 +48,8 @@ actor NetworkClient {
         headers: [String: String] = [:],
         body: Data? = nil,
         maxAttempts: Int? = nil,
-        perAttemptTimeout: TimeInterval? = nil
+        perAttemptTimeout: TimeInterval? = nil,
+        bypassGate: Bool = false
     ) async throws -> NetworkResponse {
         let attemptLimit = maxAttempts ?? maxRetryCount
         var remainingRetryCount = attemptLimit
@@ -62,7 +65,9 @@ actor NetworkClient {
             do {
                 // 闸门（令牌桶 + 同端点串行 + 熔断短路）。熔断/取消异常直接上抛，
                 // 不进入重试，避免"越限越试"。
-                if !acquired {
+                // bypassGate：仅用于用户主动点的「重试」探测——那是明确的用户意图，
+                // 不该被限速排队拖住，否则按钮要等一个时间窗才有反应。
+                if !acquired, !bypassGate {
                     try await Self.gate.acquire(kind: kind)
                     acquired = true
                 }
@@ -133,7 +138,7 @@ actor NetworkClient {
                 }
                 lastError = error
                 await MainActor.run {
-                    AccountStatusStore.shared.noteNetworkError(error.localizedDescription)
+                    AccountStatusStore.shared.noteNetworkFailure(error)
                 }
                 AppLogger.warn("请求失败将重试", category: "NET", [
                     "method": method,
