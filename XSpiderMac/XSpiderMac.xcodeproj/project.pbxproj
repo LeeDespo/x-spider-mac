@@ -25,6 +25,7 @@
 		4542D74E1CC9876031503518 /* FollowingListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61396F40ACC197957633E4F6 /* FollowingListSheet.swift */; };
 		4D84E5E91E214D3D3D8C8AFD /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4B91779185027CBBA49B18 /* L10n.swift */; };
 		5A10313AC85910D71F6B950B /* String+Path.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C71F4FE1A0AD871AA29345 /* String+Path.swift */; };
+		604794497A05F6F6BB8A4027 /* DetailOverlayCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06ABBB28B693BF9F78A8B01C /* DetailOverlayCenter.swift */; };
 		642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */; };
 		695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C93E6E46B4E05127C178B1C /* NetworkClient.swift */; };
 		6A781AF2E19543EB6B368AA4 /* L10nTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F52E6EBC6E44EE82061C8673 /* L10nTests.swift */; };
@@ -66,6 +67,7 @@
 		EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD11699500B1791EFEAA1F95 /* CookieImportView.swift */; };
 		F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C685570A33E16C638B5293CD /* FollowButton.swift */; };
 		F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D769C342F080744CE4324F /* FloatingDownloadBar.swift */; };
+		FB7B6DC7ACB1882C83BEE29E /* ScrollWheelCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */; };
 		FDB03CDFF7F2C83FA65C4297 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */; };
 /* End PBXBuildFile section */
 
@@ -80,6 +82,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		06ABBB28B693BF9F78A8B01C /* DetailOverlayCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailOverlayCenter.swift; sourceTree = "<group>"; };
 		07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacApp.swift; sourceTree = "<group>"; };
 		0C93E6E46B4E05127C178B1C /* NetworkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkClient.swift; sourceTree = "<group>"; };
 		0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAPI.swift; sourceTree = "<group>"; };
@@ -93,6 +96,7 @@
 		29B9F72E780FE56434B59E8A /* HomeTimelineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineStore.swift; sourceTree = "<group>"; };
 		2B628263D9561601F809C4F8 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		2C67A4155E3A3ADB82010417 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollWheelCatcher.swift; sourceTree = "<group>"; };
 		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
 		491496E19FE861DE65FB5614 /* WindowConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowConfig.swift; sourceTree = "<group>"; };
 		49F384578208B4323FB9E377 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -192,6 +196,7 @@
 				FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */,
 				CF89D7F6225AE828A18C02A6 /* MediaDetailView.swift */,
 				E70DBBE98EADA3D2FD08805F /* NumberStepperField.swift */,
+				3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */,
 				FD92DA949C8B8D465ABE0C09 /* SearchHistoryPopover.swift */,
 				9584DB531B7E025682E82DD2 /* SelectiveDownloadSheet.swift */,
 				9400B7A22AAE4F79E7F30449 /* SettingsView.swift */,
@@ -216,6 +221,7 @@
 				82F18809605044A1B3F2B7A5 /* .gitkeep */,
 				90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */,
 				CC206AB57040EA940F7C8BC6 /* AppLogger.swift */,
+				06ABBB28B693BF9F78A8B01C /* DetailOverlayCenter.swift */,
 				69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */,
 				9A721BC7BC346461F850A948 /* GlassCompat.swift */,
 				72BF360634AFA8E3C4715248 /* ImageCache.swift */,
@@ -433,6 +439,7 @@
 				0F47BB2443DF850442B690E6 /* CookieLoginSheet.swift in Sources */,
 				AF65BEB030CCF1A1B6A8CCA8 /* CreationTask.swift in Sources */,
 				642C0FF54CB497B7DDD35676 /* CreationTaskStore.swift in Sources */,
+				604794497A05F6F6BB8A4027 /* DetailOverlayCenter.swift in Sources */,
 				7F2FF43F7FDAF1C56D8BAAFD /* DockSyncLayout.swift in Sources */,
 				B6F79EF95045436E10971ED0 /* DownloadFilter.swift in Sources */,
 				16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */,
@@ -457,6 +464,7 @@
 				695B9E625A4396D6D20484FC /* NetworkClient.swift in Sources */,
 				E950C166A4EFDCD28FA5B3C4 /* NumberStepperField.swift in Sources */,
 				BF54EF745C13947AC292D2CB /* SavedAccount.swift in Sources */,
+				FB7B6DC7ACB1882C83BEE29E /* ScrollWheelCatcher.swift in Sources */,
 				4290761DA5D4747D2608F590 /* SearchHistoryItem.swift in Sources */,
 				EB90013BFE5E8249FE9A8F85 /* SearchHistoryPopover.swift in Sources */,
 				157A8BC0BB28D7BB7F4A1762 /* SelectiveDownloadSheet.swift in Sources */,

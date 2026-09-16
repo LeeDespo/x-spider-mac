@@ -59,6 +59,11 @@ struct HomeView: View {
             }
         }
         .navigationTitle(L("主页"))
+        .onReceive(NotificationCenter.default.publisher(for: .homeSearchUser)) { note in
+            if let sn = note.object as? String {
+                Task { await store.loadUser(screenName: sn) }
+            }
+        }
         .frame(minWidth: 600)
 
         .overlay(alignment: .bottom) {
@@ -484,12 +489,7 @@ struct MediaGridItem: View {
                 Image(systemName: media.type == .photo ? "photo" : "video.fill")
                     .font(.title)
                     .foregroundStyle(.secondary)
-                    .onReceive(NotificationCenter.default.publisher(for: .homeSearchUser)) { note in
-            if let sn = note.object as? String {
-                Task { await store.loadUser(screenName: sn) }
-            }
-        }
-        .task { await loadThumbnail() }
+                    .task { await loadThumbnail() }
             }
 
             // 视频时长角标（上游 dayjs 毫秒格式化）
