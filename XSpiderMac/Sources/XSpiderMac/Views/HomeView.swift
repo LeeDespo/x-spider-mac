@@ -12,8 +12,6 @@ struct HomeView: View {
     @State private var creationStore = CreationTaskStore.shared
     @State private var creationTaskCreated = false
     /// 双击媒体 → 推文详情弹窗
-    @State private var detailPost: TwitterPost?
-    @State private var detailMediaIndex = 0
     /// 选择性下载模式（媒体卡缩小变暗表示"后退",点击选中恢复）
     @State private var selectiveMode = false
     /// 已勾选待下载的媒体 (post.id, media.id)
@@ -62,18 +60,7 @@ struct HomeView: View {
         }
         .navigationTitle(L("主页"))
         .frame(minWidth: 600)
-        .overlay {
-            if let post = detailPost {
-                // 全窗浮层(非 sheet):三卡浮于应用内容之上;点击任何非卡区退出;ESC 退出
-                MediaDetailView(post: post, initialMediaIndex: detailMediaIndex) { screenName in
-                    detailPost = nil
-                    Task { await store.loadUser(screenName: screenName) }
-                }
-                .transition(.opacity)
-                .zIndex(100)
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: detailPost != nil)
+
         .overlay(alignment: .bottom) {
             if selectiveMode {
                 // 选择模式操作条:撤销 + 全部下载(短条居中)
@@ -129,8 +116,7 @@ struct HomeView: View {
         if let tweetID = HomepageStore.extractTweetID(from: text) {
             Task {
                 if let post = await store.fetchTweet(tweetID: tweetID) {
-                    detailMediaIndex = 0
-                    detailPost = post
+                    DetailOverlayCenter.shared.open(post)
                 }
             }
         } else {
@@ -391,7 +377,7 @@ struct HomeView: View {
                     LazyVStack(spacing: 12) {
                         ForEach(store.postList) { post in
                             TimelinePostCard(post: post) {
-                                detailPost = post
+                                DetailOverlayCenter.shared.open(post)
                             }
                         }
                     }
@@ -412,8 +398,7 @@ struct HomeView: View {
                                               else { selectedMediaKeys.insert(k) }
                                           },
                                           onDoubleClick: {
-                                              detailPost = item.post
-                                              detailMediaIndex = item.index - 1
+                                              DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
                                           })
                         }
                     }
@@ -499,7 +484,12 @@ struct MediaGridItem: View {
                 Image(systemName: media.type == .photo ? "photo" : "video.fill")
                     .font(.title)
                     .foregroundStyle(.secondary)
-                    .task { await loadThumbnail() }
+                    .onReceive(NotificationCenter.default.publisher(for: .homeSearchUser)) { note in
+            if let sn = note.object as? String {
+                Task { await store.loadUser(screenName: sn) }
+            }
+        }
+        .task { await loadThumbnail() }
             }
 
             // 视频时长角标（上游 dayjs 毫秒格式化）

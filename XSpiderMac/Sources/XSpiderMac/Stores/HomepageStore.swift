@@ -204,8 +204,8 @@ final class HomepageStore {
         while postListCursor != nil, !postListLoading, loaderVisible {
             let countBefore = postList.count
             await loadMorePostList()
-            // 一轮下来没有任何增长且 cursor 未变 → 服务端卡死,停止避免死循环
-            if postList.count == countBefore { break }
+            // 一轮下来没有任何增长 → 服务端已无新内容,明确到底
+            if postList.count == countBefore { postListCursor = nil; break }
             // 节流:页与页之间留间隔,避免触发 X 限流(429)
             if postListCursor != nil {
                 try? await Task.sleep(nanoseconds: 400_000_000)
@@ -234,7 +234,13 @@ final class HomepageStore {
             }
             // 早期版本语义:直接追加,cursor 交给服务端;nil = 到底。
             postList.append(contentsOf: posts)
-            postListCursor = nextCursor
+            if posts.isEmpty {
+                // X 深翻常见:内容空但 cursor 仍非 nil → 明确到底,清 cursor 防无限触发
+                postListCursor = nil
+                consecutiveEmptyPages = 0
+            } else {
+                postListCursor = nextCursor
+            }
         } catch {
             AppLogger.warn("媒体时间线翻页失败", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?", "error": error.localizedDescription,

@@ -39,6 +39,31 @@ struct ContentView: View {
                 .padding(20)
         }
         .animation(.spring(duration: 0.35), value: selection)
+        .overlay {
+            // 推文详情全窗浮层:盖住边栏+内容;点击任何非卡区退出;ESC 退出
+            if let post = DetailOverlayCenter.shared.post {
+                MediaDetailView(
+                    post: post,
+                    initialMediaIndex: DetailOverlayCenter.shared.initialMediaIndex,
+                    onSearchUser: { sn in
+                        DetailOverlayCenter.shared.close()
+                        DetailOverlayCenter.shared.onSearchUser?(sn)
+                    },
+                    onClose: { DetailOverlayCenter.shared.close() }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .zIndex(200)
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: DetailOverlayCenter.shared.post != nil)
+        .onAppear {
+            DetailOverlayCenter.shared.onSearchUser = { sn in
+                selection = .home
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    NotificationCenter.default.post(name: .homeSearchUser, object: sn)
+                }
+            }
+        }
         .background {
             // 全出血铺满整窗（含滚动条轨道与底缘）：不留缝隙，避免露出透明窗口底。
             // 折射由玻璃层在全窗口表面呈现；滑块只调材质浓度
@@ -105,6 +130,8 @@ struct ContentView: View {
 extension Notification.Name {
     /// 主页搜索框聚焦（菜单「搜索用户或推文」）
     static let homeFocusSearch = Notification.Name("menu.homeFocusSearch")
+    /// 详情卡头像点击 → 主页搜索该用户(payload: screenName)
+    static let homeSearchUser = Notification.Name("home.searchUser")
 }
 
 #Preview {

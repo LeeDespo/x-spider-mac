@@ -6,7 +6,6 @@ struct HomeTimelineView: View {
     /// 点击头像 → 搜索该用户(HomeView 注入)
     var onAvatarTap: ((String) -> Void)? = nil
     @State private var store = HomeTimelineStore.shared
-    @State private var detailPost: TwitterPost?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,7 +54,7 @@ struct HomeTimelineView: View {
                     LazyVStack(spacing: 12) {
                         ForEach(store.visiblePosts) { post in
                             TimelinePostCard(post: post, onTap: {
-                                detailPost = post
+                                DetailOverlayCenter.shared.open(post)
                             }, onAvatar: {
                                 onAvatarTap?(post.user.screenName)
                             }, showFollowButton: true)
@@ -74,17 +73,6 @@ struct HomeTimelineView: View {
                 }
             }
         }
-        .overlay {
-            if let post = detailPost {
-                MediaDetailView(post: post) { screenName in
-                    detailPost = nil
-                    onAvatarTap?(screenName)
-                }
-                .transition(.opacity)
-                .zIndex(100)
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: detailPost != nil)
         .task {
             if store.posts.isEmpty { await store.initialLoad() }
         }

@@ -23,6 +23,7 @@ struct MediaDetailView: View {
     @State private var bookmarked = false
     @State private var actionMessage: String?
     @State private var repliesError: String?
+    @State private var showCapsule = false
     @Environment(\.dismiss) private var dismiss
 
     init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil, onClose: (() -> Void)? = nil) {
@@ -56,6 +57,12 @@ struct MediaDetailView: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            // 全窗背景模糊:毛玻璃虚化底层内容,三卡更聚焦
+            Rectangle().fill(.ultraThinMaterial)
+                .overlay(Color.primary.opacity(0.04))
+                .ignoresSafeArea()
+        )
         .contentShape(Rectangle())
         .onTapGesture { close() }
         .background {
@@ -76,6 +83,9 @@ struct MediaDetailView: View {
         }
         .task {
             await loadReplies()
+            // 下载胶囊延迟浮现(打开详情后的入场动画)
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            showCapsule = true
         }
     }
 
@@ -122,6 +132,16 @@ struct MediaDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 18))
             // 左右滑手势:挂在媒体区容器(simultaneous 不与播放器互斥;drag 阈值 40)
             .contentShape(Rectangle())
+            .background {
+                // 触控板双指左右滑切媒体(不与纵向滚动冲突,仅水平分量)
+                ScrollWheelCatcher { direction in
+                    let next = mediaIndex + direction
+                    if medias.indices.contains(next) {
+                        withAnimation(.spring(duration: 0.35)) { mediaIndex = next }
+                    }
+                }
+                .allowsHitTesting(false)  // 不吞点击,只收 scrollWheel
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 40)
                     .onEnded { value in
@@ -133,12 +153,17 @@ struct MediaDetailView: View {
                         }
                     }
             )
-            // 下载胶囊:媒体正下方居中(同一面板内,与媒体有 10pt 间隙)
-            downloadCapsule
+            // 下载胶囊:媒体正下方居中(同一面板内,与媒体有 10pt 间隙);出入带动画
+            if showCapsule {
+                downloadCapsule
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.spring(duration: 0.35, bounce: 0.2), value: showCapsule)
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture {} // 卡内点击不穿透
         .liquidGlass(interactive: false, cornerRadius: 18)
+        .shadow(color: .black.opacity(0.28), radius: 24, x: 0, y: 10)
     }
 
     /// 媒体切换圆形箭头钮
@@ -268,6 +293,7 @@ struct MediaDetailView: View {
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture {} // 卡内点击不穿透到遮罩层
         .liquidGlass(interactive: true, cornerRadius: 18)
+        .shadow(color: .black.opacity(0.28), radius: 24, x: 0, y: 10)
     }
 
     /// 液态玻璃圆形图标按钮（36pt）
@@ -341,6 +367,7 @@ struct MediaDetailView: View {
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture {} // 卡内点击不穿透到遮罩层
         .liquidGlass(interactive: true, cornerRadius: 18)
+        .shadow(color: .black.opacity(0.28), radius: 24, x: 0, y: 10)
     }
 
     // MARK: - 动作
