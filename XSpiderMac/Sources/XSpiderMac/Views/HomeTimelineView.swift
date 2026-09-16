@@ -74,12 +74,17 @@ struct HomeTimelineView: View {
                 }
             }
         }
-        .sheet(item: $detailPost) { post in
-            MediaDetailView(post: post, onSearchUser: { screenName in
-                detailPost = nil
-                onAvatarTap?(screenName)
-            })
+        .overlay {
+            if let post = detailPost {
+                MediaDetailView(post: post) { screenName in
+                    detailPost = nil
+                    onAvatarTap?(screenName)
+                }
+                .transition(.opacity)
+                .zIndex(100)
+            }
         }
+        .animation(.easeOut(duration: 0.16), value: detailPost != nil)
         .task {
             if store.posts.isEmpty { await store.initialLoad() }
         }

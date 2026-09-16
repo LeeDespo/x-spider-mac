@@ -7,8 +7,15 @@ import SwiftUI
 final class HomeTimelineStore {
     static let shared = HomeTimelineStore()
 
-    var mode: HomeTimelineMode = .forYou
-    var followingSort: FollowingSort = .hot
+    /// 分段选择持久化:重启后回到上次的 推荐/关注 与 热门/最新
+    var mode: HomeTimelineMode {
+        get { HomeTimelineMode(rawValue: UserDefaults.standard.string(forKey: "home.timelineMode") ?? "") ?? .forYou }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.timelineMode") }
+    }
+    var followingSort: FollowingSort {
+        get { FollowingSort(rawValue: UserDefaults.standard.string(forKey: "home.followingSort") ?? "") ?? .hot }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.followingSort") }
+    }
     var posts: [TwitterPost] = []
     var loading = false
     var loadingMore = false

@@ -62,12 +62,18 @@ struct HomeView: View {
         }
         .navigationTitle(L("主页"))
         .frame(minWidth: 600)
-        .sheet(item: $detailPost) { post in
-            MediaDetailView(post: post, initialMediaIndex: detailMediaIndex) { screenName in
-                detailPost = nil
-                Task { await store.loadUser(screenName: screenName) }
+        .overlay {
+            if let post = detailPost {
+                // 全窗浮层(非 sheet):三卡浮于应用内容之上;点击任何非卡区退出;ESC 退出
+                MediaDetailView(post: post, initialMediaIndex: detailMediaIndex) { screenName in
+                    detailPost = nil
+                    Task { await store.loadUser(screenName: screenName) }
+                }
+                .transition(.opacity)
+                .zIndex(100)
             }
         }
+        .animation(.easeOut(duration: 0.16), value: detailPost != nil)
         .overlay(alignment: .bottom) {
             if selectiveMode {
                 // 选择模式操作条:撤销 + 全部下载(短条居中)
@@ -349,9 +355,11 @@ struct HomeView: View {
             } else if store.postListCursor != nil {
                 Color.clear
                     .frame(height: 40)
-                    .task(id: store.postList.count) {
-                        // 上游 InfiniteScroll 语义:一次性 while 补拉到拉满/到底,单飞行锁防重入
-                        await store.fillViewport()
+                    // 视口内标记:滚到底出现→补拉,滚走→停,滚回→续(上游 InfiniteScroll 语义)
+                    .onAppear { store.loaderVisible = true }
+                    .onDisappear { store.loaderVisible = false }
+                    .onAppear {
+                        Task { await store.fillViewport() }
                     }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))

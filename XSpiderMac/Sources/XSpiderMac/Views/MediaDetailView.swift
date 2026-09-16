@@ -11,6 +11,8 @@ struct MediaDetailView: View {
     @State private var store = DownloadStore.shared
     /// 点击头像 → 搜索该用户(HomeView 注入;nil = 不响应)
     var onSearchUser: ((String) -> Void)? = nil
+    /// 关闭弹窗(全窗 overlay 注入;nil 时回退 @Environment dismiss)
+    var onClose: (() -> Void)? = nil
     let post: TwitterPost
     @State private var mediaIndex: Int
     @State private var detail: TwitterPost?
@@ -23,10 +25,15 @@ struct MediaDetailView: View {
     @State private var repliesError: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil) {
+    init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil, onClose: (() -> Void)? = nil) {
         self.post = post
         _mediaIndex = State(initialValue: initialMediaIndex)
         self.onSearchUser = onSearchUser
+        self.onClose = onClose
+    }
+
+    private func close() {
+        if let onClose { onClose() } else { dismiss() }
     }
 
     private var medias: [TwitterMedia] { (detail?.medias ?? post.medias) ?? [] }
@@ -48,18 +55,25 @@ struct MediaDetailView: View {
             .frame(width: 410)
         }
         .padding(22)
-        .frame(minWidth: 1000, minHeight: 660)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        .onTapGesture { dismiss() }
-        // sheet 底透明:三卡浮在应用内容上,视觉完全分离
-        .presentationBackground(.clear)
-        .background(
-            WindowAccessor { window in
-                guard let window else { return }
-                window.isOpaque = false
-                window.backgroundColor = .clear
+        .onTapGesture { close() }
+        .background {
+            // 快捷键:ESC 关闭;←/→ 切换媒体
+            Button("") { close() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+            Button("") {
+                if mediaIndex > 0 { withAnimation(.spring(duration: 0.35)) { mediaIndex -= 1 } }
             }
-        )
+            .keyboardShortcut(.leftArrow, modifiers: [])
+            .opacity(0)
+            Button("") {
+                if mediaIndex < medias.count - 1 { withAnimation(.spring(duration: 0.35)) { mediaIndex += 1 } }
+            }
+            .keyboardShortcut(.rightArrow, modifiers: [])
+            .opacity(0)
+        }
         .task {
             await loadReplies()
         }
