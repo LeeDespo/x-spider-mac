@@ -60,6 +60,13 @@ actor NetworkClient {
                     "host": url.host ?? "?",
                 ])
                 if resp.status >= 400 {
+                    // 429 限流:立即重试只会加剧,退避更久
+                    if resp.status == 429 {
+                        retryDelay = min(max(retryDelay, 5.0) * 2, maxRetryDelay)
+                        AppLogger.warn("触发限流(429),延长退避", category: "NET", [
+                            "url": url.path, "delayMs": "\(Int(retryDelay * 1000))",
+                        ])
+                    }
                     throw NetworkError.httpStatus(resp.status)
                 }
                 return resp

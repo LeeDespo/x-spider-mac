@@ -204,6 +204,10 @@ final class HomepageStore {
             await loadMorePostList()
             // 一轮下来没有任何增长且 cursor 未变 → 服务端卡死,停止避免死循环
             if postList.count == countBefore { break }
+            // 节流:页与页之间留间隔,避免触发 X 限流(429)
+            if postListCursor != nil {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
         }
     }
 

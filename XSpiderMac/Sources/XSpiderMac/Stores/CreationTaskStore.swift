@@ -178,6 +178,8 @@ final class CreationTaskStore {
                 // 到达日期下限：停止翻页（上游 while 条件 now.isAfter(since)）
                 if now < since { break }
                 if nextCursor == nil { break }
+                // 页间节流,防 429 限流风暴
+                try? await Task.sleep(nanoseconds: 500_000_000)
             } catch {
                 NSLog("CreationTask error: \(error.localizedDescription)")
                 break
