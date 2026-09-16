@@ -95,35 +95,49 @@ struct HomeTimelineView: View {
 
     /// 媒体瀑布流：按窗口宽度自适应列数；单元高度由媒体宽高比决定（不裁切、不 letterbox）。
     /// 不强调媒体先后顺序，因此用最短列优先的瀑布流而非等宽等高网格。
+    ///
+    /// 分批渲染很关键：`WaterfallLayout` 是 `Layout`（非 lazy），会测量**全部**子视图，
+    /// 每个单元还会触发缩略图请求。若一次塞入上百条，切换形态时要等布局+首批图片完成，
+    /// 表现为"切换要等很久"。这里只渲染前 `visibleCount` 条，滚到底再追加一批。
+    @State private var waterfallVisibleCount = 40
+
     private var homeMediaWaterfall: some View {
         GeometryReader { geo in
             // 目标列宽约 220pt，随窗口自适应（2–6 列）
             let columns = min(6, max(2, Int((geo.size.width - 32) / 220)))
+            let visible = Array(store.flatMedia.prefix(waterfallVisibleCount))
             ScrollView {
                 WaterfallLayout(columnCount: columns, spacing: 10) {
-                    ForEach(store.flatMedia, id: \.media.id) { item in
+                    ForEach(visible, id: \.media.id) { item in
                         WaterfallMediaCell(media: item.media) {
                             DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
                         }
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 20)
 
-                // 无限滚动：最后一个媒体进入视口即续拉（数据源与推文形态相同）
-                Color.clear
-                    .frame(height: 1)
-                    .onAppear {
-                        Task { await store.loadMore() }
-                    }
-                if store.loadingMore {
-                    ProgressView().padding(12)
-                } else if !store.hasMore {
+                // 追加一批已加载内容；若本地已全部渲染且服务端还有更多，再拉下一页
+                if visible.count < store.flatMedia.count || store.hasMore {
+                    ProgressView()
+                        .padding(12)
+                        .onAppear {
+                            if visible.count < store.flatMedia.count {
+                                waterfallVisibleCount += 40
+                            } else {
+                                Task { await store.loadMore() }
+                            }
+                        }
+                } else {
                     Text(L("已加载全部"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                        .padding(.bottom, 20)
+                        .padding(.vertical, 12)
                 }
+            }
+            .padding(.bottom, 20)
+            // 切换回推文形态/重载数据时重置分批计数，避免下次进入还停在旧进度
+            .onChange(of: store.flatMedia.count) { _, newCount in
+                if newCount <= waterfallVisibleCount { waterfallVisibleCount = 40 }
             }
         }
     }

@@ -112,6 +112,16 @@ struct SidebarView: View {
                 // 被动状态标签：仅在真实操作遇阻时出现（正常态不渲染 → 无布局开销）
                 if let badge = statusStore.badgeText {
                     statusBadge(badge)
+                        // 限流有恢复期限：安排**一次**到期刷新（不是轮询）。
+                        // 没有它，期间无新请求时标签会一直留着不消失。
+                        .task(id: statusStore.rateLimitDeadline) {
+                            guard let deadline = statusStore.rateLimitDeadline else { return }
+                            let wait = deadline.timeIntervalSinceNow
+                            guard wait > 0 else { return }
+                            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 200_000_000)
+                            guard !Task.isCancelled else { return }
+                            statusStore.refreshExpiry()
+                        }
                 }
             }
 

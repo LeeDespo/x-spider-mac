@@ -232,17 +232,17 @@ final class RateLimitTests: XCTestCase {
         settings.app.rateLimit = RateLimitSettings()
 
         XCTAssertTrue(settings.gateEnabled)
-        XCTAssertEqual(settings.gateRequestsPerWindow, 10)
+        XCTAssertEqual(settings.gateRequestsPerWindow, 100)
         XCTAssertEqual(settings.gateWindowSeconds, 10)
         XCTAssertTrue(settings.serializePerEndpoint)
         XCTAssertTrue(settings.breakerEnabled)
-        XCTAssertEqual(settings.breakerCooldownSeconds, 900)
+        XCTAssertEqual(settings.breakerCooldownSeconds, 300)
 
         // 越界值被钳制（防止用户填 0 或超大值把应用卡死）
         settings.app.rateLimit?.requestsPerWindow = 0
         XCTAssertEqual(settings.gateRequestsPerWindow, 1)
         settings.app.rateLimit?.requestsPerWindow = 9999
-        XCTAssertEqual(settings.gateRequestsPerWindow, 120)
+        XCTAssertEqual(settings.gateRequestsPerWindow, 600)
 
         settings.app.rateLimit?.cooldownSeconds = 1
         XCTAssertEqual(settings.breakerCooldownSeconds, 30)
@@ -255,7 +255,78 @@ final class RateLimitTests: XCTestCase {
         let json = #"{"app":{"writeLogs":false,"language":"zh-Hans","preventSleepDuringDownload":true},"download":{"saveDirBase":"/tmp"},"proxy":{"enable":true,"url":"http://127.0.0.1:7890","useSystem":true},"sync":{}}"#
         let decoded = try JSONDecoder().decode(Settings.self, from: Data(json.utf8))
         XCTAssertTrue(decoded.gateEnabled)
-        XCTAssertEqual(decoded.gateRequestsPerWindow, 10)
-        XCTAssertEqual(decoded.breakerCooldownSeconds, 900)
+        XCTAssertEqual(decoded.gateRequestsPerWindow, 100)
+        XCTAssertEqual(decoded.breakerCooldownSeconds, 300)
+    }
+
+    /// 回归：SettingsStore 必须把 nil 的 rateLimit 补成非 nil。
+    /// 否则视图里的 `settings.app.rateLimit?.x = $0` 是静默 no-op ——
+    /// 表现为"设置项点击有反馈但值永远不变"。
+    @MainActor
+    func testSettingsStoreInitializesRateLimit() {
+        let store = SettingsStore.shared
+        XCTAssertNotNil(store.settings.app.rateLimit, "rateLimit 为 nil 会让所有限流设置项的绑定失效")
+    }
+
+    // MARK: - 账号状态：被动标签不应被无关请求抹掉
+
+    /// 回归：任何请求成功都会调用 noteSuccess；若允许无条件复位，
+    /// 429 标签会被无关请求（XClId/页面 HTML/关注态查询）瞬间抹掉，表现为"标签做了但没效果"。
+    @MainActor
+    func testRateLimitedSurvivesUnrelatedSuccess() {
+        let store = AccountStatusStore.shared
+        store.noteRateLimited(until: Date().addingTimeInterval(300))
+        XCTAssertEqual(store.badgeText, L("429 限流"))
+
+        // 无关请求成功：限流未到期，标签必须保留
+        store.noteSuccess()
+        XCTAssertEqual(store.badgeText, L("429 限流"), "未到恢复期限不应被成功响应清除")
+    }
+
+    /// 限流到期后标签消失（到期判定 + 一次性刷新）
+    @MainActor
+    func testRateLimitClearsAfterDeadline() {
+        let store = AccountStatusStore.shared
+        // 已过期的截止时间：noteRateLimited 会用最小保留窗口兜底，因此先设再刷新验证
+        store.noteRateLimited(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(store.badgeText, L("429 限流"))
+
+        let exp = expectation(description: "wait for expiry")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { exp.fulfill() }
+        wait(for: [exp], timeout: 3.0)
+
+        XCTAssertNil(store.rateLimitDeadline, "过期后不应再有待到期状态")
+        store.refreshExpiry()
+        XCTAssertNil(store.badgeText, "到期后标签应消失")
+    }
+
+    /// 登录失效可被下一次成功复位（与限流的语义不同）
+    @MainActor
+    func testUnauthenticatedClearsOnSuccess() {
+        let store = AccountStatusStore.shared
+        store.noteUnauthenticated(status: 401)
+        XCTAssertEqual(store.badgeText, L("登录失效"))
+        store.noteSuccess()
+        XCTAssertNil(store.badgeText, "登录失效应可被成功请求复位")
+    }
+
+    // MARK: - 令牌桶初始化
+
+    /// 回归：首次使用应按用户配置的容量补满，而不是硬编码初值。
+    /// （容量 100 却只发 10 个令牌会让"每时间窗请求数"设置看起来无效。）
+    func testTokenBucketStartsAtConfiguredCapacity() async throws {
+        let gate = RequestGate()
+        await gate.update(config: .init(
+            enabled: true, requestsPerWindow: 50, windowSeconds: 60,
+            serialize: false, breakerEnabled: false, cooldownSeconds: 60
+        ))
+        // 容量 50、窗口 60s → 前 20 个应立即通过（无需等待补充）
+        let start = Date()
+        for _ in 0..<20 {
+            try await gate.acquire(kind: .misc)
+            await gate.release(kind: .misc)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5,
+                          "初始令牌数低于配置容量，说明未按容量初始化")
     }
 }

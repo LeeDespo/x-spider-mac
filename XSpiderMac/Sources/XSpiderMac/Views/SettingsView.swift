@@ -211,7 +211,7 @@ struct SettingsView: View {
                         get: { settingsStore.settings.gateRequestsPerWindow },
                         set: { settingsStore.settings.app.rateLimit?.requestsPerWindow = $0 }
                     ),
-                    range: 1...120
+                    range: 1...600
                 )
                 NumberStepperField(
                     title: L("时间窗（秒）"),

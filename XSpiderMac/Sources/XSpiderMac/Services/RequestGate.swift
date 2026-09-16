@@ -87,7 +87,8 @@ actor RequestGate {
 
     // MARK: - 状态
 
-    private var tokens: Double = 10
+    /// 令牌桶剩余令牌。-1 = 尚未按配置初始化（首次 acquire 时补满到容量）
+    private var tokens: Double = -1
     private var lastRefill = Date()
     /// 各类别熔断截止时间
     private var breakerUntil: [Kind: Date] = [:]
@@ -170,6 +171,12 @@ actor RequestGate {
     private func waitForToken() async throws {
         let capacity = Double(max(1, config.requestsPerWindow))
         let rate = capacity / Double(max(1, config.windowSeconds)) // 每秒补充
+
+        // 首次使用（或容量变更后）按容量补满，让用户设的"每时间窗请求数"从第一刻就生效
+        if tokens < 0 || tokens > capacity {
+            tokens = capacity
+            lastRefill = Date()
+        }
 
         while true {
             refill(capacity: capacity, rate: rate)

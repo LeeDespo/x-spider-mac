@@ -135,11 +135,11 @@ struct RateLimitSettings: Codable, Sendable {
 
     init() {
         gateEnabled = true
-        requestsPerWindow = 10
+        requestsPerWindow = 100
         windowSeconds = 10
         serializePerEndpoint = true
         breakerEnabled = true
-        cooldownSeconds = 900
+        cooldownSeconds = 300
     }
 }
 
@@ -228,16 +228,18 @@ struct Settings: Codable, Sendable {
 
     /// 请求闸门开关（默认开）
     var gateEnabled: Bool { app.rateLimit?.gateEnabled ?? true }
-    /// 时间窗内请求数上限（默认 10，钳制 1–120）
-    var gateRequestsPerWindow: Int { min(120, max(1, app.rateLimit?.requestsPerWindow ?? 10)) }
+    /// 时间窗内请求数上限（默认 100，钳制 1–600）。
+    /// 默认值取宽松侧：X 的限流是"短期暴量"触发，靠闸门抹平并发尖峰即可，
+    /// 过低的阈值反而会让正常浏览（翻页+头像+关注态查询）排队变慢。
+    var gateRequestsPerWindow: Int { min(600, max(1, app.rateLimit?.requestsPerWindow ?? 100)) }
     /// 时间窗秒数（默认 10，钳制 1–300）
     var gateWindowSeconds: Int { min(300, max(1, app.rateLimit?.windowSeconds ?? 10)) }
     /// 同端点串行（默认开）
     var serializePerEndpoint: Bool { app.rateLimit?.serializePerEndpoint ?? true }
     /// 429 熔断开关（默认开）
     var breakerEnabled: Bool { app.rateLimit?.breakerEnabled ?? true }
-    /// 熔断冷却秒数（默认 900，钳制 30–3600）
-    var breakerCooldownSeconds: Int { min(3600, max(30, app.rateLimit?.cooldownSeconds ?? 900)) }
+    /// 熔断冷却秒数（默认 300 = 5 分钟，钳制 30–3600）
+    var breakerCooldownSeconds: Int { min(3600, max(30, app.rateLimit?.cooldownSeconds ?? 300)) }
 
     enum Language: String, CaseIterable, Identifiable {
         case zhHans = "zh-Hans"

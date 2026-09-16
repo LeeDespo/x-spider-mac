@@ -7,19 +7,26 @@ import SwiftUI
 final class HomeTimelineStore {
     static let shared = HomeTimelineStore()
 
-    /// 分段选择持久化:重启后回到上次的 推荐/关注 与 热门/最新
-    var mode: HomeTimelineMode {
-        get { HomeTimelineMode(rawValue: UserDefaults.standard.string(forKey: "home.timelineMode") ?? "") ?? .forYou }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.timelineMode") }
+    /// 分段选择持久化:重启后回到上次的 推荐/关注 与 热门/最新。
+    ///
+    /// 必须是**存储属性**（而非 UserDefaults 计算属性）：`@Observable` 只追踪存储属性，
+    /// 计算属性读写 UserDefaults 不会触发视图失效 —— 曾导致分段切换要等下一次翻页
+    /// 数据到达才顺带刷新（表现为"切换要等很久"）。持久化改在 didSet 里做。
+    var mode: HomeTimelineMode = HomeTimelineMode(
+        rawValue: UserDefaults.standard.string(forKey: "home.timelineMode") ?? ""
+    ) ?? .forYou {
+        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "home.timelineMode") }
     }
-    /// 展示形态：推文卡片 / 纯媒体瀑布流
-    var contentType: HomeTimelineContentType {
-        get { HomeTimelineContentType(rawValue: UserDefaults.standard.string(forKey: "home.timelineContent") ?? "") ?? .tweets }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.timelineContent") }
+    /// 展示形态：推文卡片 / 纯媒体瀑布流（同上：存储属性保证切换即时生效）
+    var contentType: HomeTimelineContentType = HomeTimelineContentType(
+        rawValue: UserDefaults.standard.string(forKey: "home.timelineContent") ?? ""
+    ) ?? .tweets {
+        didSet { UserDefaults.standard.set(contentType.rawValue, forKey: "home.timelineContent") }
     }
-    var followingSort: FollowingSort {
-        get { FollowingSort(rawValue: UserDefaults.standard.string(forKey: "home.followingSort") ?? "") ?? .hot }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.followingSort") }
+    var followingSort: FollowingSort = FollowingSort(
+        rawValue: UserDefaults.standard.string(forKey: "home.followingSort") ?? ""
+    ) ?? .hot {
+        didSet { UserDefaults.standard.set(followingSort.rawValue, forKey: "home.followingSort") }
     }
     var posts: [TwitterPost] = []
     var loading = false

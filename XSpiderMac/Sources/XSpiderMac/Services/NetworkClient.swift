@@ -83,8 +83,12 @@ actor NetworkClient {
                         let retryAfter = Self.retryAfter(resp)
                         // 被动上报：账号限流 + 该类端点熔断（不主动探测，仅响应真实 429）
                         await Self.gate.noteRateLimited(kind: kind, retryAfter: retryAfter)
+                        let gateOpen = await Self.gate.isBreakerOpen()
+                        let breakerDeadline = await Self.gate.nearestBreakerDeadline()
                         await MainActor.run {
-                            AccountStatusStore.shared.noteRateLimited(retryAfter: retryAfter)
+                            // 用熔断的真实截止时间驱动标签，保证"标签消失"与"请求恢复"同时发生
+                            AccountStatusStore.shared.noteRateLimited(until: breakerDeadline)
+                            AccountStatusStore.shared.breakerOpen = gateOpen
                         }
                         rateLimitRetries += 1
                         guard rateLimitRetries <= Self.maxRateLimitRetries else {

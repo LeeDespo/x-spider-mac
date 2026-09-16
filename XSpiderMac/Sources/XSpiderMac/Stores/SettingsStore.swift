@@ -43,10 +43,32 @@ final class SettingsStore {
                 settings.download.saveDirBase = downloads.path
             }
         }
+        // 限流缓解设置必须非 nil——视图绑定写的是 `settings.app.rateLimit?.x = $0`，
+        // 可选链对 nil 是静默 no-op（表现为"点击有反馈但值不变"）。老配置与全新安装都在此补默认值。
+        if settings.app.rateLimit == nil {
+            settings.app.rateLimit = RateLimitSettings()
+        }
+        migrateRateLimitDefaultsOnce()
         AppLogger.fileLoggingEnabled = settings.app.writeLogs
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
         applyRateLimit()
+    }
+
+    /// 一次性迁移：早期默认值过于保守（每窗口 10 请求 / 熔断暂停 900 秒），
+    /// 会让正常浏览排队明显变慢。只替换**恰好等于旧默认值**的项（用户自己调过的值不动），
+    /// 且只执行一次——否则用户以后主动调回 10 又会被再次顶掉。
+    private func migrateRateLimitDefaultsOnce() {
+        let flagKey = "settings.rateLimitDefaultsMigrated.v2"
+        guard !storage.bool(forKey: flagKey) else { return }
+        storage.set(true, forKey: flagKey)
+
+        if settings.app.rateLimit?.requestsPerWindow == 10 {
+            settings.app.rateLimit?.requestsPerWindow = 100
+        }
+        if settings.app.rateLimit?.cooldownSeconds == 900 {
+            settings.app.rateLimit?.cooldownSeconds = 300
+        }
     }
 
     private var savedSettings: Settings?

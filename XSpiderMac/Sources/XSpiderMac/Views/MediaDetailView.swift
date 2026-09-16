@@ -65,12 +65,6 @@ struct MediaDetailView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { close() }
-        // 右上角圆形悬浮关闭按钮：全屏浮层下必须有一个可见出口
-        // （此前只能盲点卡片外空白或按 ESC，用户找不到关闭方式）
-        .overlay(alignment: .topTrailing) {
-            closeButton
-                .padding(24)
-        }
         .background {
             // 快捷键:ESC 关闭;←/→ 切换媒体
             Button("") { close() }
@@ -97,22 +91,21 @@ struct MediaDetailView: View {
 
     // MARK: - 左：媒体卡
 
-    /// 右上角关闭按钮（圆形玻璃，36pt）
+    /// 关闭按钮：与点赞/书签/分享同一行，靠右（放在推文卡内，用户一进详情就能看到出口）
     private var closeButton: some View {
         Button {
             close()
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.primary)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
                 .frame(width: 36, height: 36)
                 .liquidGlass(interactive: true, cornerRadius: 18)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help(L("关闭"))
-        .keyboardShortcut(.escape, modifiers: []) // 与既有 ESC 行为一致
-        .zIndex(300)
+        .keyboardShortcut(.escape, modifiers: []) // 保留 ESC 关闭
     }
 
     private var mediaCard: some View {
@@ -297,7 +290,7 @@ struct MediaDetailView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            // 互动行:液态玻璃图标钮(点赞 / 书签 / 分享)
+            // 互动行:液态玻璃图标钮(点赞 / 书签 / 分享) + 右侧关闭
             HStack(spacing: 12) {
                 glassIconButton(icon: liked ? "heart.fill" : "heart", tint: liked ? .pink : .secondary,
                                 help: L("点赞")) { toggleLike() }
@@ -305,10 +298,12 @@ struct MediaDetailView: View {
                                 help: L("书签")) { toggleBookmark() }
                 glassIconButton(icon: "square.and.arrow.up", tint: .secondary,
                                 help: L("分享")) { shareTweet() }
-                Spacer()
                 if let actionMessage {
                     Text(actionMessage).font(.caption).foregroundStyle(.secondary)
                 }
+                Spacer()
+                // 关闭放在最右：与互动按钮同排，位置固定且不会遮挡推文内容
+                closeButton
             }
             .padding(.top, 2)
         }
