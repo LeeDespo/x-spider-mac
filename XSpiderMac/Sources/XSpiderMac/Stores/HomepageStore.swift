@@ -18,6 +18,8 @@ final class HomepageStore {
 
     var postList: [TwitterPost] = []
     var postListLoading = false
+    /// 上游 postList.list 的 undefined 语义:首载完成前置 false(guard 未初始化列表)
+    private(set) var hasLoadedList = false
     var postListCursor: String? = nil
 
     private var loadUserTask: Task<Void, Never>?
@@ -27,8 +29,6 @@ final class HomepageStore {
     private var userGeneration = 0
     /// 当前列表归属的 screen_name（视图判断网格属于哪个用户）
     private(set) var listOwnerScreenName: String?
-    /// 连续空页计数（翻页去重后无新内容），≥2 判定到底
-    private var consecutiveEmptyPages = 0
 
     // MARK: - 用户加载（上游 loadUser：abort 旧请求 → getUser → 成功后加载媒体）
 
@@ -177,6 +177,7 @@ final class HomepageStore {
             }
             postList = posts
             postListCursor = cursor
+            hasLoadedList = true
             listOwnerScreenName = userInfo?.screenName
             AppLogger.info("媒体时间线已加载", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?",
@@ -186,57 +187,61 @@ final class HomepageStore {
             ])
         } catch {
             guard generation == userGeneration else { return }
+            // 上游 catch:set list: [] + loading:false(已初始化,内容为空)
+            hasLoadedList = true
             AppLogger.warn("媒体时间线加载失败", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?", "error": error.localizedDescription,
             ])
         }
     }
 
-    /// 上游 InfiniteScroll:requestFn 一次触发,内部循环补拉直到拉满视口或到底。
-    /// isFillingViewport = loadingRef(单飞行锁);每轮后检查"仍欠内容"再续,避免 LazyVStack 不再触发 onAppear。
+    /// 上游 InfiniteScroll(requestFn):单飞行锁;一次触发循环补拉到 cursor 耗尽或失败为止。
     private var isFillingViewport = false
     func fillViewport() async {
         guard !isFillingViewport else { return }
         isFillingViewport = true
         defer { isFillingViewport = false }
-        while postListCursor != nil, !postListLoading {
-            let countBefore = postList.count
-            await loadMorePostList()
-            // 一轮下来没有任何增长且 cursor 未变 → 服务端卡死,停止避免死循环
-            if postList.count == countBefore { break }
-            // 节流:页与页之间留间隔,避免触发 X 限流(429)
+        // 上游 InfiniteScroll 的 while:只要服务端还有 cursor 就继续;
+        // loadMorePostList 内部的 loading guard 保证单飞行。
+        while postListCursor != nil {
+            let ok = await loadMorePostList()
+            // 请求失败(网络/限流):停止本轮,等下次触发
+            if !ok { break }
+            // 页间节流,防 429 风暴(上游靠浏览器渲染节奏,此处显式等价)
             if postListCursor != nil {
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
         }
     }
 
-    func loadMorePostList() async {
-        guard let cursor = postListCursor, !postListLoading else { return }
+    /// 上游 loadMorePostList:guard 未初始化/加载中/无 cursor;成功后 concat + cursor 更新。
+    /// 返回 Bool 表示本轮是否成功(失败时 fillViewport 停止)。
+    @discardableResult
+    func loadMorePostList() async -> Bool {
+        // 上游三连 guard:未初始化列表 / 已正在加载 / 没有更多数据
+        guard hasLoadedList, postListLoading == false, postListCursor != nil else { return false }
         postListLoading = true
         defer { postListLoading = false }
 
         let userId = userInfo?.id ?? ""
-        guard !userId.isEmpty else { return }
+        guard !userId.isEmpty else { return false }
 
         do {
-            let (posts, nextCursor): ([TwitterPost], String?)
-            if filter.source == .medias {
-                let r = try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: cursor)
-                posts = r.posts
-                nextCursor = r.cursor
-            } else {
-                let r = try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: cursor)
-                posts = r.posts
-                nextCursor = r.cursor
-            }
-            // 早期版本语义:直接追加,cursor 交给服务端;nil = 到底。
-            postList.append(contentsOf: posts)
-            postListCursor = nextCursor
+            let r = try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: postListCursor)
+            // 上游: (postList.list || []).concat(twitterPosts) + cursor 原样更新
+            postList += r.posts
+            postListCursor = r.cursor
+            AppLogger.info("媒体时间线翻页", category: "HOME", [
+                "screenName": userInfo?.screenName ?? "?",
+                "posts": "\(r.posts.count)",
+                "nextHasMore": r.cursor != nil ? "1" : "0",
+            ])
+            return true
         } catch {
             AppLogger.warn("媒体时间线翻页失败", category: "HOME", [
                 "screenName": userInfo?.screenName ?? "?", "error": error.localizedDescription,
             ])
+            return false
         }
     }
 
@@ -251,9 +256,9 @@ final class HomepageStore {
     }
 
     func clearPostList() {
+        hasLoadedList = false
         postList = []
         postListCursor = nil
-        consecutiveEmptyPages = 0
     }
 
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）

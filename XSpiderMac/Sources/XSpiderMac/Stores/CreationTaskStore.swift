@@ -88,34 +88,29 @@ final class CreationTaskStore {
         let since = filter.dateRange?.start ?? Date(timeIntervalSince1970: 0)
         let until = filter.dateRange?.end ?? now
 
+        // 上游 runCreationTask:let nextCursor = undefined;
+        // while (nextCursor !== null && now.isAfter(since)) { fetch(nextCursor); nextCursor = cursor; ... }
+        // Swift 无 undefined,用 hasFetched 区分"从未请求"(undefined)与"服务端返回 null cursor"(到底)。
         var nextCursor: String? = nil
-        // 翻页防御:X 偶发对"无更多内容"返回重复/非空 cursor,导致无限检索(用户实测上千页)
-        var seenCursors = Set<String>()
+        var hasFetched = false
 
-        while nextCursor != nil || completeCount + skipCount == 0 {
+        while !hasFetched || (nextCursor != nil && now > since) {
+
             if Task.isCancelled { return }
 
             do {
                 let posts: [TwitterPost]
-                let cursor: String?
+                let newCursor: String?
                 if filter.source == .medias {
                     let r = try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: nextCursor)
                     posts = r.posts
-                    cursor = r.cursor
+                    newCursor = r.cursor
                 } else {
                     let r = try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: nextCursor)
                     posts = r.posts
-                    cursor = r.cursor
+                    newCursor = r.cursor
                 }
                 if Task.isCancelled { return }
-                // 翻页防御:重复 cursor = 服务端已无新内容,立即停止
-                if let c = cursor {
-                    guard seenCursors.insert(c).inserted else { break }
-                } else {
-                    break  // 无 cursor = 到底
-                }
-                seenCursors.insert("")
-                nextCursor = cursor
                 if let lastPost = posts.last, let createdAt = lastPost.createdAt {
                     now = createdAt
                 }
@@ -133,8 +128,7 @@ final class CreationTaskStore {
                 // 没有符合条件的推文：继续翻页
                 if filteredPosts.isEmpty {
                     updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                    if nextCursor == nil { break }
-                    continue
+                        continue
                 }
 
                 var paramsList: [(post: TwitterPost, media: TwitterMedia)] = []
@@ -150,8 +144,7 @@ final class CreationTaskStore {
 
                 if paramsList.isEmpty {
                     updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                    if nextCursor == nil { break }
-                    continue
+                        continue
                 }
 
                 // 全部下载防重复:同一推文媒体在本轮/既有任务里只创建一次
@@ -175,6 +168,9 @@ final class CreationTaskStore {
 
                 updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
 
+                // 上游:循环尾 nextCursor = cursor(服务端 null → 下一轮条件不满足退出)
+                nextCursor = newCursor
+                hasFetched = true
                 // 到达日期下限：停止翻页（上游 while 条件 now.isAfter(since)）
                 if now < since { break }
                 if nextCursor == nil { break }
@@ -183,8 +179,7 @@ final class CreationTaskStore {
             } catch {
                 NSLog("CreationTask error: \(error.localizedDescription)")
                 break
-            }
-        }
+            }        }
     }
 
     private func updateCreationTaskProgress(id: String, completeCount: Int, skipCount: Int) {

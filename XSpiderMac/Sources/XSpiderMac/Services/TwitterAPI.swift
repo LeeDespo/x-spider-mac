@@ -456,16 +456,20 @@ actor TwitterAPI {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/cEjpJXA15Ok78yO4TUQPeQ/UserMedia"
         let url = URL(string: "https://\(host)\(path)")!
-        let variables = Self.encodeJSON([
+        // 上游 getUserMedias:variables.cursor = 传入的 cursor(首页为 undefined → 序列化时省略;
+        // 翻页时为真实 cursor 字符串)。此前这里硬编码 NSNull() 导致每页都请求第一页,
+        // 服务端永远返回相同内容+有效 cursor = 无限加载/无限检索的总根源。
+        var variablesDict: [String: Any] = [
             "userId": userId,
             "count": count,
-            "cursor": NSNull(),
             "includePromotedContent": false,
             "withClientEventToken": false,
             "withBirdwatchNotes": false,
             "withVoice": true,
             "withV2Timeline": true,
-        ] as [String: Any]) ?? "{}"
+        ]
+        if let cursor { variablesDict["cursor"] = cursor }
+        let variables = Self.encodeJSON(variablesDict) ?? "{}"
 
         let resp = try await (fast
             ? client.requestFast(url: url, query: [
