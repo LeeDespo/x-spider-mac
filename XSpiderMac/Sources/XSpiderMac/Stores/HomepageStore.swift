@@ -29,6 +29,8 @@ final class HomepageStore {
     private(set) var listOwnerScreenName: String?
     /// 连续空页计数（翻页去重后无新内容），≥2 判定到底
     private var consecutiveEmptyPages = 0
+    /// 连续重复页计数（服务端 cursor 前进但内容全是已给过的推文），≥2 判定到底
+    private var consecutiveDupPages = 0
 
     // MARK: - 用户加载（上游 loadUser：abort 旧请求 → getUser → 成功后加载媒体）
 
@@ -202,11 +204,8 @@ final class HomepageStore {
         isFillingViewport = true
         defer { isFillingViewport = false }
         while postListCursor != nil, !postListLoading, loaderVisible {
-            let countBefore = postList.count
             await loadMorePostList()
-            // 一轮下来没有任何增长 → 服务端已无新内容,明确到底
-            if postList.count == countBefore { postListCursor = nil; break }
-            // 节流:页与页之间留间隔,避免触发 X 限流(429)
+            // 终止条件在 loadMorePostList 内(空页/cursor 重复/内容重复×2);这里只管循环+节流
             if postListCursor != nil {
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
@@ -232,12 +231,29 @@ final class HomepageStore {
                 posts = r.posts
                 nextCursor = r.cursor
             }
-            // 早期版本语义:直接追加,cursor 交给服务端;nil = 到底。
-            postList.append(contentsOf: posts)
+            // 到底判定(无上限,全部基于服务端信号):
+            //   空页 / cursor 缺失 / cursor 与入参相同 → 到底
+            //   内容重复:连续 2 页无任何新推文(X 深翻会重复返回,cursor 仍前进)→ 到底
+            //   单页全重复 = 置顶推文重叠,放行继续
+            let existingIds = Set(postList.map(\.id))
+            let fresh = posts.filter { !existingIds.contains($0.id) }
+            postList.append(contentsOf: fresh)
+            var terminal = posts.isEmpty || nextCursor == nil || nextCursor == cursor
             if posts.isEmpty {
-                // X 深翻常见:内容空但 cursor 仍非 nil → 明确到底,清 cursor 防无限触发
+                consecutiveDupPages = 0
+            } else if fresh.isEmpty {
+                consecutiveDupPages += 1
+                if consecutiveDupPages >= 2 { terminal = true }
+            } else {
+                consecutiveDupPages = 0
+            }
+            if terminal {
                 postListCursor = nil
-                consecutiveEmptyPages = 0
+                consecutiveDupPages = 0
+                AppLogger.info("媒体时间线已到底", category: "HOME", [
+                    "screenName": userInfo?.screenName ?? "?",
+                    "total": "\(postList.count)",
+                ])
             } else {
                 postListCursor = nextCursor
             }
@@ -262,6 +278,7 @@ final class HomepageStore {
         postList = []
         postListCursor = nil
         consecutiveEmptyPages = 0
+        consecutiveDupPages = 0
     }
 
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）
