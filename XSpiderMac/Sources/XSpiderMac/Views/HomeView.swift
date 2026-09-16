@@ -12,6 +12,8 @@ struct HomeView: View {
     @State private var creationStore = CreationTaskStore.shared
     @State private var creationTaskCreated = false
     /// 双击媒体 → 推文详情弹窗
+    @State private var detailPost: TwitterPost?
+    @State private var detailMediaIndex = 0
     /// 选择性下载模式（媒体卡缩小变暗表示"后退",点击选中恢复）
     @State private var selectiveMode = false
     /// 已勾选待下载的媒体 (post.id, media.id)
@@ -65,7 +67,12 @@ struct HomeView: View {
             }
         }
         .frame(minWidth: 600)
-
+        .sheet(item: $detailPost) { post in
+            MediaDetailView(post: post, initialMediaIndex: detailMediaIndex) { screenName in
+                detailPost = nil
+                Task { await store.loadUser(screenName: screenName) }
+            }
+        }
         .overlay(alignment: .bottom) {
             if selectiveMode {
                 // 选择模式操作条:撤销 + 全部下载(短条居中)
@@ -121,7 +128,8 @@ struct HomeView: View {
         if let tweetID = HomepageStore.extractTweetID(from: text) {
             Task {
                 if let post = await store.fetchTweet(tweetID: tweetID) {
-                    DetailOverlayCenter.shared.open(post)
+                    detailMediaIndex = 0
+                    detailPost = post
                 }
             }
         } else {
@@ -346,11 +354,9 @@ struct HomeView: View {
             } else if store.postListCursor != nil {
                 Color.clear
                     .frame(height: 40)
-                    // 视口内标记:滚到底出现→补拉,滚走→停,滚回→续(上游 InfiniteScroll 语义)
-                    .onAppear { store.loaderVisible = true }
-                    .onDisappear { store.loaderVisible = false }
-                    .onAppear {
-                        Task { await store.fillViewport() }
+                    .task(id: store.postList.count) {
+                        // 上游 InfiniteScroll 语义:一次性 while 补拉到拉满/到底,单飞行锁防重入
+                        await store.fillViewport()
                     }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))
@@ -382,7 +388,7 @@ struct HomeView: View {
                     LazyVStack(spacing: 12) {
                         ForEach(store.postList) { post in
                             TimelinePostCard(post: post) {
-                                DetailOverlayCenter.shared.open(post)
+                                detailPost = post
                             }
                         }
                     }
@@ -403,7 +409,8 @@ struct HomeView: View {
                                               else { selectedMediaKeys.insert(k) }
                                           },
                                           onDoubleClick: {
-                                              DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+                                              detailPost = item.post
+                                              detailMediaIndex = item.index - 1
                                           })
                         }
                     }

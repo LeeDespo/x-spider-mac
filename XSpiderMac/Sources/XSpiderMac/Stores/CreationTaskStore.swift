@@ -91,8 +91,6 @@ final class CreationTaskStore {
         var nextCursor: String? = nil
         // 翻页防御:X 偶发对"无更多内容"返回重复/非空 cursor,导致无限检索(用户实测上千页)
         var seenCursors = Set<String>()
-        var seenPostIds = Set<String>()
-        var dupPageStreak = 0
 
         while nextCursor != nil || completeCount + skipCount == 0 {
             if Task.isCancelled { return }
@@ -118,19 +116,6 @@ final class CreationTaskStore {
                 }
                 seenCursors.insert("")
                 nextCursor = cursor
-                // 内容重复检测:X 深翻会"cursor 前进 + 内容重复"无限发牌。
-                // 连续 2 页没有任何新推文 → 到底。单页全重复(置顶重叠)放行。
-                let pageIds = posts.map(\.id)
-                if pageIds.isEmpty {
-                    dupPageStreak += 1
-                } else if pageIds.allSatisfy({ seenPostIds.contains($0) }) {
-                    // 整页全是本次扫描已见过的推文(X 深翻重复发牌,cursor 仍前进)
-                    dupPageStreak += 1
-                } else {
-                    dupPageStreak = 0
-                }
-                if dupPageStreak >= 2 { break }
-                seenPostIds.formUnion(pageIds)
                 if let lastPost = posts.last, let createdAt = lastPost.createdAt {
                     now = createdAt
                 }
