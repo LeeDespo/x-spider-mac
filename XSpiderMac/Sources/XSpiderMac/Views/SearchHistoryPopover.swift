@@ -150,7 +150,7 @@ struct CachedMediaThumbView: View {
         }
         .task(id: urlString) {
             guard let urlString else { return }
-            image = await ImageCache.shared.image(for: urlString, category: .avatars)
+            image = await ImageCache.shared.image(for: urlString, category: .mediaThumbnails)
         }
     }
 }

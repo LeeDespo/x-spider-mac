@@ -479,13 +479,15 @@ actor TwitterAPI {
             : client.request(url: url, query: [
                 "features": Self.userMediaFeatures,
                 "variables": variables,
-            ], headers: await commonHeaders(method: "GET", path: path)))
+            ], headers: await commonHeaders(method: "GET", path: path), maxAttempts: 3))
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
         }
         let instructions = Self.path(json, ["data", "user", "result", "timeline_v2", "timeline", "instructions"]) as? [[String: Any]] ?? []
         let posts = Self.extractPostsFromModuleInstructions(instructions)
+        // 上游语义:解析出 0 条 → 到底信号(cursor 置 null),防止翻页对着空页空转
+        if posts.isEmpty { return ([], nil) }
         let cursor = Self.extractBottomCursor(instructions)
         return (posts, cursor)
     }
@@ -494,7 +496,8 @@ actor TwitterAPI {
 
     /// 上游 UserTweets（queryId 9zyyd1hebl7oNWIPdA8HRw）。
     /// 与 UserMedia 不同：entries 里 tweet-* 是单推文 entry，profile-conversation 是会话模块（其 items 里含多推文）。
-    func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20) async throws -> (posts: [TwitterPost], cursor: String?) {
+    /// requireMedia=false 时不过滤无媒体推文（搜索页「推文时间线」要展示全部推文；爬虫保持 true 只要有媒体的）。
+    func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20, requireMedia: Bool = true) async throws -> (posts: [TwitterPost], cursor: String?) {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/9zyyd1hebl7oNWIPdA8HRw/UserTweets"
         let url = URL(string: "https://\(host)\(path)")!
@@ -506,7 +509,8 @@ actor TwitterAPI {
             "withVoice": true,
             "withV2Timeline": true,
         ]
-        if let cursor { variablesDict["cursor"] = cursor } else { variablesDict["cursor"] = NSNull() }
+        // 首页省略 cursor 键(上游 JSON.stringify 丢弃 undefined);显式 null 可能被服务端当非法分页态
+        if let cursor { variablesDict["cursor"] = cursor }
 
         let resp = try await client.request(
             url: url,
@@ -514,25 +518,32 @@ actor TwitterAPI {
                 "features": Self.userTweetsFeatures,
                 "variables": Self.encodeJSON(variablesDict) ?? "{}",
             ],
-            headers: await commonHeaders(method: "GET", path: path)
+            headers: await commonHeaders(method: "GET", path: path),
+            maxAttempts: 3
         )
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
         }
         let instructions = Self.path(json, ["data", "user", "result", "timeline_v2", "timeline", "instructions"]) as? [[String: Any]] ?? []
-        let posts = Self.extractPostsFromTweetEntries(instructions)
+        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: requireMedia)
         let cursor = Self.extractBottomCursor(instructions)
         return (posts, cursor)
     }
 
     // MARK: - JSON 解析（对应上游 ramda path 管线）
 
-    /// UserMedia 专用：TimelineAddEntries 里找 TimelineTimelineModule（多图推文），
-    /// 或 TimelineAddToModule 的 moduleItems。每个 item 取 tweet_results.result，
-    /// __typename 为 TweetWithVisibilityResults 时取 .tweet。
+    /// UserMedia：上游取第一个 TimelineTimelineModule 的 items（或 TimelineAddToModule 的 moduleItems）。
+    /// 此处为上游的超集：额外收集散装 tweet-* 单推文条目——X 偶发返回没有 module 的页
+    /// （上游会解析为 0 条导致提前到底），超集保证不漏；同页重复推文按 rest_id 去重。
     static func extractPostsFromModuleInstructions(_ instructions: [[String: Any]]) -> [TwitterPost] {
         var results: [[String: Any]] = []
+        var seen = Set<String>()
+
+        func append(_ result: [String: Any]) {
+            guard let id = result["rest_id"] as? String, !id.isEmpty, seen.insert(id).inserted else { return }
+            results.append(result)
+        }
 
         if let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
            let entries = addEntries["entries"] as? [[String: Any]] {
@@ -540,8 +551,14 @@ actor TwitterAPI {
                let items = (module["content"] as? [String: Any])?["items"] as? [[String: Any]] {
                 for item in items {
                     if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {
-                        results.append(Self.unwrapVisibility(result))
+                        append(Self.unwrapVisibility(result))
                     }
+                }
+            }
+            for entry in entries {
+                guard (entry["entryId"] as? String ?? "").hasPrefix("tweet") else { continue }
+                if let result = Self.path(entry, ["content", "itemContent", "tweet_results", "result"]) as? [String: Any] {
+                    append(Self.unwrapVisibility(result))
                 }
             }
         }
@@ -551,7 +568,7 @@ actor TwitterAPI {
            let moduleItems = addToModule["moduleItems"] as? [[String: Any]] {
             for item in moduleItems {
                 if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {
-                    results.append(Self.unwrapVisibility(result))
+                    append(Self.unwrapVisibility(result))
                 }
             }
         }

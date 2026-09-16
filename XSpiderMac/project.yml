@@ -31,9 +31,8 @@ targets:
         com.apple.security.network.client: true
         com.apple.security.files.user-selected.read-write: true
     scheme:
-      XSpiderMac:
-        testTargets:
-          - XSpiderMacTests
+      testTargets:
+        - XSpiderMacTests
   XSpiderMacTests:
     type: bundle.unit-test
     platform: macOS

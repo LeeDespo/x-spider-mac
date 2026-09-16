@@ -3,10 +3,7 @@ import SwiftUI
 /// 上游 Homepage.tsx + PostListGridView.tsx + DownloadController.tsx 的移植。
 /// 关键修复：全部状态来自 HomepageStore（切换页面不丢失）。
 struct HomeView: View {
-    @State private var autoLoadAttempted = false
     @State private var store = HomepageStore.shared
-    // cursor 变化（成功翻页）后允许下一次自动加载
-    private var cursorKey: String { store.postListCursor ?? "" }
     @State private var appStore = AppStore.shared
     @State private var downloadStore = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
@@ -351,13 +348,26 @@ struct HomeView: View {
             if store.postListLoading {
                 HStack { ProgressView().controlSize(.small); Text(L("加载中…")).font(.caption).foregroundStyle(.secondary) }
                     .frame(maxWidth: .infinity)
-            } else if store.postListCursor != nil {
-                Color.clear
-                    .frame(height: 40)
-                    .task(id: store.postList.count) {
-                        // 上游 InfiniteScroll 语义:一次性 while 补拉到拉满/到底,单飞行锁防重入
-                        await store.fillViewport()
+            } else if let error = store.postListError {
+                // 失败后停在可见的重试入口;不再自动重触发(避免限流风暴)
+                VStack(spacing: 6) {
+                    Text(L("加载中断") + "：\(error)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button(L("重试")) {
+                        store.retryFill()
                     }
+                    .compatGlassButton()
+                    .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            } else if store.postListCursor != nil {
+                // 哨兵：上报自身在滚动坐标系中的位置,由 store 按上游几何条件决定是否续拉。
+                // 不用 .task(id:) —— 其 id 会随翻页自身变化而取消重启任务(曾导致每页自杀)。
+                BottomSentinel(store: store)
+                    .frame(height: 40)
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))
                     .font(.caption)
@@ -365,7 +375,6 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .frame(height: 36)
         .animation(nil, value: store.postListLoading)
     }
 
@@ -384,7 +393,7 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if store.filter.source == .tweets {
                 // 推文时间线:推文卡列表(没有媒体的推文也显示),点击开详情
-                ScrollView {
+                ScrollReportingContainer(store: store) {
                     LazyVStack(spacing: 12) {
                         ForEach(store.postList) { post in
                             TimelinePostCard(post: post) {
@@ -395,9 +404,10 @@ struct HomeView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
                     bottomLoader
+                    .padding(.bottom, 24)
                 }
             } else {
-                ScrollView {
+                ScrollReportingContainer(store: store) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12)], spacing: 12) {
                         ForEach(store.flatMediaList, id: \.media.id) { item in
                             MediaGridItem(post: item.post, media: item.media, index: item.index,
@@ -417,7 +427,6 @@ struct HomeView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
                     bottomLoader
-                    .onChange(of: cursorKey) { _, _ in autoLoadAttempted = false }
                     .padding(.bottom, 24)
                 }
             }
@@ -461,6 +470,53 @@ struct HomeView: View {
     }
 }
 
+// MARK: - 滚动几何上报（复刻上游 InfiniteScroll 的 threshold 语义，macOS 14 兼容）
+
+/// 滚动坐标空间名（文件级常量，避免引用泛型类型成员导致推断失败）
+private let homeScrollSpace = "homeScroll"
+
+/// 底部哨兵：把自身在滚动坐标系中的 maxY 上报给 store。
+/// `maxY` 就是上游的 `scrollHeight - scrollTop`（视口顶 → 内容底的距离），
+/// 滚动时它变小，降到两屏以内即触发补拉。
+private struct BottomSentinel: View {
+    let store: HomepageStore
+
+    var body: some View {
+        GeometryReader { geo in
+            let anchor = geo.frame(in: .named(homeScrollSpace)).maxY
+            Color.clear
+                .onChange(of: anchor) { _, maxY in
+                    store.reportBottomSentinel(y: maxY)
+                }
+                .onAppear {
+                    store.reportBottomSentinel(y: anchor)
+                }
+        }
+    }
+}
+
+/// 滚动容器：上报视口高度，并为哨兵提供命名坐标空间
+private struct ScrollReportingContainer<Content: View>: View {
+    let store: HomepageStore
+    let content: () -> Content
+
+    init(store: HomepageStore, @ViewBuilder content: @escaping () -> Content) {
+        self.store = store
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { outer in
+            ScrollView {
+                content()
+            }
+            .coordinateSpace(name: homeScrollSpace)
+            .onAppear { store.reportViewport(height: outer.size.height) }
+            .onChange(of: outer.size.height) { _, h in store.reportViewport(height: h) }
+        }
+    }
+}
+
 // MARK: - 单个媒体格（上游 GridViewItemActions：hover 显示下载/打开推文按钮）
 
 struct MediaGridItem: View {
@@ -496,7 +552,6 @@ struct MediaGridItem: View {
                 Image(systemName: media.type == .photo ? "photo" : "video.fill")
                     .font(.title)
                     .foregroundStyle(.secondary)
-                    .task { await loadThumbnail() }
             }
 
             // 视频时长角标（上游 dayjs 毫秒格式化）
@@ -539,6 +594,12 @@ struct MediaGridItem: View {
         }
         .scaleEffect(selectionMode && !isSelected ? 0.86 : 1.0)
         .opacity(selectionMode && !isSelected ? 0.45 : 1.0)
+        .task(id: media.id) {
+            // 走 ImageCache 管线:后台下载+降采样解码,磁盘/内存双缓存,
+            // LazyVGrid 视图重建滚回时命中缓存零开销(旧实现裸 URLSession + @State 随视图销毁丢失)
+            guard thumbnail == nil, let urlString = thumbnailURL else { return }
+            thumbnail = await ImageCache.shared.image(for: urlString, category: .mediaThumbnails, maxPixelSize: 600)
+        }
         .animation(.spring(duration: 0.32, bounce: 0.18), value: selectionMode)
         .animation(.spring(duration: 0.3, bounce: 0.2), value: isSelected)
         .aspectRatio(4/5, contentMode: .fit)
@@ -589,37 +650,16 @@ struct MediaGridItem: View {
             .help(help)
     }
 
-    private func loadThumbnail() async {
-        guard let urlString = media.url, let url = URL(string: urlString) else {
-            AppLogger.debug("媒体缺缩略图 URL", category: "HOME", ["mediaId": media.id ?? "?", "type": media.type.rawValue])
-            return
-        }
-        // 缩略图优先：pbs.twimg.com 图片 URL 加 name=small（约 120px 宽）省流量；
-        // 网格展示用缩略图，下载时才取 name=orig 原图。视频封面路径不带 /media/，不加 query
-        var smallURL = url
-        if url.path.contains("/media/") {
-            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-            var items = comps.queryItems?.filter { $0.name != "name" } ?? []
-            items.append(URLQueryItem(name: "name", value: "small"))
-            comps.queryItems = items
-            if let u = comps.url { smallURL = u }
-        }
-        do {
-            let (data, resp) = try await URLSession.shared.data(from: smallURL)
-            if let img = NSImage(data: data) {
-                thumbnail = img
-            } else {
-                AppLogger.debug("缩略图解码失败", category: "HOME", [
-                    "mediaId": media.id ?? "?",
-                    "bytes": "\(data.count)",
-                    "status": "\((resp as? HTTPURLResponse)?.statusCode ?? 0)",
-                ])
-            }
-        } catch {
-            AppLogger.warn("缩略图加载失败", category: "HOME", [
-                "mediaId": media.id ?? "?", "url": smallURL.path, "error": error.localizedDescription,
-            ])
-        }
+    /// 缩略图 URL：pbs.twimg.com 图片 URL 加 name=small（实际约 680px 宽）省流量；
+    /// 降采样解码由 ImageCache 完成。视频封面路径不带 /media/，不加 query
+    private var thumbnailURL: String? {
+        guard let urlString = media.url, let url = URL(string: urlString) else { return nil }
+        guard url.path.contains("/media/") else { return urlString }
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return urlString }
+        var items = comps.queryItems?.filter { $0.name != "name" } ?? []
+        items.append(URLQueryItem(name: "name", value: "small"))
+        comps.queryItems = items
+        return comps.url?.absoluteString ?? urlString
     }
 
     private func durationMsToClock(_ ms: Int) -> String {

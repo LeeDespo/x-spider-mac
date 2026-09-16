@@ -25,5 +25,13 @@ if [[ -z "${APP_PATH}" ]]; then
   exit 1
 fi
 
+# 先杀掉所有在跑的实例。`open -n` 会另起一个进程，旧实例（可能来自
+# ~/Library/Developer/Xcode/DerivedData 的过期产物）会继续占用窗口与端口，
+# 让人误以为"改动没生效"。
+pkill -x XSpiderMac 2>/dev/null || true
+sleep 1
+
 echo "Launching ${APP_PATH}"
 open -n "${APP_PATH}"
+echo "运行中的二进制: ${APP_PATH}/Contents/MacOS/XSpiderMac (mtime $(stat -f '%Sm' "${APP_PATH}/Contents/MacOS/XSpiderMac"))"
+echo "启动日志会记录 executablePath，可用「帮助 → 打开日志文件夹」核对是否为本次构建。"

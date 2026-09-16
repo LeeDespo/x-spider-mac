@@ -118,6 +118,68 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(TwitterAPI.extractBottomCursor(instructions), "DAABCgABGIC")
     }
 
+    // MARK: - UserMedia 超集解析（module + 散装 tweet 条目 + 去重）
+
+    /// 一页同时含 module 与散装 tweet-* 条目:两者都取,同 id 去重
+    func testUserMediaSupersetParsingAndDedup() {
+        func tweetResult(_ id: String) -> [String: Any] {
+            [
+                "__typename": "Tweet",
+                "rest_id": id,
+                "legacy": [
+                    "full_text": "t\(id)",
+                    "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+                    "entities": ["media": [["id_str": "m\(id)", "type": "photo", "media_url_https": "u\(id)"]]],
+                ] as [String: Any],
+            ]
+        }
+        let instructions: [[String: Any]] = [[
+            "type": "TimelineAddEntries",
+            "entries": [
+                [
+                    "entryId": "profile-grid-0",
+                    "content": [
+                        "entryType": "TimelineTimelineModule",
+                        "items": [
+                            ["item": ["itemContent": ["tweet_results": ["result": tweetResult("123")]]]],
+                            ["item": ["itemContent": ["tweet_results": ["result": tweetResult("123")]]]],
+                        ] as [[String: Any]],
+                    ] as [String: Any],
+                ] as [String: Any],
+                ["entryId": "tweet-456", "content": ["itemContent": ["tweet_results": ["result": tweetResult("456")]]]],
+            ] as [[String: Any]],
+        ]]
+
+        let posts = TwitterAPI.extractPostsFromModuleInstructions(instructions)
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertEqual(Set(posts.map(\.id)), ["123", "456"])
+    }
+
+    /// X 偶发返回只有散装 tweet 条目、没有 module 的页(上游解析为 0 条导致提前到底)
+    func testUserMediaStandaloneTweetOnlyParsing() {
+        let instructions: [[String: Any]] = [[
+            "type": "TimelineAddEntries",
+            "entries": [
+                [
+                    "entryId": "tweet-789",
+                    "content": ["itemContent": ["tweet_results": ["result": [
+                        "__typename": "Tweet",
+                        "rest_id": "789",
+                        "legacy": [
+                            "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+                            "entities": ["media": [["id_str": "m789", "type": "photo", "media_url_https": "u"]]],
+                        ] as [String: Any],
+                    ] as [String: Any]]]],
+                ] as [String: Any],
+                ["entryId": "cursor-bottom-2", "content": ["cursorType": "Bottom", "value": "next"]],
+            ] as [[String: Any]],
+        ]]
+
+        let posts = TwitterAPI.extractPostsFromModuleInstructions(instructions)
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertEqual(posts[0].id, "789")
+    }
+
     func testUserTweetsEntryParsingAndRetweetFilter() {
         let tweetResult: [String: Any] = [
             "__typename": "Tweet",

@@ -151,7 +151,9 @@ final class DownloadStore {
     // MARK: - 创建任务
 
     /// 上游 prepareDownloadTask + createDownloadTask：解析模板 → 检查 sameFileSkip → 启动下载
-    func createDownloadTask(post: TwitterPost, media: TwitterMedia) async -> DownloadTask? {
+    /// - Parameter silent: 批量爬取(path)下为 true —— 跳过时不发系统通知，
+    ///   否则「下载全部」扫到成百上千条已下载媒体会弹满通知并卡住 UI
+    func createDownloadTask(post: TwitterPost, media: TwitterMedia, silent: Bool = false) async -> DownloadTask? {
         guard let downloadUrl = downloadURL(for: media) else {
             AppLogger.warn("媒体没有下载链接", category: "DL", ["mediaId": media.id ?? "nil", "type": media.type.rawValue])
             return nil
@@ -166,8 +168,10 @@ final class DownloadStore {
         // sameFileSkip：按当前判定依据决定跳过（用解析后的原名判定）
         if settings.download.sameFileSkip {
             if isDuplicate(media: media, fileName: fileName, dir: dir) {
-                // 单媒体点击下载被跳过时给可见反馈（否则用户以为按钮失灵）
-                notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + fileName)
+                // 单媒体点击下载被跳过时给可见反馈（否则用户以为按钮失灵）；批量路径静默
+                if !silent {
+                    notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + fileName)
+                }
                 return nil
             }
         }
@@ -200,7 +204,7 @@ final class DownloadStore {
 
     func batchCreateDownloadTasks(_ paramsList: [(post: TwitterPost, media: TwitterMedia)]) async {
         for params in paramsList {
-            _ = await createDownloadTask(post: params.post, media: params.media)
+            _ = await createDownloadTask(post: params.post, media: params.media, silent: true)
         }
     }
 

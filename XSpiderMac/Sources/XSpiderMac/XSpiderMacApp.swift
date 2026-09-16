@@ -10,6 +10,14 @@ struct XSpiderMacApp: App {
 
     init() {
         AppDirectories.ensureAll()
+        // 启动即记录构建身份：排查"改动没生效"时，先看这条日志确认跑的是哪个二进制
+        // （曾出现 Xcode 用 ~/Library/Developer/Xcode/DerivedData 的旧产物覆盖测试结论）
+        let buildDate = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "?"
+        AppLogger.info("应用启动", category: "APP", [
+            "version": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?",
+            "build": buildDate,
+            "executablePath": Bundle.main.executablePath ?? "?",
+        ])
     }
 
     var body: some Scene {

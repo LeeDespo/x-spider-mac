@@ -33,6 +33,12 @@ actor NetworkClient {
                           maxAttempts: 2, perAttemptTimeout: 15)
     }
 
+    /// 上游 network.ts request：16 次重试、指数退避（100ms 起、16s 封顶）。
+    /// 与上游的唯一必要差异是取消语义——上游 delay() 必然真实等待，而 Swift 的
+    /// `Task.sleep` 在任务已取消时立即抛错返回；若把取消当作可重试错误，一次取消会在
+    /// 同一毫秒内空转 16 次重试（实测日志 5400 行取消重试），是限流风暴的放大器。
+    /// 因此：取消 → 立即抛 CancellationError，不重试、不计次。
+    /// 429 另计：重试限流响应纯属放大，最多 3 次退避后放弃，交给调用方停本轮。
     func request(
         method: String = "GET",
         url: URL,
@@ -45,9 +51,11 @@ actor NetworkClient {
         let attemptLimit = maxAttempts ?? maxRetryCount
         var remainingRetryCount = attemptLimit
         var retryDelay: TimeInterval = 0.1
+        var rateLimitRetries = 0
         var lastError: Error?
 
         while remainingRetryCount > 0 {
+            if Task.isCancelled { throw CancellationError() }
             do {
                 let start = Date()
                 let resp = try await requestInternal(
@@ -60,17 +68,35 @@ actor NetworkClient {
                     "host": url.host ?? "?",
                 ])
                 if resp.status >= 400 {
-                    // 429 限流:立即重试只会加剧,退避更久
                     if resp.status == 429 {
-                        retryDelay = min(max(retryDelay, 5.0) * 2, maxRetryDelay)
-                        AppLogger.warn("触发限流(429),延长退避", category: "NET", [
-                            "url": url.path, "delayMs": "\(Int(retryDelay * 1000))",
+                        rateLimitRetries += 1
+                        guard rateLimitRetries <= Self.maxRateLimitRetries else {
+                            AppLogger.warn("限流(429)重试已用尽,停止本轮", category: "NET", [
+                                "url": url.path, "retries": "\(rateLimitRetries)",
+                            ])
+                            throw NetworkError.httpStatus(429)
+                        }
+                        // 优先听服务端 Retry-After;否则指数退避(1s 起、16s 封顶)
+                        let wait = Self.retryAfter(resp) ?? min(max(retryDelay, 1.0) * 2, maxRetryDelay)
+                        AppLogger.warn("触发限流(429),退避后重试", category: "NET", [
+                            "url": url.path, "waitMs": "\(Int(wait * 1000))",
+                            "retries": "\(rateLimitRetries)",
                         ])
+                        try await Self.sleepCancellable(wait)
+                        remainingRetryCount -= 1
+                        continue
                     }
                     throw NetworkError.httpStatus(resp.status)
                 }
                 return resp
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                // URLSession 在任务取消时抛 URLError.cancelled(.cancelled) —— 必须等价于取消,
+                // 否则退避睡眠被跳过 → 同一毫秒空转重试
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
                 lastError = error
                 AppLogger.warn("请求失败将重试", category: "NET", [
                     "method": method,
@@ -78,13 +104,36 @@ actor NetworkClient {
                     "error": error.localizedDescription,
                     "remains": "\(remainingRetryCount)",
                 ])
-                try? await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                try await Self.sleepCancellable(retryDelay)
                 remainingRetryCount -= 1
                 retryDelay = min(retryDelay * 2, maxRetryDelay)
             }
         }
 
         throw lastError ?? NetworkError.unknown
+    }
+
+    /// 429 最多重试次数（上游无此限制，此处为保护账号配额的有意收紧）
+    private static let maxRateLimitRetries = 3
+
+    /// 取消感知睡眠：任务被取消时抛 CancellationError，而非静默立即返回
+    private static func sleepCancellable(_ seconds: TimeInterval) async throws {
+        do {
+            try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+        } catch {
+            throw CancellationError()
+        }
+    }
+
+    /// 解析 Retry-After（秒数或 HTTP 日期）
+    private static func retryAfter(_ resp: NetworkResponse) -> TimeInterval? {
+        guard let raw = resp.headers.first(where: { $0.key.lowercased() == "retry-after" })?.value.first else { return nil }
+        if let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespaces)) { return min(seconds, 60) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: raw) else { return nil }
+        return min(max(date.timeIntervalSinceNow, 0), 60)
     }
 
     private func requestInternal(

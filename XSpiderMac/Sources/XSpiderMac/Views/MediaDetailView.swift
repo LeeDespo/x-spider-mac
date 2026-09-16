@@ -456,7 +456,7 @@ struct MediaContentView: View {
             comps.queryItems = items
             if let u = comps.url { s = u.absoluteString }
         }
-        image = await ImageCache.shared.image(for: s, category: .mediaThumbnails)
+        image = await ImageCache.shared.image(for: s, category: .mediaThumbnails, maxPixelSize: 1600)
     }
 
     private func bestVideoURL(_ media: TwitterMedia) -> URL? {

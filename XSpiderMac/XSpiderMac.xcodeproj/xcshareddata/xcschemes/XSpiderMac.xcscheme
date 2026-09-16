@@ -39,6 +39,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "4975324BBE33912392704953"
+               BuildableName = "XSpiderMacTests.xctest"
+               BlueprintName = "XSpiderMacTests"
+               ReferencedContainer = "container:XSpiderMac.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

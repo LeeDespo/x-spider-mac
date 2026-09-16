@@ -77,25 +77,32 @@ final class CreationTaskStore {
         scheduleNext()
     }
 
-    /// 上游 runCreationTask：cursor 循环翻页 → 日期过滤 → 媒体类型过滤 → sameFileSkip → 批量下载
+    /// 上游 runCreationTask（src/stores/download.ts）的忠实复刻：
+    ///   while (nextCursor !== null && now.isAfter(since)) {
+    ///     fetch(nextCursor); nextCursor = cursor; now = last?.createdAt || now;
+    ///     日期过滤 → 媒体类型过滤 → sameFileSkip → batchCreateDownloadTask
+    ///   }
+    /// 两个要害（上游原文即如此，此前移植走样导致重复检索与请求风暴）：
+    ///   1. cursor 推进紧跟 fetch 之后，**早于**任何过滤与 continue；
+    ///   2. 终止靠 now 递减穿过 since，不靠页数上限。
     private func runCreationTask(_ task: CreationTask) async {
         let filter = task.filter
         let userId = task.user.id
 
         var completeCount = 0
         var skipCount = 0
+        // 上游: let now = dayjs() —— 首页之前取当前时间
         var now = Date()
         let since = filter.dateRange?.start ?? Date(timeIntervalSince1970: 0)
         let until = filter.dateRange?.end ?? now
 
-        // 上游 runCreationTask:let nextCursor = undefined;
-        // while (nextCursor !== null && now.isAfter(since)) { fetch(nextCursor); nextCursor = cursor; ... }
-        // Swift 无 undefined,用 hasFetched 区分"从未请求"(undefined)与"服务端返回 null cursor"(到底)。
+        // 上游: let nextCursor = undefined（首轮跑，服务端返回 null 即到底）。
+        // Swift 无 undefined，用 hasFetched 区分"尚未请求"与"服务端已给 null"。
         var nextCursor: String? = nil
         var hasFetched = false
+        var guardAgainstRepeatedCursor: String?
 
         while !hasFetched || (nextCursor != nil && now > since) {
-
             if Task.isCancelled { return }
 
             do {
@@ -111,75 +118,96 @@ final class CreationTaskStore {
                     newCursor = r.cursor
                 }
                 if Task.isCancelled { return }
-                if let lastPost = posts.last, let createdAt = lastPost.createdAt {
-                    now = createdAt
+
+                // 上游: nextCursor = cursor; now = R.last(twitterPosts)?.createdAt || now
+                // —— 紧跟 fetch，早于过滤（放循环尾会让被过滤清空的页重抓同一页）
+                nextCursor = newCursor
+                hasFetched = true
+                if let lastCreated = posts.last?.createdAt { now = lastCreated }
+
+                // X 偶发回吐与上一页相同的 cursor（限流/游标失效）。此时后续页必然重复，
+                // 上游会原地空转并刷爆配额；判为到底退出。不设页数上限，正常翻页不受影响。
+                if let sent = guardAgainstRepeatedCursor, let got = newCursor, sent == got {
+                    AppLogger.warn("游标未推进,判定到底停止爬取", category: "DL", [
+                        "userId": userId,
+                    ])
+                    break
                 }
-                // 日期过滤（上游 allPass：until 之前 + since 之后；无 createdAt 放行）
+                guardAgainstRepeatedCursor = nextCursor
+
+                // 上游日期过滤：until 前 + since 后；无 createdAt 放行
                 let filteredPosts = posts.filter { post in
                     guard let createdAt = post.createdAt else { return true }
                     return createdAt <= until && createdAt >= since
                 }
 
-                // 被过滤掉的媒体数计入 skipCount
+                // 上游: skipCount += getMediaCounts(twitterPosts) - getMediaCounts(filteredPosts)
                 let totalMediaCount = posts.reduce(0) { $0 + ($1.medias?.count ?? 0) }
                 let filteredMediaCount = filteredPosts.reduce(0) { $0 + ($1.medias?.count ?? 0) }
                 skipCount += totalMediaCount - filteredMediaCount
 
-                // 没有符合条件的推文：继续翻页
+                // 上游: 无符合日期条件的推文 → 记录进度后 continue（cursor 已推进）
                 if filteredPosts.isEmpty {
                     updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                        continue
+                    try await Self.pageThrottle()
+                    continue
                 }
 
+                // 上游: 逐帖筛媒体类型 → prepareDownloadTask → sameFileSkip 存在性检查
                 var paramsList: [(post: TwitterPost, media: TwitterMedia)] = []
+                var seenDownloadURLs = Set<String>()
                 for post in filteredPosts {
                     let medias = post.medias ?? []
-                    let filteredMedias = medias.filter { media in
-                        filter.mediaTypes?.contains(media.type) ?? false
-                    }
-                    for media in filteredMedias {
+                    for media in medias where (filter.mediaTypes?.contains(media.type) ?? false) {
+                        // 同一次爬取内不重复入队（会话模块可能与主条目重复）
+                        if let url = downloadURL(for: media), !seenDownloadURLs.insert(url).inserted { continue }
                         paramsList.append((post, media))
                     }
                 }
 
+                // 上游: 无待下载媒体 → 记录进度后 continue（cursor 已推进）
                 if paramsList.isEmpty {
                     updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                        continue
+                    try await Self.pageThrottle()
+                    continue
                 }
 
-                // 全部下载防重复:同一推文媒体在本轮/既有任务里只创建一次
-                // (时间线翻页可能返回重叠推文,sameFileSkip 的记录文件模式在下载完成后才写记录,挡不住并发重复)
-                var seenUrls = Set<String>()
-                var deduped: [(post: TwitterPost, media: TwitterMedia)] = []
-                for item in paramsList {
-                    guard let url = downloadURL(for: item.media) else { continue }
-                    guard seenUrls.insert(url).inserted else { continue }
-                    if DownloadStore.shared.tasks.contains(where: { $0.downloadUrl == url && $0.status != .error && $0.status != .removed }) {
-                        skipCount += 1
-                        continue
-                    }
-                    deduped.append(item)
-                }
+                // 上游: await batchCreateDownloadTask(paramsList); completeCount += paramsList.length
+                // sameFileSkip 由 DownloadStore.createDownloadTask 内部按设置判定并计数跳过
                 let beforeCount = DownloadStore.shared.tasks.count
-                await DownloadStore.shared.batchCreateDownloadTasks(deduped)
+                await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
                 let addedCount = DownloadStore.shared.tasks.count - beforeCount
                 completeCount += addedCount
-                skipCount += deduped.count - addedCount
+                skipCount += paramsList.count - addedCount
 
                 updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
 
-                // 上游:循环尾 nextCursor = cursor(服务端 null → 下一轮条件不满足退出)
-                nextCursor = newCursor
-                hasFetched = true
-                // 到达日期下限：停止翻页（上游 while 条件 now.isAfter(since)）
-                if now < since { break }
-                if nextCursor == nil { break }
-                // 页间节流,防 429 限流风暴
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try await Self.pageThrottle()
+            } catch is CancellationError {
+                AppLogger.info("创建任务已取消", category: "DL", ["userId": userId])
+                return
             } catch {
-                NSLog("CreationTask error: \(error.localizedDescription)")
+                AppLogger.warn("创建任务爬取出错,停止", category: "DL", [
+                    "userId": userId, "error": error.localizedDescription,
+                ])
                 break
-            }        }
+            }
+        }
+
+        AppLogger.info("创建任务爬取结束", category: "DL", [
+            "userId": userId,
+            "complete": "\(completeCount)",
+            "skip": "\(skipCount)",
+        ])
+    }
+
+    /// 页间节流。上游靠浏览器渲染节奏自然限速，Swift 循环无此节流，显式等价（防 429）。
+    private static func pageThrottle() async throws {
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            throw CancellationError()
+        }
     }
 
     private func updateCreationTaskProgress(id: String, completeCount: Int, skipCount: Int) {

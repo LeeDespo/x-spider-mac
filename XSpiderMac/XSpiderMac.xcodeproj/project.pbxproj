@@ -38,6 +38,7 @@
 		7F2FF43F7FDAF1C56D8BAAFD /* DockSyncLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85CFC477417C1D3E25F35D77 /* DockSyncLayout.swift */; };
 		87F8660898BCC8A8DFB5AEED /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72BF360634AFA8E3C4715248 /* ImageCache.swift */; };
 		89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CF5041DD389E11B677504D /* TwitterAccountInfo.swift */; };
+		8BEB503A5BED3601D7FA985D /* TimelinePagingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C67B0C451FE1C3AD820035B6 /* TimelinePagingTests.swift */; };
 		94615A744BCD266E21DBA59F /* TwitterUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1544EECF1A89E6C5FC211279 /* TwitterUser.swift */; };
 		98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */; };
 		9B123F8E30E1936E0AF7F83F /* InfoHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = B56F6F176179CCA68531F16C /* InfoHint.swift */; };
@@ -129,6 +130,7 @@
 		BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		BE73393E6DBB7A16308C178D /* SearchHistoryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchHistoryItem.swift; sourceTree = "<group>"; };
+		C67B0C451FE1C3AD820035B6 /* TimelinePagingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePagingTests.swift; sourceTree = "<group>"; };
 		C685570A33E16C638B5293CD /* FollowButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowButton.swift; sourceTree = "<group>"; };
 		CBBE72B5CC65256D2AE66924 /* XClientTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XClientTransaction.swift; sourceTree = "<group>"; };
 		CC206AB57040EA940F7C8BC6 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
@@ -305,6 +307,7 @@
 				DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */,
 				D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */,
 				F52E6EBC6E44EE82061C8673 /* L10nTests.swift */,
+				C67B0C451FE1C3AD820035B6 /* TimelinePagingTests.swift */,
 				644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */,
 				3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */,
 			);
@@ -420,6 +423,7 @@
 				75CA165417644DEFA269E1F5 /* DownloadEngineTests.swift in Sources */,
 				2F79BBCBC511B6E335D68903 /* FileNameTemplateTests.swift in Sources */,
 				6A781AF2E19543EB6B368AA4 /* L10nTests.swift in Sources */,
+				8BEB503A5BED3601D7FA985D /* TimelinePagingTests.swift in Sources */,
 				98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */,
 				045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */,
 			);
