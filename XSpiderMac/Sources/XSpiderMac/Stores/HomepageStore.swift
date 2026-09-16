@@ -192,6 +192,21 @@ final class HomepageStore {
         }
     }
 
+    /// 上游 InfiniteScroll:requestFn 一次触发,内部循环补拉直到拉满视口或到底。
+    /// isFillingViewport = loadingRef(单飞行锁);每轮后检查"仍欠内容"再续,避免 LazyVStack 不再触发 onAppear。
+    private var isFillingViewport = false
+    func fillViewport() async {
+        guard !isFillingViewport else { return }
+        isFillingViewport = true
+        defer { isFillingViewport = false }
+        while postListCursor != nil, !postListLoading {
+            let countBefore = postList.count
+            await loadMorePostList()
+            // 一轮下来没有任何增长且 cursor 未变 → 服务端卡死,停止避免死循环
+            if postList.count == countBefore { break }
+        }
+    }
+
     func loadMorePostList() async {
         guard let cursor = postListCursor, !postListLoading else { return }
         postListLoading = true

@@ -283,11 +283,20 @@ struct HomeView: View {
                     Button(L("下载全部")) {
                         if let user = store.userInfo {
                             creationStore.createCreationTask(user: user, filter: store.filter)
+                            // 仅在真的入队时打勾(重复创建被拒则不打勾)
+                            if creationStore.creationBlockedReason == nil {
+                                withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = true }
+                            }
                         }
-                        withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = true }
                     }
                     .compatGlassProminentButton()
                     .transition(.scale(scale: 0.85).combined(with: .opacity))
+                }
+                if let blocked = creationStore.creationBlockedReason {
+                    Text(blocked)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .transition(.opacity)
                 }
 
                 // 选择下载:仅媒体时间线数据源可用(推文时间线渲染推文卡,无逐媒体勾选语义)
@@ -340,8 +349,9 @@ struct HomeView: View {
             } else if store.postListCursor != nil {
                 Color.clear
                     .frame(height: 40)
-                    .onAppear {
-                        Task { await store.loadMorePostList() }
+                    .task(id: store.postList.count) {
+                        // 上游 InfiniteScroll 语义:一次性 while 补拉到拉满/到底,单飞行锁防重入
+                        await store.fillViewport()
                     }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))

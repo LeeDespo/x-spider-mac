@@ -10,7 +10,26 @@ final class CreationTaskStore {
     private var cancellableTasks: [String: Task<Void, Never>] = [:]
 
     /// 上游 createCreationTask：入队 + 触发调度
+    /// 重复创建拒绝提示(nil = 允许创建)
+    var creationBlockedReason: String?
+
     func createCreationTask(user: TwitterUser, filter: DownloadFilter) {
+        // 防重复创建:同用户 + 同过滤条件(数据源/类型/日期)的任务已在排队或执行中 → 拒绝
+        let duplicate = creationTasks.contains { existing in
+            (existing.status == .waiting || existing.status == .active)
+                && existing.user.id == user.id
+                && existing.filter.source == filter.source
+                && existing.filter.mediaTypes == filter.mediaTypes
+                && existing.filter.dateRange?.start == filter.dateRange?.start
+                && existing.filter.dateRange?.end == filter.dateRange?.end
+        }
+        if duplicate {
+            creationBlockedReason = L("该用户已有相同条件的任务在队列中")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.creationBlockedReason = nil
+            }
+            return
+        }
         let id = UUID().uuidString
         let task = CreationTask(
             id: id,
