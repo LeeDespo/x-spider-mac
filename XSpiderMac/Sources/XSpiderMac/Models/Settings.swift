@@ -118,6 +118,31 @@ enum SyncLayoutMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// 限流缓解（可选字段：旧的已存配置缺这些键时按默认值兜底，不整体解码失败）
+struct RateLimitSettings: Codable, Sendable {
+    /// 请求闸门开关：按端点分类排队 + 令牌桶限速
+    var gateEnabled: Bool?
+    /// 时间窗内允许的请求数（令牌桶容量）
+    var requestsPerWindow: Int?
+    /// 时间窗秒数
+    var windowSeconds: Int?
+    /// 同一端点串行（前一请求完成前不发下一个）
+    var serializePerEndpoint: Bool?
+    /// 429 熔断开关：触发后暂停该类端点，避免越限越试
+    var breakerEnabled: Bool?
+    /// 熔断冷却秒数
+    var cooldownSeconds: Int?
+
+    init() {
+        gateEnabled = true
+        requestsPerWindow = 10
+        windowSeconds = 10
+        serializePerEndpoint = true
+        breakerEnabled = true
+        cooldownSeconds = 900
+    }
+}
+
 struct AppSettings: Codable, Sendable {
     var writeLogs: Bool = false
     var language: String = "zh-Hans"
@@ -136,6 +161,8 @@ struct AppSettings: Codable, Sendable {
     var cacheLimitMB: Int?
     /// 液态玻璃模糊强度（0–100，仅 macOS 26+ 有效）
     var glassBlur: Int?
+    /// 限流缓解设置
+    var rateLimit: RateLimitSettings?
 }
 
 struct Settings: Codable, Sendable {
@@ -196,6 +223,21 @@ struct Settings: Codable, Sendable {
         get { app.fontSize ?? 14 }
         set { app.fontSize = min(18, max(12, newValue)) }
     }
+
+    // MARK: - 限流缓解（nil 安全 + 范围钳制）
+
+    /// 请求闸门开关（默认开）
+    var gateEnabled: Bool { app.rateLimit?.gateEnabled ?? true }
+    /// 时间窗内请求数上限（默认 10，钳制 1–120）
+    var gateRequestsPerWindow: Int { min(120, max(1, app.rateLimit?.requestsPerWindow ?? 10)) }
+    /// 时间窗秒数（默认 10，钳制 1–300）
+    var gateWindowSeconds: Int { min(300, max(1, app.rateLimit?.windowSeconds ?? 10)) }
+    /// 同端点串行（默认开）
+    var serializePerEndpoint: Bool { app.rateLimit?.serializePerEndpoint ?? true }
+    /// 429 熔断开关（默认开）
+    var breakerEnabled: Bool { app.rateLimit?.breakerEnabled ?? true }
+    /// 熔断冷却秒数（默认 900，钳制 30–3600）
+    var breakerCooldownSeconds: Int { min(3600, max(30, app.rateLimit?.cooldownSeconds ?? 900)) }
 
     enum Language: String, CaseIterable, Identifiable {
         case zhHans = "zh-Hans"

@@ -32,6 +32,19 @@ struct HomeTimelineView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 150)
                 }
+
+                // 展示形态：推文卡片 / 纯媒体瀑布流。
+                // 数据源同一条主页时间线（只含有媒体的推文），切换形态不产生任何新请求。
+                Picker(L("形态"), selection: Binding(
+                    get: { store.contentType },
+                    set: { store.contentType = $0 }
+                )) {
+                    Text(L("推文")).tag(HomeTimelineContentType.tweets)
+                    Text(L("媒体")).tag(HomeTimelineContentType.media)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -49,6 +62,8 @@ struct HomeTimelineView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if store.contentType == .media {
+                homeMediaWaterfall
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -75,6 +90,41 @@ struct HomeTimelineView: View {
         }
         .task {
             if store.posts.isEmpty { await store.initialLoad() }
+        }
+    }
+
+    /// 媒体瀑布流：按窗口宽度自适应列数；单元高度由媒体宽高比决定（不裁切、不 letterbox）。
+    /// 不强调媒体先后顺序，因此用最短列优先的瀑布流而非等宽等高网格。
+    private var homeMediaWaterfall: some View {
+        GeometryReader { geo in
+            // 目标列宽约 220pt，随窗口自适应（2–6 列）
+            let columns = min(6, max(2, Int((geo.size.width - 32) / 220)))
+            ScrollView {
+                WaterfallLayout(columnCount: columns, spacing: 10) {
+                    ForEach(store.flatMedia, id: \.media.id) { item in
+                        WaterfallMediaCell(media: item.media) {
+                            DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
+
+                // 无限滚动：最后一个媒体进入视口即续拉（数据源与推文形态相同）
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear {
+                        Task { await store.loadMore() }
+                    }
+                if store.loadingMore {
+                    ProgressView().padding(12)
+                } else if !store.hasMore {
+                    Text(L("已加载全部"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.bottom, 20)
+                }
+            }
         }
     }
 }
@@ -105,7 +155,7 @@ struct TimelinePostCard: View {
                 }
                 Spacer()
                 if let created = post.createdAt {
-                    Text(created.formatted(.dateTime.month().day()))
+                    Text(created.postDisplayText)
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }

@@ -46,6 +46,7 @@ final class SettingsStore {
         AppLogger.fileLoggingEnabled = settings.app.writeLogs
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
+        applyRateLimit()
     }
 
     private var savedSettings: Settings?
@@ -65,6 +66,12 @@ final class SettingsStore {
         AppLogger.fileLoggingEnabled = settings.app.writeLogs
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
+        applyRateLimit()
+    }
+
+    /// 限流缓解设置 → 请求闸门（设置改动即时生效）
+    private func applyRateLimit() {
+        Task { await NetworkClient.syncGateConfig(settings) }
     }
 
     /// 应用语言（应用内字符串表即时生效 + UserDefaults AppleLanguages 供系统级组件）

@@ -53,10 +53,19 @@ actor NetworkClient {
         var retryDelay: TimeInterval = 0.1
         var rateLimitRetries = 0
         var lastError: Error?
+        // 端点类别：驱动闸门（令牌桶/串行/熔断）与被动状态上报
+        let kind = RequestGate.Kind.classify(path: url.path)
+        var acquired = false
 
         while remainingRetryCount > 0 {
             if Task.isCancelled { throw CancellationError() }
             do {
+                // 闸门（令牌桶 + 同端点串行 + 熔断短路）。熔断/取消异常直接上抛，
+                // 不进入重试，避免"越限越试"。
+                if !acquired {
+                    try await Self.gate.acquire(kind: kind)
+                    acquired = true
+                }
                 let start = Date()
                 let resp = try await requestInternal(
                     method: method, url: url, query: query,
@@ -67,8 +76,16 @@ actor NetworkClient {
                     "status": "\(resp.status)",
                     "host": url.host ?? "?",
                 ])
+                await Self.gate.release(kind: kind)
+                acquired = false
                 if resp.status >= 400 {
                     if resp.status == 429 {
+                        let retryAfter = Self.retryAfter(resp)
+                        // 被动上报：账号限流 + 该类端点熔断（不主动探测，仅响应真实 429）
+                        await Self.gate.noteRateLimited(kind: kind, retryAfter: retryAfter)
+                        await MainActor.run {
+                            AccountStatusStore.shared.noteRateLimited(retryAfter: retryAfter)
+                        }
                         rateLimitRetries += 1
                         guard rateLimitRetries <= Self.maxRateLimitRetries else {
                             AppLogger.warn("限流(429)重试已用尽,停止本轮", category: "NET", [
@@ -77,7 +94,7 @@ actor NetworkClient {
                             throw NetworkError.httpStatus(429)
                         }
                         // 优先听服务端 Retry-After;否则指数退避(1s 起、16s 封顶)
-                        let wait = Self.retryAfter(resp) ?? min(max(retryDelay, 1.0) * 2, maxRetryDelay)
+                        let wait = retryAfter ?? min(max(retryDelay, 1.0) * 2, maxRetryDelay)
                         AppLogger.warn("触发限流(429),退避后重试", category: "NET", [
                             "url": url.path, "waitMs": "\(Int(wait * 1000))",
                             "retries": "\(rateLimitRetries)",
@@ -86,18 +103,34 @@ actor NetworkClient {
                         remainingRetryCount -= 1
                         continue
                     }
+                    // 被动记录其它异常状态
+                    if resp.status == 401 || resp.status == 403 {
+                        await MainActor.run { AccountStatusStore.shared.noteUnauthenticated(status: resp.status) }
+                    } else if resp.status >= 500 {
+                        await MainActor.run { AccountStatusStore.shared.noteServerError(status: resp.status) }
+                    }
                     throw NetworkError.httpStatus(resp.status)
                 }
+                // 成功：快速复位（store 内部先做一次枚举比较，正常态零开销）
+                await MainActor.run { AccountStatusStore.shared.noteSuccess() }
                 return resp
             } catch is CancellationError {
+                if acquired { await Self.gate.release(kind: kind) }
                 throw CancellationError()
+            } catch let gateError as RequestGate.GateError {
+                // 熔断短路：不是网络错误，直接上抛让调用方停本轮
+                throw gateError
             } catch {
+                if acquired { await Self.gate.release(kind: kind); acquired = false }
                 // URLSession 在任务取消时抛 URLError.cancelled(.cancelled) —— 必须等价于取消,
                 // 否则退避睡眠被跳过 → 同一毫秒空转重试
                 if Task.isCancelled || (error as? URLError)?.code == .cancelled {
                     throw CancellationError()
                 }
                 lastError = error
+                await MainActor.run {
+                    AccountStatusStore.shared.noteNetworkError(error.localizedDescription)
+                }
                 AppLogger.warn("请求失败将重试", category: "NET", [
                     "method": method,
                     "url": url.path.isEmpty ? url.absoluteString : url.path,
@@ -111,6 +144,21 @@ actor NetworkClient {
         }
 
         throw lastError ?? NetworkError.unknown
+    }
+
+    /// 全局请求闸门（限流缓解）
+    private static let gate = RequestGate.shared
+
+    /// 把当前设置推给闸门（设置变更时调用；请求前也会惰性同步一次）
+    static func syncGateConfig(_ settings: Settings) async {
+        await gate.update(config: RequestGate.GatewayConfig(
+            enabled: settings.gateEnabled,
+            requestsPerWindow: settings.gateRequestsPerWindow,
+            windowSeconds: settings.gateWindowSeconds,
+            serialize: settings.serializePerEndpoint,
+            breakerEnabled: settings.breakerEnabled,
+            cooldownSeconds: settings.breakerCooldownSeconds
+        ))
     }
 
     /// 429 最多重试次数（上游无此限制，此处为保护账号配额的有意收紧）

@@ -65,6 +65,12 @@ struct MediaDetailView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { close() }
+        // 右上角圆形悬浮关闭按钮：全屏浮层下必须有一个可见出口
+        // （此前只能盲点卡片外空白或按 ESC，用户找不到关闭方式）
+        .overlay(alignment: .topTrailing) {
+            closeButton
+                .padding(24)
+        }
         .background {
             // 快捷键:ESC 关闭;←/→ 切换媒体
             Button("") { close() }
@@ -91,6 +97,24 @@ struct MediaDetailView: View {
 
     // MARK: - 左：媒体卡
 
+    /// 右上角关闭按钮（圆形玻璃，36pt）
+    private var closeButton: some View {
+        Button {
+            close()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.primary)
+                .frame(width: 36, height: 36)
+                .liquidGlass(interactive: true, cornerRadius: 18)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(L("关闭"))
+        .keyboardShortcut(.escape, modifiers: []) // 与既有 ESC 行为一致
+        .zIndex(300)
+    }
+
     private var mediaCard: some View {
         VStack(spacing: 10) {
             // 媒体区(手势挂在这一层,不影响 AVPlayerView 内部点击/控制)
@@ -102,6 +126,17 @@ struct MediaDetailView: View {
                         .padding(10)
                         .id(mediaIndex)
                         .transition(.opacity)
+                } else {
+                    // 无媒体推文（如"推文时间线"里的纯文字推文）：给出明确空态，
+                    // 此前这里只剩黑底，看起来像界面崩了
+                    VStack(spacing: 10) {
+                        Image(systemName: "text.bubble")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.white.opacity(0.6))
+                        Text(L("该推文没有媒体内容"))
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
                 }
                 // 多媒体页码(右上)
                 if medias.count > 1 {
@@ -130,31 +165,19 @@ struct MediaDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            // 左右滑手势:挂在媒体区容器(simultaneous 不与播放器互斥;drag 阈值 40)
+            // 触控板双指左右滑切媒体（事件监视器实现，含惯性判定；此前因命中测试问题不触发）
             .contentShape(Rectangle())
             .background {
-                // 触控板双指左右滑切媒体(不与纵向滚动冲突,仅水平分量)
                 ScrollWheelCatcher { direction in
                     let next = mediaIndex + direction
                     if medias.indices.contains(next) {
                         withAnimation(.spring(duration: 0.35)) { mediaIndex = next }
                     }
                 }
-                .allowsHitTesting(false)  // 不吞点击,只收 scrollWheel
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 40)
-                    .onEnded { value in
-                        let dx = value.translation.width
-                        if dx < -40, mediaIndex < medias.count - 1 {
-                            withAnimation(.spring(duration: 0.35)) { mediaIndex += 1 }
-                        } else if dx > 40, mediaIndex > 0 {
-                            withAnimation(.spring(duration: 0.35)) { mediaIndex -= 1 }
-                        }
-                    }
-            )
-            // 下载胶囊:媒体正下方居中(同一面板内,与媒体有 10pt 间隙);出入带动画
-            if showCapsule {
+            // 下载胶囊:媒体正下方居中(同一面板内,与媒体有 10pt 间隙);出入带动画。
+            // 无媒体时不渲染（否则出现"下载全部(0)"这种无意义操作）
+            if showCapsule, !medias.isEmpty {
                 downloadCapsule
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -236,7 +259,7 @@ struct MediaDetailView: View {
                 FollowButton(screenName: post.user.screenName)
                 Spacer()
                 if let created = post.createdAt {
-                    Text(created.formatted(.dateTime.month().day()))
+                    Text(created.postDisplayText)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -415,6 +438,9 @@ struct MediaDetailView: View {
         do {
             let full = try await TwitterAPI.shared.getTweet(id: post.id)
             detail = full
+            // 详情返回的媒体集合可能与列表里的不一致（数量/顺序），按媒体 id 重新定位当前索引，
+            // 否则页码错乱或停在越界位置
+            resyncMediaIndex(from: post.medias, to: full.medias)
             liked = full.favorited ?? false
             retweeted = full.retweeted ?? false
             // replies = 会话时间线里非 focal 的推文
@@ -423,6 +449,20 @@ struct MediaDetailView: View {
         } catch {
             repliesError = L("评论加载失败")
         }
+    }
+
+    /// 详情媒体集合变化时，按当前媒体的 id 在新集合中重新定位
+    private func resyncMediaIndex(from old: [TwitterMedia]?, to new: [TwitterMedia]?) {
+        let oldList = old ?? []
+        let newList = new ?? []
+        guard !oldList.isEmpty, !newList.isEmpty else { return }
+        guard oldList.count != newList.count else { return } // 结构相同则保持用户在看的索引
+        let currentId = oldList.indices.contains(mediaIndex) ? oldList[mediaIndex].id : nil
+        guard let currentId, let newIndex = newList.firstIndex(where: { $0.id == currentId }) else {
+            mediaIndex = min(mediaIndex, max(0, newList.count - 1))
+            return
+        }
+        mediaIndex = newIndex
     }
 }
 

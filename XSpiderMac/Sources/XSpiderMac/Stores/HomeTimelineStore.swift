@@ -12,6 +12,11 @@ final class HomeTimelineStore {
         get { HomeTimelineMode(rawValue: UserDefaults.standard.string(forKey: "home.timelineMode") ?? "") ?? .forYou }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.timelineMode") }
     }
+    /// 展示形态：推文卡片 / 纯媒体瀑布流
+    var contentType: HomeTimelineContentType {
+        get { HomeTimelineContentType(rawValue: UserDefaults.standard.string(forKey: "home.timelineContent") ?? "") ?? .tweets }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.timelineContent") }
+    }
     var followingSort: FollowingSort {
         get { FollowingSort(rawValue: UserDefaults.standard.string(forKey: "home.followingSort") ?? "") ?? .hot }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "home.followingSort") }
@@ -19,7 +24,12 @@ final class HomeTimelineStore {
     var posts: [TwitterPost] = []
     var loading = false
     var loadingMore = false
+    /// 展平后的媒体列表（媒体瀑布流用）。getHomeTimeline 只返回有媒体的推文，
+    /// 因此无需额外请求即可切换形态 —— 不额外消耗 X 配额。
+    var flatMedia: [(post: TwitterPost, media: TwitterMedia, index: Int)] = []
     private var cursor: String?
+    /// 是否还有更多可加载（视图展示"已加载全部"用；不暴露 cursor 本身）
+    var hasMore: Bool { cursor != nil }
     private var seenIds = Set<String>()
     private var generation = 0
 
@@ -61,6 +71,7 @@ final class HomeTimelineStore {
             posts = newPosts
             seenIds = Set(newPosts.map(\.id))
             cursor = next
+            rebuildFlatMedia()
         } catch {
             guard gen == generation else { return }
             AppLogger.warn("主页时间线加载失败", category: "HOME", ["error": error.localizedDescription])
@@ -80,11 +91,27 @@ final class HomeTimelineStore {
                 return
             }
             posts.append(contentsOf: fresh)
+            rebuildFlatMedia()
             self.cursor = next
         } catch {
             AppLogger.warn("主页时间线翻页失败", category: "HOME", ["error": error.localizedDescription])
         }
     }
+
+    /// 重建媒体瀑布流数据（增量语义：只在 posts 变化时调用，不在视图 body 里重算）
+    private func rebuildFlatMedia() {
+        flatMedia = posts.flatMap { post in
+            (post.medias ?? []).enumerated().map { (index, media) in
+                (post, media, index + 1)
+            }
+        }
+    }
+}
+
+/// 主页展示形态
+enum HomeTimelineContentType: String, CaseIterable, Sendable {
+    case tweets   // 推文卡片（现有样式）
+    case media    // 纯媒体瀑布流
 }
 
 enum FollowingSort: String, CaseIterable, Sendable {

@@ -57,6 +57,32 @@ struct SidebarView: View {
     @State private var accountMenuVisible = false
     @State private var showFollowingList = false
     @State private var switchingAccount: SavedAccount?
+    @State private var statusStore = AccountStatusStore.shared
+
+    /// 账号/限流状态标签。被动采集：只在操作遇阻时出现，正常态整个视图不渲染。
+    private func statusBadge(_ text: String) -> some View {
+        let tint: Color = {
+            switch statusStore.severity {
+            case .critical: return .red
+            case .warning: return .orange
+            case .muted: return .secondary
+            case .normal: return .secondary
+            }
+        }()
+        return Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(tint.opacity(0.14), in: Capsule())
+            .help(statusStore.helpText)
+            // 登录失效 → 点击直接去导入 Cookie
+            .onTapGesture {
+                if statusStore.suggestsReLogin {
+                    NotificationCenter.default.post(name: .openCookieImport, object: nil)
+                }
+            }
+    }
 
     private var accountCard: some View {
         HStack(spacing: 12) {
@@ -82,6 +108,10 @@ struct SidebarView: View {
                     Text(L("点击导入 Cookie"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                // 被动状态标签：仅在真实操作遇阻时出现（正常态不渲染 → 无布局开销）
+                if let badge = statusStore.badgeText {
+                    statusBadge(badge)
                 }
             }
 

@@ -216,11 +216,13 @@ actor TwitterAPI {
     func followUser(screenName: String) async throws {
         try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/create.json",
                            fields: ["screen_name": screenName, "skip_status": "true"])
+        invalidateFollowCache(screenName)
     }
 
     func unfollowUser(screenName: String) async throws {
         try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/destroy.json",
                            fields: ["screen_name": screenName, "skip_status": "true"])
+        invalidateFollowCache(screenName)
     }
 
     /// 当前账户 restId(账户信息缺 id 时用 UserByScreenName 补查)
@@ -293,7 +295,15 @@ actor TwitterAPI {
     }
 
     /// 是否已关注（v1.1 friendships/show）
-    func isFollowing(screenName: String) async throws -> Bool {
+    /// 关系结果做过期缓存：每张推文卡的关注按钮都会查一次，时间线上同名作者重复出现时
+    /// 会造成大量重复请求（实测一次首页加载并发多个 friendships/show），是限流的放大器。
+    private var followCache: [String: (value: Bool, at: Date)] = [:]
+    private let followCacheTTL: TimeInterval = 300
+
+    func isFollowing(screenName: String, useCache: Bool = true) async throws -> Bool {
+        if useCache, let hit = followCache[screenName], Date().timeIntervalSince(hit.at) < followCacheTTL {
+            return hit.value
+        }
         try await ensureXClIdLoaded()
         // v1.1 friendships 系列须走 api.twitter.com(x.com 域名对该端点 401)
         let url = URL(string: "https://api.twitter.com/1.1/friendships/show.json")!
@@ -308,7 +318,14 @@ actor TwitterAPI {
               let rel = json["relationship"] as? [String: Any],
               let source = rel["source"] as? [String: Any] else { return false }
         // source.following = 我是否关注 target
-        return source["following"] as? Bool ?? false
+        let following = source["following"] as? Bool ?? false
+        followCache[screenName] = (following, Date())
+        return following
+    }
+
+    /// 关注/取关后失效该用户的关系缓存（本方法与 isFollowing 同 actor 串行，无数据竞争）
+    private func invalidateFollowCache(_ screenName: String) {
+        followCache.removeValue(forKey: screenName)
     }
 
     /// v1.1 form-urlencoded POST(baseHost 默认 x.com;v1.1 friendships 系列须走 api.twitter.com)
@@ -443,7 +460,10 @@ actor TwitterAPI {
         try ensureResponse(resp)
         guard let json = (try? resp.json()) as? [String: Any] else { throw TwitterAPIError.parseFailure }
         let instructions = Self.path(json, ["data", "home", "home_timeline_urt", "instructions"]) as? [[String: Any]] ?? []
-        let posts = Self.extractPostsFromTweetEntries(instructions)
+        // requireMedia:false —— 返回全部推文，由展示层区分：
+        // 「推文」分段显示全部（含纯文字），「媒体」分段从同一份数据里取有媒体的瀑布流。
+        // 若在此过滤，「推文」分段就只剩带媒体的推文，两个分段内容会完全一样。
+        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
         let bottom = Self.extractBottomCursor(instructions)
         return (posts, bottom)
     }
@@ -835,6 +855,24 @@ enum TwitterDate {
     static func parse(_ string: String?) -> Date? {
         guard let string, !string.isEmpty else { return nil }
         return formatter.date(from: string)
+    }
+}
+
+// MARK: - 推文时间显示
+
+extension Date {
+    /// 推文/媒体卡片统一时间样式：含年份（yyyy年M月d日 / Sep 16, 2026）。
+    /// 跟随 `L10n.language`（应用内三语切换），而非系统语言——项目 UI 语言由设置驱动，
+    /// 两者可能不一致，此处显式对齐避免中英混排。
+    var postDisplayText: String {
+        let locale: Locale = {
+            switch L10n.language {
+            case .en: return Locale(identifier: "en_US")
+            case .zhHant: return Locale(identifier: "zh_Hant")
+            default: return Locale(identifier: "zh_Hans")
+            }
+        }()
+        return formatted(.dateTime.year().month().day().locale(locale))
     }
 }
 

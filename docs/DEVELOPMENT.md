@@ -131,3 +131,57 @@ Swift 版此前把 cursor 推进放在循环尾（`continue` 之后），被日�
 4. 快速来回滚动媒体网格：无明显掉帧；滚回顶部图片不重新闪载。
 5. `log stream --predicate 'process == "XSpiderMac"'` 观察 NET 分类：翻页请求间隔 ≥1s 量级，
    无连续 429。
+
+---
+
+## 4. 本轮新增（2026-09-16 第三批）
+
+### 详情浮层
+
+- **呈现路径统一**：`HomeView` 里独立的 `.sheet(item:)` 已删除，三处入口（主页时间线、
+  搜索媒体网格、搜索推文时间线）全部走 `DetailOverlayCenter` 全窗浮层，外观与关闭行为一致。
+- **无媒体推文**：`MediaDetailView` 媒体卡补空态（此前 `current == nil` 只剩黑底，
+  看起来像界面崩了）；无媒体时不渲染下载胶囊（不再出现"下载全部(0)"）。
+- **右上角圆形关闭按钮**：全屏浮层下此前只能盲点空白或按 ESC，用户找不到出口。
+- **媒体索引重定位**：`detail` 返回的媒体集合与列表不一致时（数量/顺序变化），按媒体 id
+  重新定位 `mediaIndex`，避免页码错乱。
+
+### 日期显示
+
+统一为 `Date.postDisplayText`（`TwitterAPI.swift` 扩展）：**含年份**，并显式绑定
+`L10n.language` 而非系统 Locale——项目 UI 语言由设置驱动，两者可能不一致（避免中英混排）。
+
+### 双指左右滑切换媒体
+
+**旧实现不触发的原因已定位**：`ScrollWheelCatcher` 是 `NSViewRepresentable`，被放在
+`.background` 且带 `allowsHitTesting(false)` —— 该视图不参与命中测试，`scrollWheel(with:)`
+收不到事件。改为 `NSEvent.addLocalMonitorForEvents`（窗口级事件监视器，不依赖命中测试、
+不吞点击、与 AVPlayerView 互不干扰）。同时新增**惯性判定**：`momentumPhase` 非空期间不触发，
+一次手势（`.began` → `.ended`）内最多触发一次，避免触控板惯性滚动连跳多张。
+
+### 限流缓解（可配置）与被动状态提示
+
+- `Services/RequestGate.swift`：全局闸门 = 令牌桶 + **同类别互斥** + 429 熔断。
+  同类别互斥是必须的：单靠"上次完成时间"挡不住并发同时发起（实测首页并发 3 个
+  `friendships/show.json`）。异常安全：先取令牌再占互斥，中途取消不留残留锁。
+- `Stores/AccountStatusStore.swift`：**被动**状态采集，唯一入口是 `NetworkClient`
+  （所有 X 请求的汇聚点）。不主动探测、不发预检请求、零额外配额。状态 `Equatable`
+  比较后才写，正常态快路径只做一次枚举比较；仅状态迁移写日志。
+- 侧边栏账户卡下方状态标签：429 → 红色「429 限流」，401/403 → 橙色「登录失效」（点击直达
+  Cookie 导入），5xx/网络错误各有表述；正常态整个标签不渲染。
+- 设置页「限流缓解」区：闸门开关、每时间窗请求数、时间窗秒数、同类串行、熔断开关、
+  暂停时长、立即恢复——全部用户可配，`nil` 安全且有范围钳制。
+
+### 主页推文/媒体分段 + 媒体瀑布流
+
+- `HomeTimelineView` 新增形态分段（推文 / 媒体），持久化到 `home.timelineContent`。
+- `Views/WaterfallLayout.swift`：最短列优先的瀑布流 `Layout`。媒体单元高度由**元数据宽高比**
+  算出（不依赖图片解码），因此测量廉价；图片按自身比例占据高度，不再被裁切或 letterbox 到
+  统一格子里。列数随窗口宽度自适应（2–6 列）。
+- 数据源同一条主页时间线：`getHomeTimeline` 改为 `requireMedia: false` 返回全部推文，
+  由展示层分流（推文段显示全部含纯文字，媒体段取有媒体的部分），**切换形态不产生新请求**。
+
+### 另一个限流放大器（顺手修掉）
+
+每张推文卡的 `FollowButton` 都会在出现时查一次 `isFollowing`；时间线上同名作者重复出现时
+会产生大量重复请求。已加 300 秒过期缓存，关注/取关后失效该用户缓存。

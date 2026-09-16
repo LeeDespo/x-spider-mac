@@ -3,6 +3,7 @@ import SwiftUI
 /// 设置页：下载（保存路径/账号子目录/文件名模板/跳过相同文件）+ 代理 + 外观（字体/语言）+ 日志 + 防休眠。
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
+    @State private var statusStore = AccountStatusStore.shared
     @State private var exportMessage: String?
     @State private var showCleanupDialog = false
     /// 同步清单管理弹窗
@@ -13,6 +14,7 @@ struct SettingsView: View {
             engineSection
             downloadSection
             homeSection
+            rateLimitSection
             proxySection
             uiSection
             appearanceSection
@@ -183,6 +185,94 @@ struct SettingsView: View {
             }
         } header: {
             Label(L("引擎"), systemImage: "cpu")
+        }
+    }
+
+    // MARK: - 限流缓解
+
+    /// 限流缓解：请求闸门（令牌桶 + 同端点串行）与 429 熔断。
+    /// 目标是把"瞬时并发"收进统一速率视图，避免短期大量访问触发 X 的 429。
+    private var rateLimitSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.gateEnabled },
+                set: { settingsStore.settings.app.rateLimit?.gateEnabled = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("请求闸门"))
+                    InfoHint(text: L("开启后，所有对 X 的请求按类别排队并限速，避免短时间集中访问触发限流。\n关闭后请求不做节流（不推荐）。"))
+                }
+            }
+
+            if settingsStore.settings.gateEnabled {
+                NumberStepperField(
+                    title: L("每时间窗请求数"),
+                    value: Binding(
+                        get: { settingsStore.settings.gateRequestsPerWindow },
+                        set: { settingsStore.settings.app.rateLimit?.requestsPerWindow = $0 }
+                    ),
+                    range: 1...120
+                )
+                NumberStepperField(
+                    title: L("时间窗（秒）"),
+                    value: Binding(
+                        get: { settingsStore.settings.gateWindowSeconds },
+                        set: { settingsStore.settings.app.rateLimit?.windowSeconds = $0 }
+                    ),
+                    range: 1...300
+                )
+                Text(L("当前速率：约每 \(settingsStore.settings.gateWindowSeconds) 秒 \(settingsStore.settings.gateRequestsPerWindow) 个请求"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                Toggle(isOn: Binding(
+                    get: { settingsStore.settings.serializePerEndpoint },
+                    set: { settingsStore.settings.app.rateLimit?.serializePerEndpoint = $0 }
+                )) {
+                    HStack(spacing: 6) {
+                        Text(L("同类请求串行"))
+                        InfoHint(text: L("同一类请求（如时间线）上一次返回前不发下一个，消除并发尖峰。建议保持开启。"))
+                    }
+                }
+            }
+
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.breakerEnabled },
+                set: { settingsStore.settings.app.rateLimit?.breakerEnabled = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("触发限流后自动暂停"))
+                    InfoHint(text: L("检测到 429 限流时，自动暂停该类请求一段时间，避免持续访问让限流加重。\n暂停期间不会发起新请求，到期自动恢复；也可在下方立即恢复。"))
+                }
+            }
+
+            if settingsStore.settings.breakerEnabled {
+                NumberStepperField(
+                    title: L("暂停时长（秒）"),
+                    value: Binding(
+                        get: { settingsStore.settings.breakerCooldownSeconds },
+                        set: { settingsStore.settings.app.rateLimit?.cooldownSeconds = $0 }
+                    ),
+                    range: 30...3600
+                )
+                if statusStore.breakerOpen {
+                    HStack {
+                        Text(L("当前有请求处于暂停中"))
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button(L("立即恢复")) {
+                            Task {
+                                await RequestGate.shared.resetBreakers()
+                                statusStore.breakerOpen = false
+                            }
+                        }
+                        .compatGlassButton()
+                    }
+                }
+            }
+        } header: {
+            Label(L("限流缓解"), systemImage: "hand.raised.slash")
         }
     }
 
