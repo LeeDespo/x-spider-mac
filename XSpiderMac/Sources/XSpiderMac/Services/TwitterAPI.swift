@@ -18,6 +18,9 @@ actor TwitterAPI {
     /// 非持久状态：由 AppStore 每次 cookie 变更时推送
     func configure(cookie: String, proxy: ProxySettings) async {
         self.cookieString = cookie
+        // 先释放旧会话：仅替换引用不会关闭其连接池，旧连接可能仍指向失效的代理路径，
+        // 在超时前一直挂着 —— 表现为"代理恢复了但应用还卡着"
+        await client.invalidate()
         self.client = NetworkClient(proxy: proxy)
         await XClientTransaction.shared.updateClient(client)
         xclidReady = false

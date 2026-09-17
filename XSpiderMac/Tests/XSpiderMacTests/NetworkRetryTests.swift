@@ -132,4 +132,124 @@ final class HomeTimelineBatchTests: XCTestCase {
         XCTAssertEqual(latest, ["mA", "mB"], "最新 = 时间线原序")
         XCTAssertEqual(hot, ["mB", "mA"], "热门 = 按赞数降序")
     }
+
+    // MARK: - 热门排序的"按页冻结"（修复媒体跳位闪烁）
+
+    /// 回归：热门模式下翻页**不得**让已加载的媒体改变顺序。
+    ///
+    /// 此前 visiblePosts 每次访问都对全量重排，新页里的高赞推文会插到前面，
+    /// 已渲染的媒体瞬间跳位 —— 用户反馈"加载下一页会闪一下、媒体变顺序"。
+    /// 现在策略是**按页排序、只追加**：新页只在页内排序后整页追加。
+    ///
+    /// 通过模拟翻页路径（首屏赋值 → append 新页）验证。
+    @MainActor
+    func testHotSortDoesNotReorderExistingOnAppend() {
+        let store = HomeTimelineStore.shared
+        store.mode = .following
+        store.setFollowingSort(.hot)
+        // 首屏：A(1赞) B(5赞) → 页内排序后 B, A
+        store.posts = [
+            makePost("A", likes: 1, media: ["mA"]),
+            makePost("B", likes: 5, media: ["mB"]),
+        ]
+        store.reorderForCurrentSort()   // 模拟 reload 的首屏定序
+        let afterFirstPage = store.displayPosts.map(\.id)
+        XCTAssertEqual(afterFirstPage, ["B", "A"], "首屏应在页内按赞数排序")
+
+        // 第二页：C 有 100 赞（远高于已加载的）——若全量重排，C 会插到最前
+        store.posts.append(makePost("C", likes: 100, media: ["mC"]))
+        store.appendPageToDisplayOrder([makePost("C", likes: 100, media: ["mC"])])
+        let afterSecondPage = store.displayPosts.map(\.id)
+
+        // 关键断言：已加载的 B、A 顺序与位置不变，新页整页追加在后
+        XCTAssertEqual(Array(afterSecondPage.prefix(2)), ["B", "A"],
+                       "翻页不得重排已加载内容（否则视觉上会跳位闪烁）")
+        XCTAssertEqual(afterSecondPage.last, "C", "新页应追加在末尾")
+    }
+
+    /// 新页内部应按赞数排序（页内有序），且整页在已有内容之后
+    @MainActor
+    func testNewPageIsSortedWithinItself() {
+        let store = HomeTimelineStore.shared
+        store.mode = .following
+        store.setFollowingSort(.hot)
+        store.posts = [makePost("A", likes: 1, media: ["mA"])]
+        store.reorderForCurrentSort()
+
+        // 模拟一页（多条）：页内应降序
+        let page = [
+            makePost("C", likes: 10, media: ["mC"]),
+            makePost("D", likes: 50, media: ["mD"]),
+        ]
+        store.posts.append(contentsOf: page)
+        store.appendPageToDisplayOrder(page)
+
+        let ids = store.displayPosts.map(\.id)
+        XCTAssertEqual(ids, ["A", "D", "C"],
+                       "已有内容不动，新页在其后且页内按赞数降序")
+    }
+
+    /// 用户**主动**切排序时应当整体重排（与翻页的"冻结"相对）
+    @MainActor
+    func testExplicitSortSwitchReordersEverything() {
+        let store = HomeTimelineStore.shared
+        store.mode = .following
+        store.posts = [
+            makePost("A", likes: 1, media: ["mA"]),
+            makePost("B", likes: 500, media: ["mB"]),
+        ]
+        store.setFollowingSort(.hot)
+        XCTAssertEqual(store.displayPosts.map(\.id), ["B", "A"], "主动切热门 → 整体重排")
+        store.setFollowingSort(.latest)
+        XCTAssertEqual(store.displayPosts.map(\.id), ["A", "B"], "主动切最新 → 回到原序")
+    }
+}
+
+/// 网络异常状态的 TTL（打破"断网 → 无成功请求 → 状态永不清除"的死锁）
+final class NetworkStateTTLTests: XCTestCase {
+
+    /// 网络异常必须带 TTL：否则断网期间无成功请求，状态永远清除不掉，
+    /// 爬虫挂起与下载降级被无限延长（"代理恢复后应用仍卡很久，除非重启"）。
+    @MainActor
+    func testNetworkErrorExpiresForSuspension() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteNetworkFailure(URLError(.cannotConnectToHost))
+        // 刚发生时：应挂起新工作
+        XCTAssertTrue(store.shouldSuspendNewWork, "刚断连时应暂停新工作")
+
+        // 展示层不应因 TTL 而撒谎（仍显示异常）
+        XCTAssertNotEqual(store.effectiveHealth, .normal, "展示不应因 TTL 谎称正常")
+    }
+
+    /// 限流态也应挂起；正常态不该挂起
+    @MainActor
+    func testSuspensionMatrix() {
+        let store = AccountStatusStore.shared
+
+        store.reset()
+        XCTAssertFalse(store.shouldSuspendNewWork, "正常态不应挂起")
+
+        store.noteRateLimited(until: Date().addingTimeInterval(300))
+        XCTAssertTrue(store.shouldSuspendNewWork, "限流态应挂起")
+        store.reset()
+
+        store.noteUnauthenticated(status: 401)
+        XCTAssertTrue(store.shouldSuspendNewWork, "登录失效应挂起")
+        store.reset()
+
+        store.noteServerError(status: 503)
+        XCTAssertFalse(store.shouldSuspendNewWork, "服务端 5xx 不挂起（重试即可）")
+        store.reset()
+    }
+
+    /// 限流到期后应停止挂起（与既有 deadline 语义一致）
+    @MainActor
+    func testRateLimitExpiryStopsSuspension() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.setRateLimitDeadlineForTesting(Date().addingTimeInterval(-1))  // 已过期
+        XCTAssertFalse(store.shouldSuspendNewWork, "限流到期后不应继续挂起")
+        store.reset()
+    }
 }

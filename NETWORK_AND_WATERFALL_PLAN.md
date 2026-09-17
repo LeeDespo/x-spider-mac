@@ -1,8 +1,8 @@
 # 瀑布流滚动修复 + 网络连接层审查方案
 
 > 读者：本项目 AI 代理（跨会话续接）。前置：分页/爬虫/限流/下载均已修复（`4e5d3b4`…`23d8e44`）。
-> **状态（2026-09-17 更新）**：A（回退 bug）、B（预取一屏）、C.1①（代理重建）、C.1③（重试预算/超时/失败可见）**已实施**；
-> **C.1②（session invalidate）与 C.1④（异常状态 TTL）留待下次**。
+> **状态（2026-09-17 全部完成）**：A、B、C.1①、C.1②、C.1③、C.1④ 均已实施。
+> 另有追加修复：热门排序"按页冻结"（消除翻页时媒体跳位闪烁）。
 > 所有结论带代码位置与实测数据，可直接核对。
 >
 > 三部分：**A** 瀑布流回退 bug（已定位到行）｜**B** 无缝加载（见解与方案）｜**C** 网络连接层审查。
@@ -127,7 +127,7 @@ private func applyProxyIfChanged() {
 ```
 在 `save()` 里调用它（与 `applyRateLimit()` 并列）。
 
-### 根因 ②：URLSession 从不 invalidate → 旧连接池与失效连接被长期持有 ⬜ 待实施
+### 根因 ②：URLSession 从不 invalidate → 旧连接池与失效连接被长期持有 ✅ 已实施
 
 ```swift
 // TwitterAPI.swift:19-24
@@ -180,7 +180,7 @@ func configure(cookie: String, proxy: ProxySettings) async {
    应增加 `loadError` 状态并在视图显示"加载失败，点击重试"。
    （`HomepageStore` 已有 `postListError` 可参考，主页时间线缺这个。）
 
-### 根因 ④（附加）：熔断/异常状态没有自动解除路径 ⬜ 待实施
+### 根因 ④（附加）：熔断/异常状态没有自动解除路径 ✅ 已实施
 
 `RequestGate.resetBreakers()` 只在两处调用：用户点侧边栏重试、设置页「立即恢复」。
 `AccountStatusStore` 的 `offline` / `timedOut` 状态**只能靠"下一次请求成功"来清除**——

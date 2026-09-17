@@ -208,10 +208,10 @@ final class CreationTaskStore {
 
     /// 页间节流。上游靠浏览器渲染节奏自然限速，Swift 循环无此节流，显式等价（防 429）。
     ///
-    /// 节奏随限流状态自适应：正常 500ms；曾触发限流（或当前处于限流/异常状态）时放缓到 1.5s。
+    /// 节奏随状态自适应：正常 500ms；处于限流/异常（且未被 TTL 放行）时放缓到 1.5s。
     private static func pageThrottle() async throws {
         let caution = await MainActor.run {
-            AccountStatusStore.shared.effectiveHealth != .normal
+            AccountStatusStore.shared.shouldSuspendNewWork
         }
         let nanos: UInt64 = caution ? 1_500_000_000 : 500_000_000
         do {
@@ -222,16 +222,14 @@ final class CreationTaskStore {
     }
 
     /// 限流期间挂起：等状态恢复或熔断冷却结束再继续（cursor 不变，进度保留）。
-    /// 只对"继续爬也没用"的状态挂起：限流、离线、超时、登录失效。
+    ///
+    /// 用 `shouldSuspendNewWork` 而非直接读状态：网络类异常带 TTL，
+    /// 到期后放行让真实请求重新判定 —— 否则"断网时无成功请求 → 状态永不清除 → 无限挂起"
+    /// （用户反馈的"代理恢复后应用仍卡很久，除非重启"）。
     private func waitWhileThrottled(userId: String) async {
         var logged = false
         while !Task.isCancelled {
-            let blocked: Bool = await MainActor.run {
-                switch AccountStatusStore.shared.effectiveHealth {
-                case .rateLimited, .timedOut, .offline, .unauthenticated: return true
-                case .normal, .serverError: return false
-                }
-            }
+            let blocked = await MainActor.run { AccountStatusStore.shared.shouldSuspendNewWork }
             guard blocked else {
                 if logged {
                     AppLogger.info("限流解除,创建任务续跑", category: "DL", ["userId": userId])
@@ -242,7 +240,7 @@ final class CreationTaskStore {
                 AppLogger.warn("限流中,创建任务挂起等待恢复", category: "DL", ["userId": userId])
                 logged = true
             }
-            // 分段等待：期间用户点「重试」或冷却到期即可续跑
+            // 分段等待：期间用户点「重试」、冷却到期或网络异常 TTL 到期即可续跑
             try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
     }

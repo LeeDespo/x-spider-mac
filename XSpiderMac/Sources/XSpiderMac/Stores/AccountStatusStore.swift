@@ -56,8 +56,46 @@ final class AccountStatusStore {
         return false
     }
 
-    /// 对外可见的有效状态（限流到期后按正常处理）
+    /// 网络类异常（连不上/超时）的自动过期时间。
+    ///
+    /// 为什么需要：这两种状态**只能靠"下一次请求成功"清除**（见 noteSuccess），
+    /// 但网络已断时不会有成功请求 —— 形成死锁，且 `CreationTaskStore.waitWhileThrottled`
+    /// 与下载并发降级都依赖这些状态，会把挂起无限延长（"代理恢复后应用仍卡很久，除非重启"）。
+    ///
+    /// 到期后**不再视为异常**，让后续请求真的发出去由真实结果重新判定。
+    /// 这与 rateLimited 用 `until` 到期判定是同一套语义，当时漏了这两个状态。
+    private let networkErrorTTL: TimeInterval = 30
+
+    /// 网络类异常是否已过 TTL（读取时判定，非轮询）
+    private var networkErrorExpired: Bool {
+        switch health {
+        case .offline, .timedOut:
+            return Date().timeIntervalSince(changedAt) >= networkErrorTTL
+        default:
+            return false
+        }
+    }
+
+    /// 对外可见的有效状态（**仅用于展示**）。
+    /// 限流到期后按正常显示（deadline 是"预计恢复时刻"，到期即表示该提示过期）。
+    /// 网络类异常**不在此处过期**：那是关于现实的一次观测，过期不代表已恢复，
+    /// 让徽标改口说"正常"是撒谎（见 noteSuccess —— 真恢复会由成功请求清除）。
     var effectiveHealth: Health { rateLimitExpired ? .normal : health }
+
+    /// 是否应**暂停发起新工作**（爬虫挂起、下载并发降级等）。
+    ///
+    /// 与展示解耦的原因：网络类异常只能靠"下一次成功请求"清除，而断网时不会有成功请求，
+    /// 若用它来长期阻断，就形成死锁（"代理恢复后仍卡很久，除非重启"）。
+    /// 因此这里带 TTL：过期后**放行一次**新请求，让真实结果重新判定状态。
+    /// 注意这与"主动探测"不同 —— 只是不再拦用户的正常操作。
+    var shouldSuspendNewWork: Bool {
+        if rateLimitExpired { return false }
+        if networkErrorExpired { return false }   // TTL 到期 → 放行，让真实请求判定
+        switch health {
+        case .rateLimited, .timedOut, .offline, .unauthenticated: return true
+        case .normal, .serverError: return false
+        }
+    }
 
     /// 限流状态的恢复时刻（视图据此安排一次到期刷新与倒计时）
     var rateLimitDeadline: Date? {
@@ -279,6 +317,17 @@ final class AccountStatusStore {
     /// 测试辅助：把 CDN 限流截止时间设为指定值（构造"已过期"等边界）
     func setCDNThrottleDeadlineForTesting(_ deadline: Date?) {
         cdnRateLimitedUntil = deadline
+    }
+
+    /// 测试辅助：构造限流截止时间（用于验证到期判定）
+    func setRateLimitDeadlineForTesting(_ deadline: Date?) {
+        health = .rateLimited(until: deadline)
+        changedAt = Date()
+    }
+
+    /// 测试辅助：构造网络异常的发生时刻（用于验证 TTL 边界）
+    func setChangedAtForTesting(_ date: Date) {
+        changedAt = date
     }
 
     /// 用户点媒体 CDN 行的「重试」：结束 CDN 冷却并真的探一次媒体服务器。

@@ -18,6 +18,11 @@ actor NetworkClient {
 
     private var proxy: ProxySettings
     private var session: URLSession
+    /// 已退役（被替换的旧 client）：不再接受新请求，等在飞的结束即失效会话。
+    /// 见 invalidate() 的说明——直接 invalidate 会让握有旧引用的任务抛不可捕获异常。
+    private var retired = false
+    /// 在飞请求计数（用于退役后判断何时可以真正关闭会话）
+    private var inFlight = 0
 
     init(proxy: ProxySettings = ProxySettings()) {
         self.proxy = proxy
@@ -33,6 +38,25 @@ actor NetworkClient {
         config.waitsForConnectivity = false
         config.apply(proxy: proxy)
         self.session = URLSession(configuration: config)
+    }
+
+    /// 释放底层 URLSession。
+    ///
+    /// 不能直接 invalidate：`finishTasksAndInvalidate` 之后，任何**仍持有本 client 引用**
+    /// 的任务去建新 dataTask 会抛 `NSGenericException`
+    /// （"Task created in a session that has been invalidated"）——那是不可 catch 的，
+    /// 会直接崩。而 `client` 是 actor 属性，替换后旧引用在调用栈里依然存活。
+    ///
+    /// 因此采用**退役 + 延迟失效**：
+    /// 1. 立刻标记 retired → 新请求抛可捕获的 Swift 错误（调用方会转向新 client 重试）；
+    /// 2. 等在飞的请求自然结束（计数归零）后才真正 invalidate，关闭连接池。
+    func invalidate() {
+        retired = true
+        if inFlight == 0 { session.finishTasksAndInvalidate() }
+    }
+
+    deinit {
+        session.finishTasksAndInvalidate()
     }
 
     /// 快速模式（同步页用）：单次 15s 超时、最多 2 次尝试——离线/代理不可达时快速失败，
@@ -82,6 +106,10 @@ actor NetworkClient {
 
         while remainingRetryCount > 0 {
             if Task.isCancelled { throw CancellationError() }
+            // 已退役（被新 client 取代）：抛可捕获的 Swift 错误，
+            // 调用方（上层 store）会在下次操作时用新 client 重试。
+            // 绝不能走到 session.dataTask —— 那会抛不可 catch 的 NSException。
+            if retired { throw NetworkError.unreachable(L("网络配置已更新，请重试")) }
             // 总预算用尽：立刻失败，让调用方展示"加载失败 + 重试"
             if Date().timeIntervalSince(startedAt) > totalBudget {
                 AppLogger.warn("重试总预算用尽,放弃本次请求", category: "NET", [
@@ -269,9 +297,23 @@ actor NetworkClient {
         request.httpBody = body
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
 
+        // 退役检查放在**发起网络之前**：一旦退役，绝不能走到 session.dataTask
+        // （会话已失效时构造任务会抛不可捕获的 NSException）
+        if retired { throw NetworkError.unreachable(L("网络配置已更新，请重试")) }
+
+        // 在飞计数（actor 内，安全）：退役后据此判断何时可安全关闭会话
+        inFlight += 1
+        defer {
+            inFlight -= 1
+            if retired, inFlight == 0 {
+                // 在飞的都结束了 → 现在可以真正失效，释放连接池
+                session.finishTasksAndInvalidate()
+            }
+        }
+
         // 单次尝试限时：超时抛 timedOut（调用方快速失败,不拖同步状态）
-        let doFetch: @Sendable () async throws -> NetworkResponse = { [request] in
-            let (data, response) = try await self.session.data(for: request)
+        let doFetch: @Sendable () async throws -> NetworkResponse = { [request, session] in
+            let (data, response) = try await session.data(for: request)
             let http = response as! HTTPURLResponse
             var headers: [String: [String]] = [:]
             for (key, value) in http.allHeaderFields {
