@@ -91,6 +91,11 @@ struct HomeTimelineView: View {
         .task {
             if store.posts.isEmpty { await store.initialLoad() }
         }
+        // 数据源变化（切推荐/关注、切热门/最新、重新加载）→ 分批计数从头开始，
+        // 否则切换后仍停在旧的展开进度，甚至超过新数据量
+        .onChange(of: store.flatMediaSignature) { _, _ in
+            waterfallVisibleCount = 40
+        }
     }
 
     /// 媒体瀑布流：按窗口宽度自适应列数；单元高度由媒体宽高比决定（不裁切、不 letterbox）。
@@ -98,17 +103,17 @@ struct HomeTimelineView: View {
     ///
     /// 分批渲染很关键：`WaterfallLayout` 是 `Layout`（非 lazy），会测量**全部**子视图，
     /// 每个单元还会触发缩略图请求。若一次塞入上百条，切换形态时要等布局+首批图片完成，
-    /// 表现为"切换要等很久"。这里只渲染前 `visibleCount` 条，滚到底再追加一批。
+    /// 表现为"切换要等很久"。这里只渲染前 `waterfallVisibleCount` 条，滚到底再追加一批。
     @State private var waterfallVisibleCount = 40
 
     private var homeMediaWaterfall: some View {
         GeometryReader { geo in
             // 目标列宽约 220pt，随窗口自适应（2–6 列）
             let columns = min(6, max(2, Int((geo.size.width - 32) / 220)))
-            let visible = Array(store.flatMedia.prefix(waterfallVisibleCount))
             ScrollView {
+                // 分批渲染：只渲染已展开的部分
                 WaterfallLayout(columnCount: columns, spacing: 10) {
-                    ForEach(visible, id: \.media.id) { item in
+                    ForEach(store.flatMedia.prefix(waterfallVisibleCount), id: \.media.id) { item in
                         WaterfallMediaCell(media: item.media) {
                             DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
                         }
@@ -116,32 +121,71 @@ struct HomeTimelineView: View {
                 }
                 .padding(.horizontal, 16)
 
-                // 追加一批已加载内容；若本地已全部渲染且服务端还有更多，再拉下一页
-                if visible.count < store.flatMedia.count || store.hasMore {
-                    ProgressView()
-                        .padding(12)
-                        .onAppear {
-                            if visible.count < store.flatMedia.count {
-                                waterfallVisibleCount += 40
-                            } else {
-                                Task { await store.loadMore() }
-                            }
-                        }
-                } else {
-                    Text(L("已加载全部"))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.vertical, 12)
-                }
+                // 触底哨兵：必须先展开本地未渲染的批次，再向服务端翻页
+                mediaLoader(viewportHeight: geo.size.height)
+                    .padding(.vertical, 12)
             }
             .padding(.bottom, 20)
-            // 切换回推文形态/重载数据时重置分批计数，避免下次进入还停在旧进度
-            .onChange(of: store.flatMedia.count) { _, newCount in
-                if newCount <= waterfallVisibleCount { waterfallVisibleCount = 40 }
+            .coordinateSpace(name: homeTimelineScrollSpace)
+        }
+    }
+
+    /// 触底加载：先展开已下载的下一批，全部展开后再请求下一页。
+    ///
+    /// 哨兵必须由**真实可见性**驱动，这里沿用 `HomeView` 已验证的坐标空间方案：
+    /// 读取哨兵在滚动容器坐标系里的 maxY，与视口高度比较。
+    ///
+    /// 两个曾经的坑：
+    /// 1) `ProgressView().onAppear` 只在首次挂载触发 → 滚到底不出下一页，
+    ///    必须切回推文再切回来（重建视图）才加载；
+    /// 2) `WaterfallLayout` 是 `Layout`（非 lazy），所有子视图始终在层级中，
+    ///    所以 `.task` 会在挂载时立即触发、与滚动位置无关 → 自动连翻（429 风暴）。
+    private func mediaLoader(viewportHeight: CGFloat) -> some View {
+        let renderedCount = min(waterfallVisibleCount, store.flatMedia.count)
+        let allRendered = renderedCount >= store.flatMedia.count
+        let canPage = store.hasMore
+        return Group {
+            if allRendered && !canPage {
+                Text(L("已加载全部"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+            } else if store.loadingMore {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            } else {
+                GeometryReader { proxy in
+                    let maxY = proxy.frame(in: .named(homeTimelineScrollSpace)).maxY
+                    Color.clear
+                        // 哨兵进入视口（不足半屏）才推进；再次滚到底会因 maxY 变化重新求值
+                        .onChange(of: maxY) { _, y in
+                            advanceIfVisible(y, viewportHeight: viewportHeight,
+                                             renderedCount: renderedCount, allRendered: allRendered, canPage: canPage)
+                        }
+                        .onAppear {
+                            advanceIfVisible(maxY, viewportHeight: viewportHeight,
+                                             renderedCount: renderedCount, allRendered: allRendered, canPage: canPage)
+                        }
+                }
+                .frame(height: 1)
             }
         }
     }
+
+    private func advanceIfVisible(_ sentinelMaxY: CGFloat, viewportHeight: CGFloat, renderedCount: Int, allRendered: Bool, canPage: Bool) {
+        guard !store.loadingMore, viewportHeight > 0 else { return }
+        // 哨兵底边进入视口下沿（含半屏提前量）才算"滚到底"
+        guard sentinelMaxY <= viewportHeight else { return }
+        if !allRendered {
+            waterfallVisibleCount += 40
+        } else if canPage {
+            Task { await store.loadMore() }
+        }
+    }
 }
+
+/// 瀑布流滚动的命名坐标空间（与 HomeView 的 BottomSentinel 同理，macOS 14 兼容）
+private let homeTimelineScrollSpace = "homeTimelineScroll"
 
 /// 单张时间线卡片:聚合推文(上) + 媒体(下)
 struct TimelinePostCard: View {

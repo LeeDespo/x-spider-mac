@@ -26,17 +26,34 @@ final class HomeTimelineStore {
     var followingSort: FollowingSort = FollowingSort(
         rawValue: UserDefaults.standard.string(forKey: "home.followingSort") ?? ""
     ) ?? .hot {
-        didSet { UserDefaults.standard.set(followingSort.rawValue, forKey: "home.followingSort") }
+        didSet {
+            UserDefaults.standard.set(followingSort.rawValue, forKey: "home.followingSort")
+            // 媒体瀑布流跟随排序重建（放 didSet 而非仅在 setter 里，
+            // 这样任何改写路径都生效，不会因为"值没变"而漏掉重建）
+            if oldValue != followingSort { rebuildFlatMedia() }
+        }
     }
-    var posts: [TwitterPost] = []
+    var posts: [TwitterPost] = [] {
+        // 媒体瀑布流由 posts 派生：放 didSet 保证任何赋值路径都会同步重建，
+        // 不会因为某处忘记调用 rebuildFlatMedia 而出现"切换形态后数据不更新"
+        didSet { rebuildFlatMedia() }
+    }
     var loading = false
     var loadingMore = false
     /// 展平后的媒体列表（媒体瀑布流用）。getHomeTimeline 只返回有媒体的推文，
     /// 因此无需额外请求即可切换形态 —— 不额外消耗 X 配额。
     var flatMedia: [(post: TwitterPost, media: TwitterMedia, index: Int)] = []
-    private var cursor: String?
-    /// 是否还有更多可加载（视图展示"已加载全部"用；不暴露 cursor 本身）
+
+    /// 媒体数据集的廉价指纹（首尾媒体 ID + 数量）。
+    /// 用于视图在"切换数据源/排序"时重置分批渲染计数：
+    /// 直接比较 flatMedia 数组会因元组不可 Equatable 而失败，全量比较又太贵。
+    var flatMediaSignature: String {
+        guard let first = flatMedia.first, let last = flatMedia.last else { return "empty-\(flatMedia.count)" }
+        return "\(flatMedia.count)|\(first.media.id ?? "?")|\(last.media.id ?? "?")"
+    }
+    /// 是否有更多可加载（媒体瀑布流与推文形态共用同一分页状态）
     var hasMore: Bool { cursor != nil }
+    private var cursor: String?
     private var seenIds = Set<String>()
     private var generation = 0
 
@@ -52,6 +69,11 @@ final class HomeTimelineStore {
         Task { await reload() }
     }
 
+    /// 切换热门/最新。
+    ///
+    /// 语义边界：两者都是同一条"关注"时间线（`HomeLatestTimeline`）的数据，差别只在展示顺序
+    /// （热门 = 按赞数排序，最新 = 时间线原序），因此**不需要重新请求**。
+    /// 重建 `flatMedia` 由 `followingSort` 的 didSet 负责（见其注释），此处只改值。
     func setFollowingSort(_ s: FollowingSort) {
         followingSort = s
     }
@@ -75,10 +97,9 @@ final class HomeTimelineStore {
         do {
             let (newPosts, next) = try await TwitterAPI.shared.getHomeTimeline(mode: mode)
             guard gen == generation else { return }
-            posts = newPosts
+            posts = newPosts          // didSet 已重建 flatMedia
             seenIds = Set(newPosts.map(\.id))
             cursor = next
-            rebuildFlatMedia()
         } catch {
             guard gen == generation else { return }
             AppLogger.warn("主页时间线加载失败", category: "HOME", ["error": error.localizedDescription])
@@ -97,8 +118,7 @@ final class HomeTimelineStore {
                 self.cursor = nil
                 return
             }
-            posts.append(contentsOf: fresh)
-            rebuildFlatMedia()
+            posts.append(contentsOf: fresh)   // didSet 已重建 flatMedia
             self.cursor = next
         } catch {
             AppLogger.warn("主页时间线翻页失败", category: "HOME", ["error": error.localizedDescription])
@@ -106,8 +126,11 @@ final class HomeTimelineStore {
     }
 
     /// 重建媒体瀑布流数据（增量语义：只在 posts 变化时调用，不在视图 body 里重算）
+    /// 重建媒体瀑布流数据。
+    /// 必须跟随 `visiblePosts`（含"热门"按赞数排序）——否则切到媒体形态时顺序与推文形态不一致，
+    /// 表现为"切换热门/最新对媒体流没反应"。
     private func rebuildFlatMedia() {
-        flatMedia = posts.flatMap { post in
+        flatMedia = visiblePosts.flatMap { post in
             (post.medias ?? []).enumerated().map { (index, media) in
                 (post, media, index + 1)
             }
