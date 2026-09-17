@@ -103,9 +103,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .padding(.leading, 16)
-                .infoHint(L("按文件名：目标文件已存在则跳过；即使文件被意外删除或移动，也能重新判定无误。\n按下载记录文件：在保存路径创建并维护 .downloaded.json 文件，全量记录已下载媒体的资源索引，改文件名模板不影响判定。"))
-
-                    .padding(.leading, 16)
+                .infoHint(L("按文件名：下载时在文件名末尾追加资源索引（如「… 2.jpg」），判定即查找该文件是否存在。改名或移动文件后会被视为未下载。\n按下载记录文件：在保存路径维护 .downloaded.json，记录已下载媒体的资源索引；只查记录、不回查文件，因此改文件名模板、重命名或移动文件都不会让记录失效。"))
             }
         } header: {
             Label(L("下载"), systemImage: "arrow.down.circle")
@@ -200,21 +198,16 @@ struct SettingsView: View {
             // aria2 专属参数
             if settingsStore.settings.engineMode != .builtIn {
                 NumberStepperField(
-                    title: L("单文件连接数"),
+                    title: L("单文件最大连接数"),
                     value: Binding(
                         get: { settingsStore.settings.aria2Split },
                         set: { settingsStore.settings.download.aria2Split = $0 }
                     ),
-                    range: 1...16
+                    range: 1...256
                 )
-                NumberStepperField(
-                    title: L("最小分块大小 (MB)"),
-                    value: Binding(
-                        get: { settingsStore.settings.aria2MinSplitSize },
-                        set: { settingsStore.settings.download.aria2MinSplitSize = $0 }
-                    ),
-                    range: 1...20
-                )
+                .infoHint(L("单个文件的最大连接数（aria2Next 的 stream-max-connections，默认 6）。\naria2Next 会先确认服务器支持分块，再对小文件自动降低实际连接数，\n因此调大不一定更快；服务器不支持分块时始终单连接。"))
+                // 说明：旧的「最小分块大小」（--min-split-size）已从 aria2Next 退役
+                // 并被引擎完全接管，故不再提供该项（保留只会是"改了没效果"的死设置）。
                 Picker(L("文件分配方式"), selection: Binding(
                     get: { settingsStore.settings.aria2FileAllocation },
                     set: { settingsStore.settings.download.aria2FileAllocation = $0 }

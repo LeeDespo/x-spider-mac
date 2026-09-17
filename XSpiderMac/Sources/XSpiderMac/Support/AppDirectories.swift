@@ -27,6 +27,16 @@ enum AppDirectories {
         supportRoot.appendingPathComponent("aria2", isDirectory: true)
     }
 
+    /// aria2Next 续传状态目录（`--state-dir`）。
+    ///
+    /// aria2Next 不再在下载目录旁生成 `.aria2` 控制文件，HTTP 续传状态改存
+    /// `state-dir/stream/state.db`（SQLite）。默认落在
+    /// `~/Library/Application Support/aria2-next`，这里显式指到本应用数据目录，
+    /// 便于随应用数据一起管理与清理。
+    static var aria2State: URL {
+        aria2.appendingPathComponent("state", isDirectory: true)
+    }
+
     static var caches: URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("XSpiderMac", isDirectory: true)
@@ -44,7 +54,7 @@ enum AppDirectories {
 
     /// 确保目录存在（应用启动时调用）
     static func ensureAll() {
-        for dir in [supportRoot, staging, aria2, cacheRoot] {
+        for dir in [supportRoot, staging, aria2, aria2State, cacheRoot] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }

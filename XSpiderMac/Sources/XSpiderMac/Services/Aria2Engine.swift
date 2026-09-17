@@ -165,7 +165,7 @@ final class Aria2Engine: @unchecked Sendable {
 
     /// 启动 aria2c 下载。
     /// 优先走常驻 RPC 进程；RPC 不可用（启动失败/端口被占）时回退到每任务子进程。
-    func start(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int = 8, minSplitSizeMB: Int = 1, fileAllocation: String = "none") {
+    func start(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int = 6, fileAllocation: String = "none") {
         lock.lock()
         if processes[gid] != nil || rpcGids.contains(gid) { lock.unlock(); return }
         lock.unlock()
@@ -184,17 +184,21 @@ final class Aria2Engine: @unchecked Sendable {
                     (SettingsStore.shared.settings.aria2Port,
                      SettingsStore.shared.settings.aria2PortMode == .random)
                 }
+                // 续传状态目录：显式指到应用数据目录（默认会落到
+                // ~/Library/Application Support/aria2-next，与本应用数据分离）
+                let stateDir = AppDirectories.aria2State.path
                 do {
                     try await self.rpc.start(
                         binary: binary,
                         preferredPort: preferredPort,
-                        randomPort: randomPort
+                        randomPort: randomPort,
+                        stateDir: stateDir
                     )
                     self.markRPCStarted(gid: gid)
                     try await self.startViaRPC(
                         gid: gid, urlString: urlString, destDir: destDir, fileName: fileName,
                         proxy: proxy, connections: connections,
-                        minSplitSizeMB: minSplitSizeMB, fileAllocation: fileAllocation
+                        fileAllocation: fileAllocation
                     )
                 } catch {
                     // RPC 启动/下发失败 → 标记不可用并回退到子进程路径（本次任务立即重试一次）
@@ -205,7 +209,7 @@ final class Aria2Engine: @unchecked Sendable {
                     self.startViaSubprocess(
                         gid: gid, urlString: urlString, destDir: destDir, fileName: fileName,
                         proxy: proxy, connections: connections,
-                        minSplitSizeMB: minSplitSizeMB, fileAllocation: fileAllocation
+                        fileAllocation: fileAllocation
                     )
                 }
             }
@@ -215,16 +219,18 @@ final class Aria2Engine: @unchecked Sendable {
         startViaSubprocess(
             gid: gid, urlString: urlString, destDir: destDir, fileName: fileName,
             proxy: proxy, connections: connections,
-            minSplitSizeMB: minSplitSizeMB, fileAllocation: fileAllocation
+            fileAllocation: fileAllocation
         )
     }
 
     /// RPC 方式下发任务并轮询进度
-    private func startViaRPC(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int, minSplitSizeMB: Int, fileAllocation: String) async throws {
+    private func startViaRPC(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int, fileAllocation: String) async throws {
+        // 注意选项名必须用 aria2Next 的当前名称：
+        // `--split` / `--max-connection-per-server` 已退役（会被"近似映射"），
+        // `--min-split-size` 已退役且被**完全跳过**（原生引擎自管分片策略）。
+        // 现名是 `stream-max-connections`（默认 6，范围 1–256）。
         var options: [String: String] = [
-            "split": "\(min(16, max(1, connections)))",
-            "max-connection-per-server": "\(min(16, max(1, connections)))",
-            "min-split-size": "\(max(1, minSplitSizeMB))M",
+            "stream-max-connections": "\(min(256, max(1, connections)))",
             "file-allocation": fileAllocation,
             "user-agent": Self.userAgent,
             "referer": "https://x.com/",
@@ -297,7 +303,7 @@ final class Aria2Engine: @unchecked Sendable {
     }
 
     /// 回退路径：每任务一个子进程（RPC 不可用时）
-    private func startViaSubprocess(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int, minSplitSizeMB: Int, fileAllocation: String) {
+    private func startViaSubprocess(gid: String, urlString: String, destDir: String, fileName: String, proxy: String?, connections: Int, fileAllocation: String) {
         lock.lock()
         if processes[gid] != nil { lock.unlock(); return }
         lock.unlock()
@@ -309,22 +315,32 @@ final class Aria2Engine: @unchecked Sendable {
 
         try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
         let destPath = (destDir as NSString).appendingPathComponent(fileName)
-        // 控制文件存在 = 上次优雅暂停 → 保留以便续传；否则清掉同名残留（避免 --continue 读到旧控制文件"假完成"）
-        if !FileManager.default.fileExists(atPath: destPath + ".aria2") {
-            try? FileManager.default.removeItem(atPath: destPath)
-            try? FileManager.default.removeItem(atPath: destPath + ".aria2")
-        }
 
-        let perServer = min(16, max(1, connections))
+        // 不再依赖 `.aria2` 控制文件判断能否续传。
+        //
+        // 旧逻辑：控制文件不存在 → 删掉已有数据文件（本意是防 `--continue` 读到陈旧
+        // 控制文件"假完成"）。但 aria2Next **从设计上就不再生成相邻控制文件**
+        // （README: "Payload directories no longer receive adjacent .aria2 control files"，
+        // 续传状态改存 `--state-dir` 下的 SQLite），于是该条件恒为真 →
+        // **每次恢复都会先删掉已下载的数据，等于从头下载**。
+        //
+        // 新引擎的 `--continue` 自身语义已足够安全（手册）：
+        // "HTTP(S) verifies the remote length before accepting an existing file.
+        //  An equal-length file completes without transferring payload data.
+        //  A shorter file resumes only when the server confirms byte-range support.
+        //  A longer file or an unresumable response is preserved and reported as an error."
+        // 即长度校验由引擎负责，我们预删反而破坏续传。
+
+        let perServer = min(256, max(1, connections))
         let p = Process()
         p.executableURL = binary
         p.arguments = [
             urlString,
             "--dir=\(destDir)",
             "--out=\(fileName)",
-            "--split=\(perServer)",
-            "--max-connection-per-server=\(perServer)",
-            "--min-split-size=\(max(1, minSplitSizeMB))M",
+            // aria2Next 的当前选项名（`--split`/`--max-connection-per-server` 已退役，
+            // `--min-split-size` 已退役且被完全跳过）
+            "--stream-max-connections=\(perServer)",
             "--continue=true",
             "--summary-interval=1",
             "--console-log-level=warn",
@@ -337,6 +353,11 @@ final class Aria2Engine: @unchecked Sendable {
             // 密钥、限速、默认目录）会悄悄污染我们的实例
             "--conf-path=/dev/null",
             "--no-conf",
+            // 关掉与 HTTP 下载无关的 BT/DHT 监听（默认会尝试 bind 6881 刷错误日志）
+            "--enable-dht=false",
+            "--enable-dht6=false",
+            "--bt-enable-lpd=false",
+            "--enable-peer-exchange=false",
             "--stop-with-process=\(ProcessInfo.processInfo.processIdentifier)",
         ]
         if let proxy, !proxy.isEmpty {

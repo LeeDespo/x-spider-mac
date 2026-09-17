@@ -93,6 +93,34 @@ final class SettingsStore {
         applyLanguage()
         applyRateLimit()
         applyProxyIfChanged()
+        // 启动时**不**调用 applyJudgementIfChanged：它会触碰 DownloadStore.shared，
+        // 而 DownloadStore.init 又要读 SettingsStore.shared → 单例构造重入 → SIGTRAP。
+        // 首帧的缓存加载由 DownloadStore.init 里的 loadRecordCaches() 完成；
+        // 这里只处理之后的设置变更（此时两个 store 都已构造完毕）。
+        lastAppliedJudgementFingerprint = currentJudgementFingerprint()
+    }
+
+    private func currentJudgementFingerprint() -> String {
+        "\(settings.download.sameFileCheckMode ?? "")|\(settings.download.saveDirBase)|\(settings.download.accountSubfolder ?? true)|\(settings.download.sameFileSkip)"
+    }
+
+    /// 判定依据（或保存路径）变化 → 让"已下载"判定立即刷新。
+    ///
+    /// 判定结果由 `hasDownloaded` 即时算出、读的是 static 缓存与文件系统，
+    /// 不参与 `@Observable` 依赖追踪；不主动通知的话，媒体卡上的
+    /// 下载/已下载按钮状态会停在旧结果。
+    ///
+    /// **注意：不能在 init 里调用**。本方法会触碰 `DownloadStore.shared`，
+    /// 而 `DownloadStore.init` 又要读 `SettingsStore.shared` —— 若在 init 中调用
+    /// 就构成单例构造重入，实测直接 SIGTRAP 崩溃。
+    /// 因此启动路径由各 store 自行完成首次刷新（DownloadStore.init 里已 loadRecordCaches），
+    /// 这里只处理"后续变更"。
+    private var lastAppliedJudgementFingerprint: String?
+    private func applyJudgementIfChanged() {
+        let fp = currentJudgementFingerprint()
+        guard fp != lastAppliedJudgementFingerprint else { return }
+        lastAppliedJudgementFingerprint = fp
+        DownloadStore.shared.invalidateJudgements()
     }
 
     /// 代理设置变更 → 重建网络客户端（**无需重启**）。

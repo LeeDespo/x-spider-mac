@@ -54,7 +54,8 @@ actor Aria2RPCClient {
     ///   - binary: 可执行文件
     ///   - preferredPort: fixed 模式下的端口
     ///   - randomPort: true 时自动挑选空闲端口
-    func start(binary: URL, preferredPort: Int, randomPort: Bool) async throws {
+    ///   - stateDir: 续传状态目录（见下方说明）
+    func start(binary: URL, preferredPort: Int, randomPort: Bool, stateDir: String) async throws {
         if let process, process.isRunning, (!randomPort ? port == preferredPort : true) {
             return
         }
@@ -78,6 +79,17 @@ actor Aria2RPCClient {
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
             "--console-log-level=warn",
+            // 续传状态目录：aria2Next **不再在下载目录旁生成 .aria2 控制文件**，
+            // HTTP 续传状态改存 `state-dir/stream/state.db`（SQLite）。
+            // 默认会落到 `~/Library/Application Support/aria2-next`，
+            // 这里显式指到本应用的数据目录，便于随应用数据一起管理/清理。
+            "--state-dir=\(stateDir)",
+            // 关掉与 HTTP 下载无关的 BT/DHT 监听：
+            // 默认会尝试 bind 6881，端口被占时每次下载刷十几行 error 日志
+            "--enable-dht=false",
+            "--enable-dht6=false",
+            "--bt-enable-lpd=false",
+            "--enable-peer-exchange=false",
             // App 退出时 aria2 自动收尾
             "--stop-with-process=\(ProcessInfo.processInfo.processIdentifier)",
         ]

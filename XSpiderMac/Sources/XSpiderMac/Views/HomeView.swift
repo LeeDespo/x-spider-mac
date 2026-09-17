@@ -566,7 +566,12 @@ struct MediaGridItem: View {
             // hover 操作：无遮罩，中央一排圆形图标按钮（已下载勾 / 下载 / 打开推文）
             if isHovering {
                 HStack(spacing: 10) {
-                    if DownloadStore.shared.hasDownloaded(media: media, dir: DownloadStore.shared.targetDir(for: post)) {
+                    // 读 judgementVersion 以建立观察依赖：判定依据/保存路径变化后
+                    // 这些 static 缓存会变，但 SwiftUI 追踪不到 → 按钮状态会停在旧结果
+                    let _ = DownloadStore.shared.judgementVersion
+                    if DownloadStore.shared.hasDownloaded(media: media,
+                                                           dir: DownloadStore.shared.targetDir(for: post),
+                                                           post: post) {
                         iconBadge("checkmark", color: .green, help: L("该媒体已下载过"))
                     } else {
                         roundIconButton("arrow.down", help: L("下载")) {

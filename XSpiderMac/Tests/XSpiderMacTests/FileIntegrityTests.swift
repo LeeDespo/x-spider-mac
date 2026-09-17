@@ -338,3 +338,81 @@ final class CDNStatusTests: XCTestCase {
         store.reset()
     }
 }
+
+/// 判定依据的语义契约（改这块前先看 docs/DEVELOPMENT.md §5）
+final class JudgmentSemanticsTests: XCTestCase {
+
+    private func media(_ id: String) -> TwitterMedia {
+        TwitterMedia(id: id, url: "https://pbs.twimg.com/media/\(id).jpg",
+                     width: 100, height: 100, type: .photo, videoInfo: nil, createdTime: nil)
+    }
+
+    private func post(id: String, mediaIds: [String]) -> TwitterPost {
+        TwitterPost(id: id,
+                    user: TwitterUser(screenName: "u", avatar: "", name: "U", id: "1", mediaCount: nil, registerTime: nil),
+                    createdAt: nil, fullText: nil, tags: [], views: nil, lang: nil,
+                    retweeted: nil, retweetCount: nil, replyCount: nil, possiblySensitive: nil,
+                    favorited: nil, favoriteCount: nil, bookmarkCount: nil, bookmarked: nil,
+                    medias: mediaIds.map(media))
+    }
+
+    @MainActor
+    private func store() -> DownloadStore { DownloadStore.shared }
+
+    /// 按文件名：末尾应追加资源索引（模板在 %EXT% 前留了空格 → 直接用）
+    @MainActor
+    func testIndexAppendedWithDefaultTemplate() {
+        let p = post(id: "123", mediaIds: ["m1", "m2"])
+        let tpl = "%POST_ID% %EXT%"
+        let n1 = store().fileNameWithIndex("123 .jpg", media: media("m1"), post: p, template: tpl)
+        let n2 = store().fileNameWithIndex("123 .jpg", media: media("m2"), post: p, template: tpl)
+        XCTAssertEqual(n1, "123 1.jpg", "第 1 张媒体索引应为 1")
+        XCTAssertEqual(n2, "123 2.jpg", "第 2 张媒体索引应为 2")
+        XCTAssertNotEqual(n1, n2, "同推文多张媒体必须得到不同文件名（否则判定只认第一个）")
+    }
+
+    /// 模板无分隔符时应补空格，避免拼出 "1231.jpg" 这种歧义名
+    @MainActor
+    func testSeparatorAddedWhenTemplateLacksOne() {
+        let p = post(id: "123", mediaIds: ["m1"])
+        let n = store().fileNameWithIndex("123.jpg", media: media("m1"), post: p, template: "%POST_ID%%EXT%")
+        XCTAssertEqual(n, "123 1.jpg")
+    }
+
+    /// 模板已显式含 %MEDIA_INDEX% → 不追加（尊重用户，且保证既有文件仍可判定）
+    @MainActor
+    func testNoAppendWhenTemplateHasMediaIndex() {
+        let p = post(id: "123", mediaIds: ["m1"])
+        let tpl = "%POST_ID%-%MEDIA_INDEX%%EXT%"
+        let n = store().fileNameWithIndex("123-1.jpg", media: media("m1"), post: p, template: tpl)
+        XCTAssertEqual(n, "123-1.jpg", "模板自带索引时不得再追加")
+    }
+
+    /// 三个索引分隔符边界：空格/连字符/下划线/点都不应重复补
+    @MainActor
+    func testNoDoubleSeparator() {
+        let p = post(id: "1", mediaIds: ["m1"])
+        for (input, expected) in [("a .jpg", "a 1.jpg"), ("a-.jpg", "a-1.jpg"),
+                                  ("a_.jpg", "a_1.jpg"), ("a..jpg", "a.1.jpg")] {
+            let n = store().fileNameWithIndex(input, media: media("m1"), post: p, template: "%X%%EXT%")
+            XCTAssertEqual(n, expected, "输入 \(input) 的分隔处理错误")
+        }
+    }
+
+    /// 无推文上下文时索引退化为 1（此时模板通常已含唯一变量）
+    @MainActor
+    func testIndexFallsBackToOneWithoutPost() {
+        let n = store().fileNameWithIndex("x.jpg", media: media("m1"), post: nil, template: "%X%%EXT%")
+        XCTAssertEqual(n, "x 1.jpg")
+    }
+
+    /// 判定版本号必须可自增（视图依赖它重算按钮状态）
+    @MainActor
+    func testJudgementVersionBumps() {
+        let s = store()
+        let before = s.judgementVersion
+        s.invalidateJudgements()
+        XCTAssertGreaterThan(s.judgementVersion, before,
+                             "切换判定依据必须自增版本号，否则媒体卡按钮状态不更新")
+    }
+}

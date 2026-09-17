@@ -119,12 +119,33 @@ final class DownloadStore {
         }
     }
 
+    /// 「已下载」判定结果的版本号。
+    ///
+    /// 为什么需要：判定结果由 `hasDownloaded` 即时算出，它读的是两个 **static** 缓存
+    /// （recordCache / completedFileNameCache）与文件系统 —— 这些都**不参与
+    /// `@Observable` 的依赖追踪**。于是切换判定依据、换保存路径、清缓存之后，
+    /// 判定结果其实变了，但 SwiftUI 不知道要重绘，媒体卡上的下载/已下载按钮状态
+    /// 会停在旧结果（用户报告的现象）。
+    ///
+    /// 视图读取本属性即建立观察依赖；影响判定的操作自增它即可触发刷新。
+    private(set) var judgementVersion = 0
+
+    /// 判定依据变化后调用：清掉派生缓存并通知视图重算判定
+    func invalidateJudgements() {
+        refreshDownloadedCaches()
+        judgementVersion += 1
+        AppLogger.info("判定依据已变更,刷新已下载状态", category: "DL", [
+            "mode": settings.sameFileCheckModeValue.rawValue,
+        ])
+    }
+
     /// 启动时扫描各用户文件夹的记录文件到内存缓存（避免覆盖旧记录）
     /// 保存路径/子文件夹设置变更时调用:重载记录缓存 + 清完成文件名缓存(判定立即刷新)
     func refreshDownloadedCaches() {
         Self.recordCache.removeAll()
         Self.completedFileNameCache.removeAll()
         loadRecordCaches()
+        judgementVersion += 1
     }
 
     private func loadRecordCaches() {
@@ -175,13 +196,17 @@ final class DownloadStore {
 
         let templateData = FileNameTemplateData(post: post, media: media)
         let dir = targetDir(for: post)
-        var fileName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
-        // 记录文件模式判定靠记录文件本身，文件名不追加媒体 ID 锁定段（同名场景由
-        // uniquedFileName 的序号消解兜底，不污染用户模板）
+        let rawName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
+        // 「按文件名」模式：落盘名末尾带资源索引（判据与去重都基于它）。
+        // 「按下载记录文件」模式：保持用户模板原样——判定不依赖文件名，
+        // 改文件名也不会让记录失效，无需为此改变既有用户的命名。
+        var fileName = settings.sameFileCheckModeValue == .fileName
+            ? fileNameWithIndex(rawName, media: media, post: post, template: settings.download.fileNameTemplate)
+            : rawName
 
-        // sameFileSkip：按当前判定依据决定跳过（用解析后的原名判定）
+        // sameFileSkip：按当前判定依据决定跳过
         if settings.download.sameFileSkip {
-            if isDuplicate(media: media, fileName: fileName, dir: dir) {
+            if isDuplicate(media: media, post: post, fileName: rawName, dir: dir) {
                 // 单媒体点击下载被跳过时给可见反馈（否则用户以为按钮失灵）；批量路径静默
                 if !silent {
                     notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + fileName)
@@ -190,8 +215,8 @@ final class DownloadStore {
             }
         }
 
-        // 文件名重复消解：模板不含媒体 ID/索引时（如「用户名.扩展名」）同用户多媒体会同名——
-        // 目标位置已存在文件、或任务列表里有同路径未完成任务 → 追加「 (2)」「 (3)」序号
+        // 文件名重复消解：目标位置已存在同名文件、或任务列表里有同路径未完成任务
+        // → 追加「 (2)」「 (3)」序号（索引已保证同推文内唯一，这里兜跨推文的同名）
         fileName = uniquedFileName(fileName, dir: dir)
 
         let task = DownloadTask(
@@ -224,33 +249,75 @@ final class DownloadStore {
 
     // MARK: - 跳过相同文件判定
 
-    /// 判定依据（设置里可选）：
-    /// - fileName：目标文件已存在（文件系统检查）
-    /// - recordFile：用户文件夹下的记录文件里已有该媒体 ID（跨文件名模板改动仍然有效）
-    /// - recordFile 模式下文件名强制追加媒体 ID 锁定段（模板里已有 %MEDIA_ID% 时不重复）
-    private func isDuplicate(media: TwitterMedia, fileName: String, dir: String) -> Bool {
+    /// 判定依据（设置里可选）——两者语义**有意不同**，理由见 docs/DEVELOPMENT.md：
+    ///
+    /// - **recordFile（按下载记录文件）**：只查记录文件里是否已有该媒体 ID，
+    ///   命中即信任，**不回头校验文件是否存在/完整**。
+    ///   这正是该依据存在的意义：改文件名模板、重命名或移动文件、整目录搬家，
+    ///   记录都依然有效。若额外做"记录 ↔ 文件"双向校验，会把"用户改过文件名"
+    ///   误判成"没下载过"而重复下载，恰好抵消掉它唯一优于"按文件名"的地方。
+    ///
+    /// - **fileName（按文件名）**：解析模板后**在扩展名前强制追加资源索引**
+    ///   （见 fileNameWithIndex），再查该文件是否存在。索引让文件名本身成为
+    ///   可靠判据：即使模板不含任何唯一变量，同一推文的多张媒体也不会互相覆盖。
+    private func isDuplicate(media: TwitterMedia, post: TwitterPost?, fileName: String, dir: String) -> Bool {
         switch settings.sameFileCheckModeValue {
         case .recordFile:
-            // 全量记录判定：记录文件里已有该媒体 ID → 已下载（改文件名模板也不影响）
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let recordURL = recordFileURL(dir: dir)
             if Self.recordCache[recordURL.path]?.dayIds.contains(mediaId) == true {
-                // 双向校验：记录存在但文件缺失/为 0 字节 → 不算已下载（可自愈坏记录）
-                if recordEntryIsBackedByFile(mediaId: mediaId, dir: dir) {
-                    AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
-                    return true
-                }
-                return false
+                AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
+                return true
             }
             return false
         case .fileName:
-            let filePath = (dir as NSString).appendingPathComponent(fileName)
-            if fm.fileExists(atPath: filePath) {
-                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": filePath])
+            let judged = fileNameWithIndex(fileName, media: media, post: post, template: settings.download.fileNameTemplate)
+            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(judged)) {
+                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": judged])
+                return true
+            }
+            // 兼容升级前未追加索引的旧文件，避免改名后把整库重下一遍
+            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(fileName)) {
+                AppLogger.info("sameFileSkip 命中旧命名文件", category: "DL", ["file": fileName])
                 return true
             }
             return false
         }
+    }
+
+    /// 在扩展名前追加资源索引，如默认模板 `… %POST_ID% %EXT%` 解析出
+    /// `… 123 .jpg` → `… 123 1.jpg`。
+    ///
+    /// 为什么必须加：判定依据是"文件名"时，用户模板可能不含任何唯一变量
+    /// （如 `%USER_SCREEN_NAME%%EXT%`），同一用户的多张媒体会解析成同名 →
+    /// 判定永远只认第一个文件，其余被误判为"已下载"。索引让每张媒体获得
+    /// 稳定且唯一的文件名，判据才成立。
+    ///
+    /// 三个细节：
+    /// - **分隔符按需补**：模板自带分隔时直接用（默认模板在 `%EXT%` 前留了空格，
+    ///   解析后 stem 已以空格结尾）；没有分隔则补一个空格，避免拼出 `1231.jpg`
+    ///   这种歧义名。已有分隔符时不重复补，否则会出现双空格。
+    /// - **模板已含 `%MEDIA_INDEX%` 时不追加**：尊重用户显式选择，
+    ///   也保证既有用户的已下载文件仍能被正确判定（不会误判成未下载而重下）。
+    /// - 只在**按文件名**模式使用；记录文件模式判定不依赖文件名，保持模板原样。
+    func fileNameWithIndex(_ fileName: String, media: TwitterMedia, post: TwitterPost?, template: String) -> String {
+        guard !template.uppercased().contains("%MEDIA_INDEX%") else { return fileName }
+        let idx = mediaIndexInPost(media: media, post: post)
+        let stem = (fileName as NSString).deletingPathExtension
+        let ext = (fileName as NSString).pathExtension
+        // 已有分隔符（空格/连字符/下划线/点）则不补，避免双分隔
+        let separators = [" ", "-", "_", "."]
+        let needsSeparator = !separators.contains { stem.hasSuffix($0) }
+        let joined = needsSeparator ? "\(stem) \(idx)" : "\(stem)\(idx)"
+        return ext.isEmpty ? joined : "\(joined).\(ext)"
+    }
+
+    /// 媒体在其推文内的序号（1 起）。无推文上下文时退化为 1
+    /// （此时模板通常已含唯一变量，不需要靠索引区分）
+    private func mediaIndexInPost(media: TwitterMedia, post: TwitterPost?) -> Int {
+        guard let post, let list = post.medias,
+              let i = list.firstIndex(where: { $0.id == media.id }) else { return 1 }
+        return i + 1
     }
 
     /// 记录文件路径（每用户文件夹一份）
@@ -312,43 +379,6 @@ final class DownloadStore {
                 AppLogger.warn("下载记录写入失败", category: "DL", ["dir": dir, "error": error.localizedDescription])
             }
             _ = self
-        }
-    }
-
-    /// 记录 → 文件系统 的双向校验：返回 false 表示"记录不可信"，并顺手清除该条目。
-    /// 用于 `hasDownloaded` 与 sameFileSkip 判定，避免因为历史坏记录而永久跳过损坏文件。
-    private func recordEntryIsBackedByFile(mediaId: String, dir: String) -> Bool {
-        let recordPath = recordFileURL(dir: dir).path
-        guard let entry = Self.recordCache[recordPath] else { return false }
-        // 旧记录没有文件名 → 无法校验，保持原有信任（不误报，避免重复下载整库）
-        guard let fileName = entry.fileNames[mediaId] else { return true }
-        let path = (dir as NSString).appendingPathComponent(fileName)
-        let size = (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
-        if !fm.fileExists(atPath: path) || size <= 0 {
-            AppLogger.warn("下载记录与文件不一致,清除该记录项", category: "DL", [
-                "mediaId": mediaId, "file": fileName,
-                "exists": fm.fileExists(atPath: path) ? "yes" : "no", "size": "\(size)",
-            ])
-            purgeRecordEntry(mediaId: mediaId, dir: dir)
-            return false
-        }
-        return true
-    }
-
-    /// 从记录中移除某媒体（内存 + 磁盘）
-    private func purgeRecordEntry(mediaId: String, dir: String) {
-        let url = recordFileURL(dir: dir)
-        guard var entry = Self.recordCache[url.path] else { return }
-        entry.dayIds.removeAll { $0 == mediaId }
-        entry.fileNames.removeValue(forKey: mediaId)
-        Self.recordCache[url.path] = entry
-        let snapshot = entry.dayIds
-        let names = entry.fileNames
-        Self.recordWriteQueue.async {
-            guard let data = try? JSONSerialization.data(withJSONObject: [
-                "downloaded": snapshot, "files": names,
-            ]) else { return }
-            try? data.write(to: url, options: .atomic)
         }
     }
 
@@ -634,7 +664,6 @@ final class DownloadStore {
             fileName: stagingName,
             proxy: proxy,
             connections: settings.aria2Split,
-            minSplitSizeMB: settings.aria2MinSplitSize,
             fileAllocation: settings.aria2FileAllocation
         )
     }
@@ -757,14 +786,13 @@ final class DownloadStore {
     /// 是否已下载过同一媒体——主页「已下载」判定。
     /// recordFile 模式：目标文件夹记录文件里的媒体 ID（内存缓存,异步落盘同步命中）；
     /// fileName 模式：目标路径真实文件存在性（保存路径 + 用户名子文件夹）,不依赖下载历史。
-    func hasDownloaded(media: TwitterMedia, dir: String? = nil) -> Bool {
+    func hasDownloaded(media: TwitterMedia, dir: String? = nil, post: TwitterPost? = nil) -> Bool {
         if settings.sameFileCheckModeValue == .recordFile {
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let targetDir = dir ?? settings.download.saveDirBase
             let recordPath = recordFileURL(dir: targetDir).path
-            guard Self.recordCache[recordPath]?.dayIds.contains(mediaId) == true else { return false }
-            // 记录说已下载 → 再确认文件真的在且非空；不一致则以文件系统为准并清除坏记录
-            return recordEntryIsBackedByFile(mediaId: mediaId, dir: targetDir)
+            // 只信记录，不回查文件（改文件名/移动文件后依然算已下载 —— 见 isDuplicate 说明）
+            return Self.recordCache[recordPath]?.dayIds.contains(mediaId) ?? false
         }
         guard let downloadUrl = downloadURL(for: media) else { return false }
         // 文件名模式:在目标目录找同 URL 派生不出文件名(模板依赖 post/media 数据),
@@ -772,6 +800,16 @@ final class DownloadStore {
         if let fileName = Self.completedFileNameCache[downloadUrl] {
             let targetDir = dir ?? settings.download.saveDirBase
             return fm.fileExists(atPath: (targetDir as NSString).appendingPathComponent(fileName))
+        }
+        // 本会话尚未下载过它：按当前模板算出带索引的名字，直接查一次文件系统
+        // （否则网格里的按钮状态在"以前已下载"时不会显示为已下载）
+        if let post, let dir {
+            let raw = FileNameTemplate.resolve(template: settings.download.fileNameTemplate,
+                                               data: FileNameTemplateData(post: post, media: media))
+            let judged = fileNameWithIndex(raw, media: media, post: post, template: settings.download.fileNameTemplate)
+            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(judged)) { return true }
+            // 兼容升级前的旧命名
+            return fm.fileExists(atPath: (dir as NSString).appendingPathComponent(raw))
         }
         return false
     }

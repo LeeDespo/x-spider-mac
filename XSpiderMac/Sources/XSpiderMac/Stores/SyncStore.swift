@@ -182,11 +182,6 @@ final class SyncStore {
         DateFormatter.fallback.string(from: date)
     }
 
-    static func parseDay(_ s: String) -> Date? {
-        guard !s.isEmpty else { return nil }
-        return DateFormatter.dayOnly.date(from: s)
-    }
-
     /// 重试失败用户（对失败清单批量再同步）
     func retryFailures() {
         let targets = users.filter { failedUsers.keys.contains($0.screenName) }
@@ -278,20 +273,29 @@ final class SyncStore {
                 let syncCheck = SettingsStore.shared.settings.syncCheckModeValue
                 let record = syncCheck == .syncRecordFile ? try? Self.loadSyncRecord(screenName: user.screenName) : nil
                 var latestDay = ""
-                var dayIds = Set<String>()
+                // 关键：用**已有记录的 dayIds 作为起点**，而不是空集合。
+                // 本轮最多只翻 maxPages 页，若以空集重写，锚点日未被本轮覆盖到的媒体
+                // 会丢失"已同步"标记 → 下次同步把它们当新内容重复处理（记录被截断）。
+                var dayIds = Set(record?.dayIds ?? [])
                 repeat {
                     if Task.isCancelled { return }
                     let cursorIn = cursor
                     let (posts, next) = try await withTimeout(150) {
                         try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursorIn, fast: true)
                     }
-                    // 记录文件模式:翻到比记录锚点更早的日期就停(当天媒体仍要按 ID 排除)
-                    if let record, let anchor = Self.parseDay(record.anchorDay) {
-                        let olderThanAnchor = posts.allSatisfy { post in
-                            guard let created = post.createdAt else { return false }
-                            return Self.dayString(created) < record.anchorDay
-                        }
-                        if olderThanAnchor && page > 0 { break }
+                    // 记录文件模式：翻到比锚点更早的内容就停（当天媒体仍按 ID 排除）。
+                    //
+                    // 判定修正：原实现用 `allSatisfy`（整页都必须更早）才停，而 X 的分页
+                    // 同一页跨天很常见，只要有一条当天/更新的就永远不停 → "提前终止"形同虚设，
+                    // 每次仍翻满 maxPages 页。改为看该页**是否已经出现比锚点更早的日期**：
+                    // 时间线是按时间降序的，一旦出现更早的，后续只会更早。
+                    // 同时不再要求 page > 0 —— 第一页就可能整页更早，没有理由多翻一页。
+                    if let record, !record.anchorDay.isEmpty,
+                       posts.contains(where: { post in
+                           guard let created = post.createdAt else { return false }
+                           return Self.dayString(created) < record.anchorDay
+                       }) {
+                        break
                     }
                     for post in posts {
                         if let created = post.createdAt {

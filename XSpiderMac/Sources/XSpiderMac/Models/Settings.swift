@@ -44,7 +44,7 @@ struct DownloadSettings: Codable, Sendable {
     var saveDirBase: String = ""
     /// 已废弃（保留解码兼容），目录规则改用 accountSubfolder 开关
     var dirTemplate: String = ""
-    var fileNameTemplate: String = "%POST_TIME% %USER_SCREEN_NAME% %POST_ID%-%MEDIA_INDEX%%EXT%"
+    var fileNameTemplate: String = "%POST_TIME% %USER_SCREEN_NAME% %POST_ID% %EXT%"
     var sameFileSkip: Bool = true
     /// 跳过相同文件的判定依据：fileName / recordFile
     var sameFileCheckMode: String?
@@ -59,10 +59,12 @@ struct DownloadSettings: Codable, Sendable {
     /// 同时并发下载文件数（1–20，默认 5）
     var maxConcurrent: Int?
     // aria2 参数
-    /// 单文件分块连接数（--split，1–16，默认 8）
+    /// 单文件最大连接数（aria2Next 的 `stream-max-connections`，范围 1–256，默认 6）。
+    ///
+    /// 旧字段名 aria2Split 沿用（避免配置迁移），但语义已对齐 aria2Next：
+    /// 旧的 `--split` / `--max-connection-per-server` 在 aria2Next 中已退役，
+    /// 会被"近似映射"到本选项。
     var aria2Split: Int?
-    /// 最小分块大小 MB（--min-split-size，1–20，默认 1）
-    var aria2MinSplitSize: Int?
     /// aria2 文件分配方式：none / prealloc / falloc
     var aria2FileAllocation: String?
     /// 自动引擎模式下，超过此大小（MB）改用 aria2Next（默认 5）
@@ -79,8 +81,7 @@ struct DownloadSettings: Codable, Sendable {
         autoLoadMedia = true
         engine = .aria2
         maxConcurrent = 5
-        aria2Split = 8
-        aria2MinSplitSize = 1
+        aria2Split = 6
         aria2FileAllocation = "none"
         aria2SizeThresholdMB = 5
         aria2Port = 6801
@@ -92,7 +93,7 @@ struct DownloadSettings: Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         saveDirBase = try c.decodeIfPresent(String.self, forKey: .saveDirBase) ?? ""
         dirTemplate = try c.decodeIfPresent(String.self, forKey: .dirTemplate) ?? ""
-        fileNameTemplate = try c.decodeIfPresent(String.self, forKey: .fileNameTemplate) ?? "%POST_TIME% %USER_SCREEN_NAME% %POST_ID%-%MEDIA_INDEX%%EXT%"
+        fileNameTemplate = try c.decodeIfPresent(String.self, forKey: .fileNameTemplate) ?? "%POST_TIME% %USER_SCREEN_NAME% %POST_ID% %EXT%"
         sameFileSkip = try c.decodeIfPresent(Bool.self, forKey: .sameFileSkip) ?? true
         sameFileCheckMode = try c.decodeIfPresent(String.self, forKey: .sameFileCheckMode)
         recordFileName = try c.decodeIfPresent(String.self, forKey: .recordFileName)
@@ -100,8 +101,7 @@ struct DownloadSettings: Codable, Sendable {
         autoLoadMedia = try c.decodeIfPresent(Bool.self, forKey: .autoLoadMedia) ?? true
         engine = try c.decodeIfPresent(DownloadEngine.self, forKey: .engine) ?? .aria2
         maxConcurrent = try c.decodeIfPresent(Int.self, forKey: .maxConcurrent) ?? 5
-        aria2Split = try c.decodeIfPresent(Int.self, forKey: .aria2Split) ?? 8
-        aria2MinSplitSize = try c.decodeIfPresent(Int.self, forKey: .aria2MinSplitSize) ?? 1
+        aria2Split = try c.decodeIfPresent(Int.self, forKey: .aria2Split) ?? 6
         aria2FileAllocation = try c.decodeIfPresent(String.self, forKey: .aria2FileAllocation) ?? "none"
         aria2SizeThresholdMB = try c.decodeIfPresent(Int.self, forKey: .aria2SizeThresholdMB) ?? 5
         aria2Port = try c.decodeIfPresent(Int.self, forKey: .aria2Port) ?? 6801
@@ -235,10 +235,9 @@ struct Settings: Codable, Sendable {
     var engine: DownloadEngine { download.engine ?? .aria2 }
     /// 并发下载数（默认 5，1–20 钳制）
     var maxConcurrentDownloads: Int { min(20, max(1, download.maxConcurrent ?? 5)) }
-    /// aria2 单文件连接数（1–16 钳制）
-    var aria2Split: Int { min(16, max(1, download.aria2Split ?? 8)) }
-    /// aria2 最小分块大小 MB（1–20）
-    var aria2MinSplitSize: Int { min(20, max(1, download.aria2MinSplitSize ?? 1)) }
+    /// aria2Next 单文件最大连接数（1–256 钳制，默认 6）。
+    /// 上限取自 aria2Next 手册对 `stream-max-connections` 的定义。
+    var aria2Split: Int { min(256, max(1, download.aria2Split ?? 6)) }
     /// aria2 文件分配方式
     var aria2FileAllocation: String { download.aria2FileAllocation ?? "none" }
     /// 自动引擎模式的大小阈值 MB（默认 5，钳制 1–2048）
