@@ -38,19 +38,15 @@ final class HomeTimelineStore {
         // 不会因为某处忘记调用 rebuildFlatMedia 而出现"切换形态后数据不更新"
         didSet { rebuildFlatMedia() }
     }
+    /// 加载失败原因（非 nil 时视图显示"加载失败 + 重试"）。
+    /// 此前失败只写日志、不设状态 → 用户看到的是无限转圈（"加载到永远"）。
+    private(set) var loadError: String?
     var loading = false
     var loadingMore = false
     /// 展平后的媒体列表（媒体瀑布流用）。getHomeTimeline 只返回有媒体的推文，
     /// 因此无需额外请求即可切换形态 —— 不额外消耗 X 配额。
     var flatMedia: [(post: TwitterPost, media: TwitterMedia, index: Int)] = []
 
-    /// 媒体数据集的廉价指纹（首尾媒体 ID + 数量）。
-    /// 用于视图在"切换数据源/排序"时重置分批渲染计数：
-    /// 直接比较 flatMedia 数组会因元组不可 Equatable 而失败，全量比较又太贵。
-    var flatMediaSignature: String {
-        guard let first = flatMedia.first, let last = flatMedia.last else { return "empty-\(flatMedia.count)" }
-        return "\(flatMedia.count)|\(first.media.id ?? "?")|\(last.media.id ?? "?")"
-    }
     /// 是否有更多可加载（媒体瀑布流与推文形态共用同一分页状态）
     var hasMore: Bool { cursor != nil }
     private var cursor: String?
@@ -93,6 +89,7 @@ final class HomeTimelineStore {
         generation += 1
         let gen = generation
         loading = true
+        loadError = nil          // 新一次加载开始 → 清掉上次的错误提示
         defer { loading = false }
         do {
             let (newPosts, next) = try await TwitterAPI.shared.getHomeTimeline(mode: mode)
@@ -100,8 +97,13 @@ final class HomeTimelineStore {
             posts = newPosts          // didSet 已重建 flatMedia
             seenIds = Set(newPosts.map(\.id))
             cursor = next
+            loadError = nil
+        } catch is CancellationError {
+            return
         } catch {
             guard gen == generation else { return }
+            // 记录可见的失败状态：否则用户只看到无限转圈，不知道可以重试
+            loadError = error.localizedDescription
             AppLogger.warn("主页时间线加载失败", category: "HOME", ["error": error.localizedDescription])
         }
     }
@@ -120,12 +122,27 @@ final class HomeTimelineStore {
             }
             posts.append(contentsOf: fresh)   // didSet 已重建 flatMedia
             self.cursor = next
+            loadError = nil
+        } catch is CancellationError {
+            return
         } catch {
+            // 翻页失败也给出可见状态（原先只写日志 → 用户以为"卡住了"）
+            loadError = error.localizedDescription
             AppLogger.warn("主页时间线翻页失败", category: "HOME", ["error": error.localizedDescription])
         }
     }
 
-    /// 重建媒体瀑布流数据（增量语义：只在 posts 变化时调用，不在视图 body 里重算）
+    /// 用户点「重试」：清掉错误并重新加载
+    func retry() async {
+        loadError = nil
+        if posts.isEmpty { await reload() } else { await loadMore() }
+    }
+
+    /// 测试辅助：清空错误态（Store 是单例，测试间需隔离）
+    func clearErrorForTesting() {
+        loadError = nil
+    }
+
     /// 重建媒体瀑布流数据。
     /// 必须跟随 `visiblePosts`（含"热门"按赞数排序）——否则切到媒体形态时顺序与推文形态不一致，
     /// 表现为"切换热门/最新对媒体流没反应"。

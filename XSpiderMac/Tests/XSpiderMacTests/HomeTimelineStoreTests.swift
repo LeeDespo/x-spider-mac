@@ -74,29 +74,6 @@ final class HomeTimelineStoreTests: XCTestCase {
         XCTAssertEqual(store.flatMedia.first?.media.id, "mA", "推荐模式应保持原序")
     }
 
-    /// 媒体指纹应随数据集变化而变化（视图据此重置分批渲染计数）。
-    /// 若指纹不变，切换数据源后分批计数会停在旧进度，甚至超过新数据量。
-    @MainActor
-    func testFlatMediaSignatureChangesWithData() {
-        let store = HomeTimelineStore.shared
-        store.mode = .following
-        store.posts = [makePost(id: "A", likes: 1, mediaIds: ["mA"])]
-        store.setFollowingSort(.latest)
-        let sig1 = store.flatMediaSignature
-
-        store.posts = [
-            makePost(id: "A", likes: 1, mediaIds: ["mA"]),
-            makePost(id: "B", likes: 2, mediaIds: ["mB"]),
-        ]
-        store.setFollowingSort(.hot)
-        let sig2 = store.flatMediaSignature
-
-        XCTAssertNotEqual(sig1, sig2, "数据变化后指纹必须变化，否则视图不会重置分批进度")
-        store.posts = []
-        store.setFollowingSort(.latest)
-        XCTAssertTrue(store.flatMediaSignature.hasPrefix("empty"), "空数据集应有稳定的空指纹")
-    }
-
     /// 媒体形态与推文形态必须共用同一分页状态：hasMore 直接由 cursor 派生。
     /// 二者若脱节，瀑布流会误报"已加载全部"而不再翻页（"滚到底不出下一页"）。
     @MainActor
@@ -112,8 +89,8 @@ final class HomeTimelineStoreTests: XCTestCase {
         store.mode = .following
         store.posts = [makePost(id: "A", likes: 1, mediaIds: ["mA"])]
         store.setFollowingSort(.hot)
-        let first = store.flatMediaSignature
+        let first = store.flatMedia.map(\.media.id)
         store.setFollowingSort(.hot)   // 重复设置
-        XCTAssertEqual(store.flatMediaSignature, first)
+        XCTAssertEqual(store.flatMedia.map(\.media.id), first)
     }
 }

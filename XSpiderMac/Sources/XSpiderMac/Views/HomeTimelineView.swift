@@ -53,6 +53,9 @@ struct HomeTimelineView: View {
             if store.posts.isEmpty && store.loading {
                 ProgressView(L("加载中…"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = store.loadError, store.posts.isEmpty {
+                // 加载失败要可见（此前只写日志 → 用户看到无限转圈，以为还在加载）
+                loadFailureView(error)
             } else if store.posts.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "newspaper")
@@ -64,6 +67,8 @@ struct HomeTimelineView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if store.contentType == .media {
                 homeMediaWaterfall
+                    // 形态切换时淡入淡出，避免内容"跳"一下
+                    .transition(.opacity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -73,29 +78,83 @@ struct HomeTimelineView: View {
                             }, onAvatar: {
                                 onAvatarTap?(post.user.screenName)
                             }, showFollowButton: true)
+                            // 预取一屏：倒数第 3 条出现时就拉下一页，而不是等最后一条。
+                            // 与瀑布流阈值语义一致（提前约一屏），用户滚到底时数据已就绪。
+                            // LazyVStack 会销毁滚出视口的卡片，故 onAppear 可重复触发。
                             .onAppear {
-                                if post.id == store.visiblePosts.last?.id {
+                                let posts = store.visiblePosts
+                                guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
+                                if idx >= posts.count - 3 {
                                     Task { await store.loadMore() }
                                 }
                             }
                         }
                         if store.loadingMore {
                             ProgressView().padding(10)
+                        } else if let error = store.loadError {
+                            // 翻页失败：底部给出重试入口（不再静默卡住）
+                            footerRetry(error)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 20)
                 }
+                .transition(.opacity)
             }
         }
+        // 分段切换的动画：三个分段（推荐/关注、热门/最新、推文/媒体）任一变化都做内容过渡，
+        // 让切换"立刻可见"且不生硬。用 easeOut 短时过渡——内容整体替换，弹簧会显得晃。
+        .animation(.easeOut(duration: 0.18), value: store.mode)
+        .animation(.easeOut(duration: 0.18), value: store.contentType)
+        .animation(.easeOut(duration: 0.18), value: store.followingSort)
         .task {
             if store.posts.isEmpty { await store.initialLoad() }
         }
-        // 数据源变化（切推荐/关注、切热门/最新、重新加载）→ 分批计数从头开始，
-        // 否则切换后仍停在旧的展开进度，甚至超过新数据量
-        .onChange(of: store.flatMediaSignature) { _, _ in
-            waterfallVisibleCount = 40
+        // 注意：**不要**在这里按数据变化重置 waterfallVisibleCount。
+        // 曾用 onChange(of: flatMediaSignature) 做重置，而指纹含 flatMedia.count，
+        // 于是"加载下一页"必然触发重置 → 已渲染条目骤减 → 视觉上跳回前 40 条
+        // （用户反馈的"滚到底加载新内容会退回前面，位置固定"）。
+        // 数据源切换不需要重置：prefix() 天然按实际数量截断，计数器只增不减是安全的。
+    }
+
+    /// 整页加载失败：说明原因 + 重试
+    private func loadFailureView(_ error: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 44))
+                .foregroundStyle(.orange)
+            Text(L("加载失败"))
+                .font(.headline)
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button {
+                Task { await store.retry() }
+            } label: {
+                Label(L("重试"), systemImage: "arrow.clockwise")
+            }
+            .compatGlassProminentButton()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 翻页失败：底部一行 + 重试
+    private func footerRetry(_ error: String) -> some View {
+        VStack(spacing: 6) {
+            Text(L("加载中断") + "：" + error)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(L("重试")) {
+                Task { await store.retry() }
+            }
+            .compatGlassButton()
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
     }
 
     /// 媒体瀑布流：按窗口宽度自适应列数；单元高度由媒体宽高比决定（不裁切、不 letterbox）。
@@ -174,8 +233,13 @@ struct HomeTimelineView: View {
 
     private func advanceIfVisible(_ sentinelMaxY: CGFloat, viewportHeight: CGFloat, renderedCount: Int, allRendered: Bool, canPage: Bool) {
         guard !store.loadingMore, viewportHeight > 0 else { return }
-        // 哨兵底边进入视口下沿（含半屏提前量）才算"滚到底"
-        guard sentinelMaxY <= viewportHeight else { return }
+        // **预取一屏**：哨兵距视口下沿还有一屏时就推进，而不是等它真正进入视口。
+        // 这就是上游 `InfiniteScroll` 的语义（threshold 默认取 clientHeight：
+        // `scrollHeight - scrollTop <= clientHeight + threshold`），
+        // 效果是用户滚到底时下一批已经就绪 —— 视觉上无缝。
+        // 提前量**必须**只有一屏：无节制连拉会触发 429（见 AGENTS.md 大坑 3）。
+        let prefetchLine = viewportHeight * 2
+        guard sentinelMaxY <= prefetchLine else { return }
         if !allRendered {
             waterfallVisibleCount += 40
         } else if canPage {

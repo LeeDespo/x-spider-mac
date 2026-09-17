@@ -53,6 +53,9 @@ final class SettingsStore {
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
         applyRateLimit()
+        // 启动时不在这里 configure：SettingsStore 是第一个构造的 store，
+        // 其 init 内触碰 AppStore 会形成构造重入。
+        // 启动路径已由 AppStore.cookieString.didSet（restoreSession → login 内的赋值）覆盖。
     }
 
     /// 一次性迁移：早期默认值过于保守（每窗口 10 请求 / 熔断暂停 900 秒），
@@ -89,6 +92,32 @@ final class SettingsStore {
         SleepPreventer.shared.enabled = settings.app.preventSleepDuringDownload
         applyLanguage()
         applyRateLimit()
+        applyProxyIfChanged()
+    }
+
+    /// 代理设置变更 → 重建网络客户端（**无需重启**）。
+    ///
+    /// 此前 `TwitterAPI.configure` 只由 `AppStore.cookieString.didSet` 触发，
+    /// 在设置里改代理地址/开关**完全不会**影响已运行的 URLSession ——
+    /// 表现为"代理换了却还在走旧配置""重设代理也没用，除非重启应用"。
+    ///
+    /// 用指纹做幂等：设置页每次键入都会走 save()，不能每次都重建连接池。
+    private var lastAppliedProxyFingerprint: String?
+    private func applyProxyIfChanged() {
+        let p = settings.proxy
+        let fingerprint = "\(p.enable)|\(p.useSystem)|\(p.url)|\(p.username ?? "")|\(p.password ?? "")"
+        guard fingerprint != lastAppliedProxyFingerprint else { return }
+        lastAppliedProxyFingerprint = fingerprint
+        // 先取 cookie（避免在 Task 内首次触发 AppStore 构造，与自身初始化形成重入）
+        let cookie = AppStore.shared.cookieString
+        Task { [settings] in
+            await TwitterAPI.shared.configure(cookie: cookie, proxy: settings.proxy)
+            AppLogger.info("代理设置已应用,网络客户端已重建", category: "NET", [
+                "enable": settings.proxy.enable ? "1" : "0",
+                "useSystem": settings.proxy.useSystem ? "1" : "0",
+                "url": settings.proxy.url,
+            ])
+        }
     }
 
     /// 限流缓解设置 → 请求闸门（设置改动即时生效）

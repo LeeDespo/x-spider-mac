@@ -1,9 +1,20 @@
 import Foundation
 
-/// 上游 ipc/network.ts 的移植：16 次重试、指数退避（100ms 起、16s 封顶）、代理三态。
+/// 上游 ipc/network.ts 的移植：重试 + 指数退避 + 代理三态。
+///
+/// 与上游的必要差异：上游是浏览器环境（fetch 有天然超时，且用户能刷新页面），
+/// 照搬"16 次重试"在 macOS 上不可接受 —— 实测最坏耗时约
+/// `16 × 60s(系统默认超时) + 153s(退避累计) ≈ 19 分钟`，
+/// 表现为"一直加载中、永远不失败、也无法重试"。
+/// 因此这里改为**总预算制**：次数与总耗时双限，谁先到谁停。
 actor NetworkClient {
-    private let maxRetryCount = 16
-    private let maxRetryDelay: TimeInterval = 16
+    /// 最大尝试次数（含首次）
+    private let maxRetryCount = 4
+    /// 单次尝试超时（未显式指定时使用；不再依赖系统默认 60s）
+    private let defaultAttemptTimeout: TimeInterval = 10
+    /// 整个重试链的总时间预算：超过即放弃，让调用方显示失败并允许用户重试
+    private let totalBudget: TimeInterval = 25
+    private let maxRetryDelay: TimeInterval = 8
 
     private var proxy: ProxySettings
     private var session: URLSession
@@ -15,6 +26,11 @@ actor NetworkClient {
         // 覆盖请求头里手动设置的 auth_token/ct0 Cookie
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
+        // 显式超时：不再依赖系统默认（request 60s / resource 7 天）
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 60
+        // 代理波动时快速失败，而不是长期挂着半开连接
+        config.waitsForConnectivity = false
         config.apply(proxy: proxy)
         self.session = URLSession(configuration: config)
     }
@@ -59,9 +75,21 @@ actor NetworkClient {
         // 端点类别：驱动闸门（令牌桶/串行/熔断）与被动状态上报
         let kind = RequestGate.Kind.classify(path: url.path)
         var acquired = false
+        // 总预算起点：超过即放弃（含退避等待），避免"加载到永远"
+        let startedAt = Date()
+        // 全局请求超时用显式值，不再依赖系统默认 60s
+        let attemptTimeout = perAttemptTimeout ?? defaultAttemptTimeout
 
         while remainingRetryCount > 0 {
             if Task.isCancelled { throw CancellationError() }
+            // 总预算用尽：立刻失败，让调用方展示"加载失败 + 重试"
+            if Date().timeIntervalSince(startedAt) > totalBudget {
+                AppLogger.warn("重试总预算用尽,放弃本次请求", category: "NET", [
+                    "url": url.path,
+                    "elapsedSec": String(format: "%.1f", Date().timeIntervalSince(startedAt)),
+                ])
+                throw lastError ?? NetworkError.timedOut
+            }
             do {
                 // 闸门（令牌桶 + 同端点串行 + 熔断短路）。熔断/取消异常直接上抛，
                 // 不进入重试，避免"越限越试"。
@@ -75,7 +103,7 @@ actor NetworkClient {
                 let resp = try await requestInternal(
                     method: method, url: url, query: query,
                     headers: headers, body: body,
-                    timeout: perAttemptTimeout
+                    timeout: attemptTimeout
                 )
                 AppLogger.perf("\(method) \(url.path)", category: "NET", ms: Date().timeIntervalSince(start) * 1000, [
                     "status": "\(resp.status)",
@@ -137,21 +165,52 @@ actor NetworkClient {
                     throw CancellationError()
                 }
                 lastError = error
+                let urlError = error as? URLError
+                // 无法建立连接（代理不可达/离线）→ 归为 unreachable，供状态栏与文案使用；
+                // 这类错误重试通常无效，但仍给 1 次机会（代理可能刚好在恢复）
+                let isUnreachable: Bool = {
+                    guard let code = urlError?.code else { return false }
+                    switch code {
+                    case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+                         .notConnectedToInternet, .networkConnectionLost:
+                        return true
+                    default:
+                        return false
+                    }
+                }()
                 await MainActor.run {
                     AccountStatusStore.shared.noteNetworkFailure(error)
                 }
-                AppLogger.warn("请求失败将重试", category: "NET", [
-                    "method": method,
-                    "url": url.path.isEmpty ? url.absoluteString : url.path,
-                    "error": error.localizedDescription,
-                    "remains": "\(remainingRetryCount)",
-                ])
-                try await Self.sleepCancellable(retryDelay)
+                // 日志降噪：16 次重试刷 16 行没有价值，只记首次与末次
+                if remainingRetryCount == attemptLimit || remainingRetryCount == 1 {
+                    AppLogger.warn("请求失败将重试", category: "NET", [
+                        "method": method,
+                        "url": url.path.isEmpty ? url.absoluteString : url.path,
+                        "error": error.localizedDescription,
+                        "remains": "\(remainingRetryCount)",
+                        "unreachable": isUnreachable ? "1" : "0",
+                    ])
+                }
+                // 连不上时缩短退避：长等无意义，且会拖到总预算耗尽
+                let wait = isUnreachable ? min(retryDelay, 1.0) : retryDelay
+                try await Self.sleepCancellable(wait)
                 remainingRetryCount -= 1
                 retryDelay = min(retryDelay * 2, maxRetryDelay)
             }
         }
 
+        // 次数用尽：把"连不上"统一包装成语义明确的错误
+        if let urlError = lastError as? URLError {
+            switch urlError.code {
+            case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+                 .notConnectedToInternet, .networkConnectionLost:
+                throw NetworkError.unreachable(urlError.localizedDescription)
+            case .timedOut:
+                throw NetworkError.timedOut
+            default:
+                break
+            }
+        }
         throw lastError ?? NetworkError.unknown
     }
 
@@ -232,11 +291,17 @@ actor NetworkClient {
 enum NetworkError: LocalizedError {
     case unknown
     case httpStatus(Int)
+    /// 总预算用尽或单次超时（可重试，但本轮已放弃）
+    case timedOut
+    /// 无法建立连接（代理不可达 / 离线）
+    case unreachable(String)
 
     var errorDescription: String? {
         switch self {
         case .unknown: return "未知网络错误"
         case .httpStatus(let code): return "HTTP \(code)"
+        case .timedOut: return L("请求超时，请稍后重试")
+        case .unreachable(let detail): return L("无法连接到服务器：") + detail
         }
     }
 }

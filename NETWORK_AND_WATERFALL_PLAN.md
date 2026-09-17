@@ -1,7 +1,8 @@
 # 瀑布流滚动修复 + 网络连接层审查方案
 
 > 读者：本项目 AI 代理（跨会话续接）。前置：分页/爬虫/限流/下载均已修复（`4e5d3b4`…`23d8e44`）。
-> **状态：本文档只做诊断与方案，未改动任何代码**（用户明确要求先出方案）。
+> **状态（2026-09-17 更新）**：A（回退 bug）、B（预取一屏）、C.1①（代理重建）、C.1③（重试预算/超时/失败可见）**已实施**；
+> **C.1②（session invalidate）与 C.1④（异常状态 TTL）留待下次**。
 > 所有结论带代码位置与实测数据，可直接核对。
 >
 > 三部分：**A** 瀑布流回退 bug（已定位到行）｜**B** 无缝加载（见解与方案）｜**C** 网络连接层审查。
@@ -88,10 +89,12 @@ var flatMediaSignature: String {
 
 ## C.1 你描述的症状 → 多个独立根因叠加
 
+> 实施状态：① 与 ③ 已完成；② 与 ④ 待做（见下方各自标注）。
+
 你的体验是"代理波动 → X 断连 → 代理恢复后应用仍显示断连很久，重试/重设都没用，
 除非重启应用"。审查后确认这**不是一个 bug，而是三个叠加**，每个都独立成立：
 
-### 根因 ①：改代理设置**完全不会**重建网络客户端（最严重）
+### 根因 ①：改代理设置**完全不会**重建网络客户端（最严重）✅ 已实施
 
 ```swift
 // AppStore.swift:11-14 —— 只有 cookie 变化才触发 configure
@@ -124,7 +127,7 @@ private func applyProxyIfChanged() {
 ```
 在 `save()` 里调用它（与 `applyRateLimit()` 并列）。
 
-### 根因 ②：URLSession 从不 invalidate → 旧连接池与失效连接被长期持有
+### 根因 ②：URLSession 从不 invalidate → 旧连接池与失效连接被长期持有 ⬜ 待实施
 
 ```swift
 // TwitterAPI.swift:19-24
@@ -144,7 +147,7 @@ func configure(cookie: String, proxy: ProxySettings) async {
 `configure` 里在替换前调用旧 client 的 invalidate。另外让 `NetworkClient` 成为
 `deinit { session.invalidateAndCancel() }` 的持有者，保证不遗漏。
 
-### 根因 ③：重试预算过大 → "加载到永远"，且期间无法恢复
+### 根因 ③：重试预算过大 → "加载到永远"，且期间无法恢复 ✅ 已实施
 
 实测量化（`maxRetryCount = 16`、`maxRetryDelay = 16`、单次请求超时用系统默认 60s）：
 
@@ -177,7 +180,7 @@ func configure(cookie: String, proxy: ProxySettings) async {
    应增加 `loadError` 状态并在视图显示"加载失败，点击重试"。
    （`HomepageStore` 已有 `postListError` 可参考，主页时间线缺这个。）
 
-### 根因 ④（附加）：熔断/异常状态没有自动解除路径
+### 根因 ④（附加）：熔断/异常状态没有自动解除路径 ⬜ 待实施
 
 `RequestGate.resetBreakers()` 只在两处调用：用户点侧边栏重试、设置页「立即恢复」。
 `AccountStatusStore` 的 `offline` / `timedOut` 状态**只能靠"下一次请求成功"来清除**——
