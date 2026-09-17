@@ -13,11 +13,29 @@ struct ProxySettings: Codable, Sendable {
 enum DownloadEngine: String, Codable, CaseIterable, Sendable {
     case builtIn
     case aria2
+    /// 自动：按文件大小决定（小于阈值用内置，大文件用 aria2）
+    case auto
 
     var displayName: String {
         switch self {
         case .builtIn: return L("内置引擎")
         case .aria2: return "aria2Next"
+        case .auto: return L("自动")
+        }
+    }
+}
+
+/// aria2 RPC 监听端口策略
+enum Aria2PortMode: String, Codable, CaseIterable, Sendable {
+    /// 固定端口（默认 6801）
+    case fixed
+    /// 每次启动随机可用端口（避免与其它 aria2 软件冲突）
+    case random
+
+    var displayName: String {
+        switch self {
+        case .fixed: return L("固定端口")
+        case .random: return L("随机端口")
         }
     }
 }
@@ -47,6 +65,12 @@ struct DownloadSettings: Codable, Sendable {
     var aria2MinSplitSize: Int?
     /// aria2 文件分配方式：none / prealloc / falloc
     var aria2FileAllocation: String?
+    /// 自动引擎模式下，超过此大小（MB）改用 aria2Next（默认 5）
+    var aria2SizeThresholdMB: Int?
+    /// aria2 RPC 监听端口（fixed 模式使用，默认 6801）
+    var aria2Port: Int?
+    /// 端口策略：fixed / random（默认 fixed 6801）
+    var aria2PortMode: String?
 
     init() {
         sameFileCheckMode = "fileName"
@@ -58,6 +82,9 @@ struct DownloadSettings: Codable, Sendable {
         aria2Split = 8
         aria2MinSplitSize = 1
         aria2FileAllocation = "none"
+        aria2SizeThresholdMB = 5
+        aria2Port = 6801
+        aria2PortMode = "fixed"
     }
 
     // 自定义解码：新字段缺失时用新默认值而不是整体 decode 失败
@@ -76,6 +103,9 @@ struct DownloadSettings: Codable, Sendable {
         aria2Split = try c.decodeIfPresent(Int.self, forKey: .aria2Split) ?? 8
         aria2MinSplitSize = try c.decodeIfPresent(Int.self, forKey: .aria2MinSplitSize) ?? 1
         aria2FileAllocation = try c.decodeIfPresent(String.self, forKey: .aria2FileAllocation) ?? "none"
+        aria2SizeThresholdMB = try c.decodeIfPresent(Int.self, forKey: .aria2SizeThresholdMB) ?? 5
+        aria2Port = try c.decodeIfPresent(Int.self, forKey: .aria2Port) ?? 6801
+        aria2PortMode = try c.decodeIfPresent(String.self, forKey: .aria2PortMode) ?? "fixed"
     }
 }
 
@@ -119,7 +149,12 @@ enum SyncLayoutMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// 限流缓解（可选字段：旧的已存配置缺这些键时按默认值兜底，不整体解码失败）
+///
+/// 注意区分两类限流：**GraphQL API**（x.com/i/api，受账号配额约束，管翻页/爬虫）
+/// 与 **媒体 CDN**（pbs.twimg.com / video.twimg.com，管图片视频下载）。二者是不同的域、
+/// 不同的配额，因此各自独立配置。
 struct RateLimitSettings: Codable, Sendable {
+    // ── GraphQL（API）──
     /// 请求闸门开关：按端点分类排队 + 令牌桶限速
     var gateEnabled: Bool?
     /// 时间窗内允许的请求数（令牌桶容量）
@@ -133,6 +168,14 @@ struct RateLimitSettings: Codable, Sendable {
     /// 熔断冷却秒数
     var cooldownSeconds: Int?
 
+    // ── 媒体 CDN（下载）──
+    /// CDN 限流时自动降低下载并发（默认开）
+    var cdnThrottleEnabled: Bool?
+    /// CDN 限流时允许的下载并发上限（默认 1，钳制 1–10）
+    var cdnMaxConcurrent: Int?
+    /// CDN 限流后的暂停秒数（默认 120，钳制 10–3600）
+    var cdnCooldownSeconds: Int?
+
     init() {
         gateEnabled = true
         requestsPerWindow = 100
@@ -140,6 +183,9 @@ struct RateLimitSettings: Codable, Sendable {
         serializePerEndpoint = true
         breakerEnabled = true
         cooldownSeconds = 300
+        cdnThrottleEnabled = true
+        cdnMaxConcurrent = 1
+        cdnCooldownSeconds = 120
     }
 }
 
@@ -195,6 +241,15 @@ struct Settings: Codable, Sendable {
     var aria2MinSplitSize: Int { min(20, max(1, download.aria2MinSplitSize ?? 1)) }
     /// aria2 文件分配方式
     var aria2FileAllocation: String { download.aria2FileAllocation ?? "none" }
+    /// 自动引擎模式的大小阈值 MB（默认 5，钳制 1–2048）
+    var aria2SizeThresholdMB: Int { min(2048, max(1, download.aria2SizeThresholdMB ?? 5)) }
+    /// aria2 RPC 端口（默认 6801，钳制 1024–65535）
+    var aria2Port: Int { min(65535, max(1024, download.aria2Port ?? 6801)) }
+    /// 端口策略
+    var aria2PortMode: Aria2PortMode {
+        get { Aria2PortMode(rawValue: download.aria2PortMode ?? "fixed") ?? .fixed }
+        set { download.aria2PortMode = newValue.rawValue }
+    }
     /// 液态玻璃开关（默认开；仅在 macOS 26+ 有效）
     var liquidGlassEnabled: Bool { app.liquidGlass ?? true }
     /// 跳过相同文件判定依据（默认按文件名）
@@ -240,6 +295,21 @@ struct Settings: Codable, Sendable {
     var breakerEnabled: Bool { app.rateLimit?.breakerEnabled ?? true }
     /// 熔断冷却秒数（默认 300 = 5 分钟，钳制 30–3600）
     var breakerCooldownSeconds: Int { min(3600, max(30, app.rateLimit?.cooldownSeconds ?? 300)) }
+
+    // ── 媒体 CDN 限流缓解（与 GraphQL 独立）──
+
+    /// CDN 限流时是否自动降并发（默认开）
+    var cdnThrottleEnabled: Bool { app.rateLimit?.cdnThrottleEnabled ?? true }
+    /// CDN 限流期间的下载并发上限（默认 1，钳制 1–10）
+    var cdnMaxConcurrent: Int { min(10, max(1, app.rateLimit?.cdnMaxConcurrent ?? 1)) }
+    /// CDN 限流后的暂停秒数（默认 120，钳制 10–3600）
+    var cdnCooldownSeconds: Int { min(3600, max(10, app.rateLimit?.cdnCooldownSeconds ?? 120)) }
+
+    /// 有效引擎（auto 时按阈值分流，见 DownloadStore.engineFor）
+    var engineMode: DownloadEngine {
+        get { download.engine ?? .aria2 }
+        set { download.engine = newValue }
+    }
 
     enum Language: String, CaseIterable, Identifiable {
         case zhHans = "zh-Hans"

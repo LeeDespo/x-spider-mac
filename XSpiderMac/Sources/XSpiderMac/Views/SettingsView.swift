@@ -118,7 +118,7 @@ struct SettingsView: View {
         Section {
             // 下载引擎选择
             Picker(L("下载引擎"), selection: Binding(
-                get: { settingsStore.settings.download.engine ?? .aria2 },
+                get: { settingsStore.settings.engineMode },
                 set: { settingsStore.settings.download.engine = $0 }
             )) {
                 ForEach(DownloadEngine.allCases, id: \.self) { engine in
@@ -126,9 +126,50 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .infoHint(L("aria2Next：aria2 的现代分支，多连接分块下载，大文件更快更稳（推荐）。\n内置引擎：系统原生 URLSession，单连接。\n切换引擎后新任务生效。"))
+            .infoHint(L("自动：按文件大小选择引擎——小于阈值用内置（省开销），大于阈值用 aria2Next（多连接更快更稳）。\naria2Next：全部走 aria2Next。\n内置引擎：系统原生 URLSession，单连接。"))
 
-            if settingsStore.settings.download.engine == .aria2 {
+            // 自动模式的阈值
+            if settingsStore.settings.engineMode == .auto {
+                NumberStepperField(
+                    title: L("超过此大小用 aria2Next (MB)"),
+                    value: Binding(
+                        get: { settingsStore.settings.aria2SizeThresholdMB },
+                        set: { settingsStore.settings.download.aria2SizeThresholdMB = $0 }
+                    ),
+                    range: 1...2048
+                )
+                Text(L("大小未知时按媒体类型估算：视频与 GIF 走 aria2Next，图片走内置。")
+                     + L("（不会为探测大小额外请求服务器）"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            if settingsStore.settings.engineMode != .builtIn {
+                // aria2 RPC 端口策略
+                Picker(L("aria2 端口"), selection: Binding(
+                    get: { settingsStore.settings.aria2PortMode },
+                    set: { settingsStore.settings.download.aria2PortMode = $0.rawValue }
+                )) {
+                    ForEach(Aria2PortMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .infoHint(L("固定端口默认 6801，可与其它 aria2 软件共用；若端口被占用会启动失败。\n随机端口每次启动自动选一个空闲端口，适合同时装了其它 aria2 工具的情况。"))
+
+                if settingsStore.settings.aria2PortMode == .fixed {
+                    NumberStepperField(
+                        title: L("端口号"),
+                        value: Binding(
+                            get: { settingsStore.settings.aria2Port },
+                            set: { settingsStore.settings.download.aria2Port = $0 }
+                        ),
+                        range: 1024...65535
+                    )
+                }
+            }
+
+            if settingsStore.settings.engineMode != .builtIn {
                 HStack {
                     // 连接状态：内核可执行文件在 + 可执行 = 绿灯
                     Circle()
@@ -157,7 +198,7 @@ struct SettingsView: View {
             )
 
             // aria2 专属参数
-            if settingsStore.settings.engine == .aria2 {
+            if settingsStore.settings.engineMode != .builtIn {
                 NumberStepperField(
                     title: L("单文件连接数"),
                     value: Binding(
@@ -190,10 +231,14 @@ struct SettingsView: View {
 
     // MARK: - 限流缓解
 
-    /// 限流缓解：请求闸门（令牌桶 + 同端点串行）与 429 熔断。
-    /// 目标是把"瞬时并发"收进统一速率视图，避免短期大量访问触发 X 的 429。
+    /// 限流缓解：分两组——X API（GraphQL，管翻页/爬虫）与媒体 CDN（管图片视频下载）。
+    /// 二者是不同域、不同配额，所以各自独立配置。
     private var rateLimitSection: some View {
         Section {
+            Text(L("X API（翻页、爬取）"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
             Toggle(isOn: Binding(
                 get: { settingsStore.settings.gateEnabled },
                 set: { settingsStore.settings.app.rateLimit?.gateEnabled = $0 }
@@ -269,6 +314,55 @@ struct SettingsView: View {
                         }
                         .compatGlassButton()
                     }
+                }
+            }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            Text(L("媒体 CDN（图片、视频下载）"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.cdnThrottleEnabled },
+                set: { settingsStore.settings.app.rateLimit?.cdnThrottleEnabled = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("CDN 限流时降低下载并发"))
+                    InfoHint(text: L("媒体服务器（pbs.twimg.com / video.twimg.com）返回 429 时，自动把同时下载数降到下面的值，避免越限越试。\n这与 X API 的限流是两个独立的配额。"))
+                }
+            }
+
+            if settingsStore.settings.cdnThrottleEnabled {
+                NumberStepperField(
+                    title: L("限流时并发上限"),
+                    value: Binding(
+                        get: { settingsStore.settings.cdnMaxConcurrent },
+                        set: { settingsStore.settings.app.rateLimit?.cdnMaxConcurrent = $0 }
+                    ),
+                    range: 1...10
+                )
+                NumberStepperField(
+                    title: L("CDN 暂停时长（秒）"),
+                    value: Binding(
+                        get: { settingsStore.settings.cdnCooldownSeconds },
+                        set: { settingsStore.settings.app.rateLimit?.cdnCooldownSeconds = $0 }
+                    ),
+                    range: 10...3600
+                )
+            }
+
+            if statusStore.cdnThrottled {
+                HStack {
+                    Text(L("媒体下载当前受限"))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button(L("立即重试")) {
+                        Task { await statusStore.probeCDN() }
+                    }
+                    .compatGlassButton()
                 }
             }
         } header: {

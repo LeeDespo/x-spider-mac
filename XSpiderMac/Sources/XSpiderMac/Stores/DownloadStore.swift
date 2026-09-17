@@ -60,7 +60,7 @@ final class DownloadStore {
                     pathsToDelete.append(dirURL.appendingPathComponent(tmpName).path)
                     pathsToDelete.append(dirURL.appendingPathComponent(tmpName + ".aria2").path)
                     // 旧版 staging 位置兼容清理
-                    let legacy = AppDirectories.staging.appendingPathComponent(aria2FileName(for: task))
+                    let legacy = AppDirectories.staging.appendingPathComponent(legacyAria2FileName(for: task))
                     pathsToDelete.append(legacy.path)
                     pathsToDelete.append(legacy.path + ".aria2")
                     // URLSession 引擎的新位置 tmp(带 UUID 无法精确匹配,按前缀清理交给 resolveStale)
@@ -126,12 +126,14 @@ final class DownloadStore {
             let full = (base as NSString).appendingPathComponent(sub)
             if let data = try? Data(contentsOf: URL(fileURLWithPath: full)),
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                // 全量格式 { downloaded: [...] }；兼容旧锚定格式 { anchorDay, dayIds }（读入 dayIds）
+                // v2: { downloaded: [...], files: { id: name } }
+                // v1: { downloaded: [...] }；更旧: { anchorDay, dayIds }
+                let names = (obj["files"] as? [String: String]) ?? [:]
                 if let list = obj["downloaded"] as? [String] {
-                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list)
+                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list, fileNames: names)
                     loaded += 1
                 } else if let list = obj["dayIds"] as? [String] {
-                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list)
+                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list, fileNames: names)
                     loaded += 1
                 }
             }
@@ -221,8 +223,12 @@ final class DownloadStore {
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let recordURL = recordFileURL(dir: dir)
             if Self.recordCache[recordURL.path]?.dayIds.contains(mediaId) == true {
-                AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
-                return true
+                // 双向校验：记录存在但文件缺失/为 0 字节 → 不算已下载（可自愈坏记录）
+                if recordEntryIsBackedByFile(mediaId: mediaId, dir: dir) {
+                    AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
+                    return true
+                }
+                return false
             }
             return false
         case .fileName:
@@ -240,10 +246,22 @@ final class DownloadStore {
         URL(fileURLWithPath: dir).appendingPathComponent(settings.recordFileNameValue)
     }
 
-    /// 时间锚定的记录条目：锚点日期 + 当天媒体 ID 集合
+    /// 下载记录条目。
+    /// v1：只有媒体 ID 列表（`{"downloaded":[...]}`）。
+    /// v2：额外记录「媒体 ID → 文件名」（`{"downloaded":[...],"files":{...}}`），
+    ///     用于**双向校验**——记录说已下载但文件不存在/为 0 字节时以文件系统为准并清除该条目。
+    ///     这能自愈历史遗留的坏记录（早期版本把 0 字节文件当成功写入了记录）。
     struct RecordEntry: Codable, Sendable {
         var anchorDay: String        // "yyyy-MM-dd"
         var dayIds: [String]
+        /// 媒体 ID → 下载后的文件名（v2 起写入；旧记录为空）
+        var fileNames: [String: String]
+
+        init(anchorDay: String, dayIds: [String], fileNames: [String: String] = [:]) {
+            self.anchorDay = anchorDay
+            self.dayIds = dayIds
+            self.fileNames = fileNames
+        }
     }
 
     /// 各记录文件的缓存（内存态，进程内有效）
@@ -253,30 +271,72 @@ final class DownloadStore {
         DateFormatter.fallback.string(from: date)
     }
 
-    /// 下载成功后写入记录文件（全量媒体 ID）。开始下载时创建文件；每完成一个任务
-    /// 异步落盘一个条目（后台队列串行写,不阻塞下载回调）。
-    private func recordDownloaded(mediaId: String?, created: Date?, dir: String) {
+    /// 下载成功后写入记录文件（媒体 ID + 文件名）。
+    /// 每完成一个任务异步落盘（后台队列串行写，不阻塞下载回调）。
+    private func recordDownloaded(mediaId: String?, created: Date?, dir: String, fileName: String?) {
         guard settings.sameFileCheckModeValue == .recordFile,
               let mediaId, !mediaId.isEmpty else { return }
         let url = recordFileURL(dir: dir)
         var entry = Self.recordCache[url.path] ?? RecordEntry(anchorDay: "", dayIds: [])
         guard !entry.dayIds.contains(mediaId) else { return }
         entry.dayIds.append(mediaId)
+        if let fileName { entry.fileNames[mediaId] = fileName }
         Self.recordCache[url.path] = entry
         let snapshot = entry.dayIds.sorted()
+        let names = entry.fileNames
         Self.recordWriteQueue.async { [weak self] in
             let fm = FileManager.default
             try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil)   // 开始下载即创建记录文件
+                fm.createFile(atPath: url.path, contents: nil)
             }
             do {
-                let data = try JSONSerialization.data(withJSONObject: ["downloaded": snapshot])
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "downloaded": snapshot,
+                    "files": names,
+                ])
                 try data.write(to: url, options: .atomic)
             } catch {
                 AppLogger.warn("下载记录写入失败", category: "DL", ["dir": dir, "error": error.localizedDescription])
             }
             _ = self
+        }
+    }
+
+    /// 记录 → 文件系统 的双向校验：返回 false 表示"记录不可信"，并顺手清除该条目。
+    /// 用于 `hasDownloaded` 与 sameFileSkip 判定，避免因为历史坏记录而永久跳过损坏文件。
+    private func recordEntryIsBackedByFile(mediaId: String, dir: String) -> Bool {
+        let recordPath = recordFileURL(dir: dir).path
+        guard let entry = Self.recordCache[recordPath] else { return false }
+        // 旧记录没有文件名 → 无法校验，保持原有信任（不误报，避免重复下载整库）
+        guard let fileName = entry.fileNames[mediaId] else { return true }
+        let path = (dir as NSString).appendingPathComponent(fileName)
+        let size = (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        if !fm.fileExists(atPath: path) || size <= 0 {
+            AppLogger.warn("下载记录与文件不一致,清除该记录项", category: "DL", [
+                "mediaId": mediaId, "file": fileName,
+                "exists": fm.fileExists(atPath: path) ? "yes" : "no", "size": "\(size)",
+            ])
+            purgeRecordEntry(mediaId: mediaId, dir: dir)
+            return false
+        }
+        return true
+    }
+
+    /// 从记录中移除某媒体（内存 + 磁盘）
+    private func purgeRecordEntry(mediaId: String, dir: String) {
+        let url = recordFileURL(dir: dir)
+        guard var entry = Self.recordCache[url.path] else { return }
+        entry.dayIds.removeAll { $0 == mediaId }
+        entry.fileNames.removeValue(forKey: mediaId)
+        Self.recordCache[url.path] = entry
+        let snapshot = entry.dayIds
+        let names = entry.fileNames
+        Self.recordWriteQueue.async {
+            guard let data = try? JSONSerialization.data(withJSONObject: [
+                "downloaded": snapshot, "files": names,
+            ]) else { return }
+            try? data.write(to: url, options: .atomic)
         }
     }
 
@@ -346,6 +406,8 @@ final class DownloadStore {
         var updatedAt: Date
         var downloadUrl: String
         var retryCountRemains: Int
+        /// 实际使用过的引擎（旧记录无此字段 → 解码为 nil，视为未知）
+        var engineRaw: String?
     }
 
     private func persistTasks() {
@@ -353,7 +415,8 @@ final class DownloadStore {
             PersistedTask(gid: $0.gid, post: $0.post, media: $0.media, fileName: $0.fileName,
                           dir: $0.dir, totalSize: $0.totalSize, completeSize: $0.completeSize,
                           statusRaw: $0.status.rawValue, error: $0.error, updatedAt: $0.updatedAt,
-                          downloadUrl: $0.downloadUrl, retryCountRemains: $0.retryCountRemains)
+                          downloadUrl: $0.downloadUrl, retryCountRemains: $0.retryCountRemains,
+                          engineRaw: $0.engine?.rawValue)
         }
         guard let data = try? JSONEncoder().encode(items) else { return }
         try? data.write(to: Self.historyURL, options: .atomic)
@@ -370,7 +433,8 @@ final class DownloadStore {
                 gid: item.gid, post: item.post, media: item.media, fileName: item.fileName,
                 dir: item.dir, totalSize: item.totalSize, completeSize: item.completeSize,
                 status: status, error: item.error, updatedAt: item.updatedAt,
-                downloadUrl: item.downloadUrl, retryCountRemains: item.retryCountRemains
+                downloadUrl: item.downloadUrl, retryCountRemains: item.retryCountRemains,
+                engine: item.engineRaw.flatMap(DownloadEngine.init(rawValue:))
             )
         }
     }
@@ -387,9 +451,11 @@ final class DownloadStore {
         pump()
     }
 
-    /// 并发调度：把 waiting 任务按序填入空闲并发槽位
+    /// 并发调度：把 waiting 任务按序填入空闲并发槽位。
+    /// 有效并发 = min(用户设置, CDN 限流时的降级上限)——CDN 429 时自动降到 1，
+    /// 避免"越限越试"；限流解除后自动恢复（状态变更会再次 pump）。
     private func pump() {
-        let maxConcurrent = SettingsStore.shared.settings.maxConcurrentDownloads
+        let maxConcurrent = effectiveMaxConcurrent()
         let activeCount = tasks.count { $0.status == .active }
         guard activeCount < maxConcurrent else { return }
 
@@ -403,6 +469,15 @@ final class DownloadStore {
         refreshSleepAssertion()
     }
 
+    /// 有效并发：CDN 限流期间降到用户配置的上限（默认 1）
+    private func effectiveMaxConcurrent() -> Int {
+        let configured = settings.maxConcurrentDownloads
+        guard settings.cdnThrottleEnabled, AccountStatusStore.shared.cdnThrottled else {
+            return configured
+        }
+        return min(configured, settings.cdnMaxConcurrent)
+    }
+
     /// 实际拉起（引擎分发），供 pump 与恢复场景使用
     private func launch(_ task: DownloadTask) {
         guard let url = URL(string: task.downloadUrl) else {
@@ -410,72 +485,144 @@ final class DownloadStore {
             return
         }
         try? fm.createDirectory(atPath: task.dir, withIntermediateDirectories: true)
-        update(gid: task.gid) { $0.status = .active }
+        let engine = engineFor(task)
+        // 记录本次实际使用的引擎：恢复时据此判断引擎是否变更（变更则丢弃断点重下）
+        let previousEngine = task.engine
+        update(gid: task.gid) { $0.status = .active; $0.engine = engine }
         AppLogger.debug("任务开始下载", category: "DL", [
-            "gid": task.gid, "engine": SettingsStore.shared.settings.engine.rawValue,
+            "gid": task.gid, "engine": engine.rawValue,
             "file": task.fileName, "user": task.post.user.screenName,
         ])
 
-        if SettingsStore.shared.settings.engine == .aria2, Aria2Engine.isAvailable {
-            // 手动代理(非系统)时的身份验证凭证注入
-            let proxy = settings.proxy
-            if !proxy.useSystem, proxy.enable, let user = proxy.username, !user.isEmpty {
-                Aria2Engine.proxyCredential = (user, proxy.password ?? "")
-            } else {
-                Aria2Engine.proxyCredential = nil
-            }
-            aria2.progressHandler = { [weak self] gid, done, total in
-                Task { @MainActor in
-                    self?.update(gid: gid) {
-                        $0.completeSize = done
-                        if total > 0 { $0.totalSize = total }
-                    }
-                }
-            }
-            aria2.pauseHandler = { [weak self] gid in
-                Task { @MainActor in
-                    self?.update(gid: gid) { $0.status = .paused }
-                    self?.pump()
-                    self?.refreshSleepAssertion()
-                }
-            }
-            aria2.completionHandler = { [weak self] gid, result in
-                Task { @MainActor in
-                    switch result {
-                    case .success(let fileURL):
-                        self?.finalizeDownload(gid: gid, stagedFile: fileURL)
-                    case .failure(let error):
-                        self?.handleTaskError(gid: gid, error: error)
-                    }
-                }
-            }
-            let proxyArg: String?
-            if settings.proxy.enable, !settings.proxy.useSystem, !settings.proxy.url.isEmpty {
-                proxyArg = settings.proxy.url          // 手动代理
-            } else if settings.proxy.useSystem {
-                proxyArg = Aria2Engine.systemProxy()   // 系统代理显式读取（aria2c 不继承）
-            } else {
-                proxyArg = nil
-            }
-            // 临时文件直接放目标目录（免拷贝）;文件名前缀 .xspider-tmp- 防与正式文件重名
-            let stagingURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpFileName(for: task)))
-            aria2StagingPaths[task.gid] = stagingURL
-            aria2.start(
-                gid: task.gid, urlString: task.downloadUrl,
-                destDir: task.dir,
-                fileName: aria2FileName(for: task),
-                proxy: proxyArg,
-                connections: settings.aria2Split,
-                minSplitSizeMB: settings.aria2MinSplitSize,
-                fileAllocation: settings.aria2FileAllocation
-            )
+        // 引擎切换过：丢弃另一引擎遗留的断点与半成品，从头下载
+        // （resumeData 是 URLSession 独有的，aria2 无法续写；混合会导致损坏文件）
+        if let previousEngine, previousEngine != engine {
+            resumeDataMap.removeValue(forKey: task.gid)
+            discardPartialArtifacts(for: task)
+            AppLogger.info("引擎已变更,丢弃断点重新下载", category: "DL", [
+                "file": task.fileName,
+                "from": previousEngine.rawValue, "to": engine.rawValue,
+            ])
+        }
+
+        if engine == .aria2, Aria2Engine.isAvailable {
+            launchAria2(task, proxy: currentProxyArgument())
             return
         }
 
         launchBuiltIn(task, url: url)
     }
 
-    /// 引擎临时文件名：.xspider-tmp-<gid>-<原名>（目标目录内,隐藏前缀防与正式文件重名/误识别）
+    /// 引擎分流。auto = 按**文件大小**而非媒体类型：
+    /// aria2 的价值是多连接分块与跨会话续传，收益随文件增大而显现；小图走内置更省开销，
+    /// 也少一层"进程/RPC 是否就绪"的失败面。
+    ///
+    /// 大小判据优先用 `totalSize`（进度回调或历史记录已知），未知时按媒体元数据估算；
+    /// **不发额外请求探测**（CDN 请求同样消耗配额）。
+    private func engineFor(_ task: DownloadTask) -> DownloadEngine {
+        switch settings.engineMode {
+        case .builtIn:
+            return .builtIn
+        case .aria2:
+            return .aria2
+        case .auto:
+            guard Aria2Engine.isAvailable else { return .builtIn }
+            let threshold = Int64(settings.aria2SizeThresholdMB) * 1_048_576
+            let known = task.totalSize > 0 ? task.totalSize : estimatedSize(task.media)
+            if known <= 0 {
+                // 大小未知：视频/GIF 体积通常远大于阈值，照片走内置
+                return (task.media.type == .video || task.media.type == .gif) ? .aria2 : .builtIn
+            }
+            return known > threshold ? .aria2 : .builtIn
+        }
+    }
+
+    /// 从媒体元数据粗估字节数（仅用于引擎选择，不求精确）
+    private func estimatedSize(_ media: TwitterMedia) -> Int64 {
+        // 视频：最高码率(bits/s) × 时长(s) ÷ 8
+        if let variants = media.videoInfo?.variants,
+           let best = variants.compactMap(\.bitrate).max(),
+           let ms = media.videoInfo?.duration, ms > 0 {
+            return Int64(Double(best) * (ms / 1000.0) / 8.0)
+        }
+        // 图片：按像素粗估（原图约 0.5 字节/像素，量级够用）
+        if let w = media.width, let h = media.height, w > 0, h > 0 {
+            return Int64(Double(w * h) * 0.5)
+        }
+        return 0
+    }
+
+    /// 当前代理参数（手动代理优先，其次系统代理）——aria2c 不继承系统代理需显式传
+    private func currentProxyArgument() -> String? {
+        let proxy = settings.proxy
+        if proxy.enable, !proxy.useSystem, !proxy.url.isEmpty { return proxy.url }
+        if proxy.useSystem { return Aria2Engine.systemProxy() }
+        return nil
+    }
+
+    /// 丢弃某任务在目标目录内的半成品与断点（引擎切换/重下前调用）
+    private func discardPartialArtifacts(for task: DownloadTask) {
+        let dir = task.dir
+        let names = [tmpFileName(for: task), tmpFileName(for: task) + ".aria2",
+                     legacyAria2FileName(for: task), legacyAria2FileName(for: task) + ".aria2"]
+        for name in names {
+            try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(name))
+        }
+        aria2StagingPaths.removeValue(forKey: task.gid)
+    }
+
+    private func launchAria2(_ task: DownloadTask, proxy: String?) {
+        // 手动代理(非系统)时的身份验证凭证注入
+        let proxySettings = settings.proxy
+        if !proxySettings.useSystem, proxySettings.enable, let user = proxySettings.username, !user.isEmpty {
+            Aria2Engine.proxyCredential = (user, proxySettings.password ?? "")
+        } else {
+            Aria2Engine.proxyCredential = nil
+        }
+        aria2.progressHandler = { [weak self] gid, done, total in
+            Task { @MainActor in
+                self?.update(gid: gid) {
+                    $0.completeSize = done
+                    if total > 0 { $0.totalSize = total }
+                }
+            }
+        }
+        aria2.pauseHandler = { [weak self] gid in
+            Task { @MainActor in
+                self?.update(gid: gid) { $0.status = .paused }
+                self?.pump()
+                self?.refreshSleepAssertion()
+            }
+        }
+        aria2.completionHandler = { [weak self] gid, result in
+            Task { @MainActor in
+                switch result {
+                case .success(let fileURL):
+                    self?.finalizeDownload(gid: gid, stagedFile: fileURL)
+                case .failure(let error):
+                    self?.handleTaskError(gid: gid, error: error)
+                }
+            }
+        }
+        // 临时文件直接放目标目录（免拷贝），统一用 tmpFileName 命名，
+        // 保证清理时能准确删除（旧实现两种命名并存，删的是从未创建的路径）
+        let stagingName = tmpFileName(for: task)
+        aria2StagingPaths[task.gid] = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(stagingName))
+        aria2.start(
+            gid: task.gid, urlString: task.downloadUrl,
+            destDir: task.dir,
+            fileName: stagingName,
+            proxy: proxy,
+            connections: settings.aria2Split,
+            minSplitSizeMB: settings.aria2MinSplitSize,
+            fileAllocation: settings.aria2FileAllocation
+        )
+    }
+
+    /// 统一的引擎临时文件名：`.xspider-tmp-<gid>-<原名>`（目标目录内，隐藏前缀防重名）。
+    /// 两种引擎共用同一个名字——此前 aria2 用 `<gid>-<name>`、URLSession 用
+    /// `.xspider-tmp-urlsession-<uuid>`、而 `aria2StagingPaths` 记的是第三种，
+    /// 导致删除清理时删的是一个从未被创建的路径（残留永远留在用户目录）。
     private func tmpFileName(for task: DownloadTask) -> String {
         let safe = task.fileName
             .replacingOccurrences(of: "/", with: "_")
@@ -483,8 +630,9 @@ final class DownloadStore {
         return ".xspider-tmp-\(task.gid)-\(safe)"
     }
 
-    /// 兼容旧调用（删除旧 staging 残留时仍按旧名找一遍）
-    private func aria2FileName(for task: DownloadTask) -> String {
+    /// 历史遗留的 aria2 临时命名（`<gid>-<name>`）：仅用于清理旧版本残留。
+    /// 新任务不再使用，保留此函数以免旧残留永远删不掉。
+    private func legacyAria2FileName(for task: DownloadTask) -> String {
         let safe = task.fileName
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
@@ -555,7 +703,7 @@ final class DownloadStore {
                 let tmpName = tmpFileName(for: task)
                 try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName)))
                 try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName + ".aria2")))
-                let legacyStaging = aria2FileName(for: task)
+                let legacyStaging = legacyAria2FileName(for: task)
                 try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging))
                 try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging + ".aria2"))
             }
@@ -594,7 +742,9 @@ final class DownloadStore {
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
             let targetDir = dir ?? settings.download.saveDirBase
             let recordPath = recordFileURL(dir: targetDir).path
-            return Self.recordCache[recordPath]?.dayIds.contains(mediaId) ?? false
+            guard Self.recordCache[recordPath]?.dayIds.contains(mediaId) == true else { return false }
+            // 记录说已下载 → 再确认文件真的在且非空；不一致则以文件系统为准并清除坏记录
+            return recordEntryIsBackedByFile(mediaId: mediaId, dir: targetDir)
         }
         guard let downloadUrl = downloadURL(for: media) else { return false }
         // 文件名模式:在目标目录找同 URL 派生不出文件名(模板依赖 post/media 数据),
@@ -658,14 +808,27 @@ final class DownloadStore {
         finalizeDownload(gid: gid, stagedFile: localURL)
     }
 
-    /// 统一错误处理：重试未用尽 → 重新排队（pump 拉起）；用尽 → error + 通知
+    /// 统一错误处理：可重试 → **指数退避**后重新排队；不可重试或重试耗尽 → error + 通知。
+    ///
+    /// 两点改进（对应"提升下载稳定性"）：
+    /// 1. **指数退避**（1/2/4/8/16s）：固定 1s 在限流场景下等于持续敲门，会加重限流。
+    /// 2. **区分可否重试**：403/404/410 与"内容不是媒体/不是图片"再试也不会成功，
+    ///    直接终结（原先一律重试 5 次，纯属放大限流）。
     private func handleTaskError(gid: String, error: Error) {
         guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
         let task = tasks[index]
-        if task.retryCountRemains > 0 {
+        let retryable = isRetryable(error)
+
+        // CDN 侧结果上报（被动）：驱动侧边栏第二行与并发降级
+        reportCDNOutcome(error)
+
+        if retryable, task.retryCountRemains > 0 {
+            let attempt = 5 - task.retryCountRemains          // 0,1,2,3,4
+            let delay = min(16.0, pow(2.0, Double(attempt)))  // 1,2,4,8,16
             AppLogger.warn("任务失败将重试", category: "DL", [
                 "file": task.fileName,
                 "remains": "\(task.retryCountRemains)",
+                "backoffSec": String(format: "%.0f", delay),
                 "error": error.localizedDescription,
             ])
             update(gid: gid) {
@@ -675,7 +838,8 @@ final class DownloadStore {
             }
             let retryGid = gid
             Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
                 if let t = self.tasks.first(where: { $0.gid == retryGid }), t.status == .waiting {
                     self.pump()
                 }
@@ -685,14 +849,60 @@ final class DownloadStore {
                 $0.status = .error
                 $0.error = error.localizedDescription
             }
-            AppLogger.error("任务下载失败(重试耗尽)", category: "DL", ["file": task.fileName, "user": task.post.user.screenName, "error": error.localizedDescription])
+            AppLogger.error("任务下载失败", category: "DL", [
+                "file": task.fileName, "user": task.post.user.screenName,
+                "retryable": retryable ? "yes" : "no",
+                "error": error.localizedDescription,
+            ])
             notify(title: "任务下载失败", body: "\(task.fileName)\n\(error.localizedDescription)")
             pump()
             refreshSleepAssertion()
         }
     }
 
-    /// 把暂存文件落盘到目标位置并更新状态（URLSession 与 aria2 共用）
+    /// 是否值得重试。资源不存在/无权限/内容根本不是媒体 → 重试无用且会放大限流。
+    private func isRetryable(_ error: Error) -> Bool {
+        if let failure = error as? FileIntegrity.Failure {
+            switch failure {
+            case .htmlErrorPage, .notAnImage: return false  // 内容不对，重试无用
+            case .missing, .empty, .truncated: return true  // 可能被限流/中断，值得重试
+            }
+        }
+        if let netError = error as? NetworkError, case .httpStatus(let code) = netError {
+            switch code {
+            case 403, 404, 410, 451: return false
+            case 429, 500, 502, 503, 504: return true
+            default: return code >= 500
+            }
+        }
+        if let engineError = error as? EngineError, case .failed(let message) = engineError {
+            // aria2 把 HTTP 状态写进错误文案（exit 3 = 资源未找到，exit 13 = 文件已存在）
+            if message.contains("exit 3") || message.contains("exit 13") { return false }
+            if message.contains("404") || message.contains("403") { return false }
+            return true
+        }
+        return true
+    }
+
+    /// 把下载失败按类型上报到状态（CDN 行）。只对 CDN 相关错误写 CDN 状态，
+    /// 避免把本地磁盘错误误报成"媒体服务器异常"。
+    private func reportCDNOutcome(_ error: Error) {
+        if let netError = error as? NetworkError, case .httpStatus(let code) = netError, code == 429 {
+            AccountStatusStore.shared.noteCDNRateLimited(retryAfter: nil)
+            return
+        }
+        let message = error.localizedDescription
+        if message.contains("429") {
+            AccountStatusStore.shared.noteCDNRateLimited(retryAfter: nil)
+        } else if message.contains("404") || message.contains("403") || message.contains("exit 3") {
+            AccountStatusStore.shared.noteCDNFailure(message)
+        }
+    }
+
+    /// 把暂存文件落盘到目标位置并更新状态（URLSession 与 aria2 共用）。
+    ///
+    /// **完整性校验是唯一的成功判据**：实测 aria2 失败时会留下 0 字节文件，旧代码
+    /// 只看"文件存在"就判成功 → 坏文件被标记完成、写进下载记录、永不重试（成批损坏的根因）。
     private func finalizeDownload(gid: String, stagedFile: URL) {
         guard let index = tasks.firstIndex(where: { $0.gid == gid }) else {
             try? fm.removeItem(at: stagedFile)
@@ -710,38 +920,72 @@ final class DownloadStore {
             } else {
                 try fm.moveItem(at: stagedFile, to: destURL)
             }
-            let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
-            update(gid: gid) {
-                $0.status = .complete
-                $0.completeSize = size ?? 0
-                $0.totalSize = size ?? 0
-                $0.error = nil
-            }
-            AppLogger.info("下载完成", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
-            Self.completedFileNameCache[task.downloadUrl] = task.fileName
-            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir)
-            pump()
-            refreshSleepAssertion()
         } catch {
             // 临时文件即将被系统删除：move 失败时先拷贝兜底，仍失败才报错
             do {
                 try? fm.removeItem(at: destURL)
                 try fm.copyItem(at: stagedFile, to: destURL)
-                let size = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0
-                AppLogger.info("下载完成(copy fallback)", category: "DL", ["file": task.fileName, "size": "\(size ?? 0)", "user": task.post.user.screenName])
-            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir)
-                refreshSleepAssertion()
             } catch {
                 update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }
                 AppLogger.error("下载文件落盘失败", category: "DL", [
-                    "file": task.fileName,
-                    "dest": destURL.path,
-                    "error": error.localizedDescription,
+                    "file": task.fileName, "error": error.localizedDescription,
                 ])
                 notify(title: "任务下载失败", body: "\(task.fileName)\n文件写入失败: \(error.localizedDescription)")
+                cleanupFailedArtifacts(task: task, path: destURL.path)
+                pump()
                 refreshSleepAssertion()
+                return
             }
         }
+
+        // 落盘完成 → 校验内容（0 字节 / 大小不符 / 错误页 / 非图片一律判失败并重试）
+        let expected = task.totalSize
+        switch FileIntegrity.verify(path: destURL.path, expectedTotal: expected, type: task.media.type) {
+        case .failure(let reason):
+            AppLogger.warn("下载内容校验未通过,按失败处理", category: "DL", [
+                "file": task.fileName,
+                "reason": reason.errorDescription ?? "?",
+                "bytes": "\(((try? fm.attributesOfItem(atPath: destURL.path)[.size]) as? Int64) ?? 0)",
+            ])
+            // 清掉坏文件与 .aria2 控制文件，避免下次 --continue 读到脏状态拼出损坏文件
+            cleanupFailedArtifacts(task: task, path: destURL.path)
+            handleTaskError(gid: gid, error: reason)
+            return
+        case .success(let size):
+            update(gid: gid) {
+                $0.status = .complete
+                $0.completeSize = size
+                $0.totalSize = size
+                $0.error = nil
+            }
+            AppLogger.info("下载完成", category: "DL", [
+                "file": task.fileName, "size": "\(size)", "user": task.post.user.screenName,
+                "engine": task.engine?.rawValue ?? SettingsStore.shared.settings.engine.rawValue,
+            ])
+            Self.completedFileNameCache[task.downloadUrl] = task.fileName
+            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir, fileName: task.fileName)
+            // CDN 恢复正常：清除限流标记，让并发恢复（若此前被降级）
+            AccountStatusStore.shared.noteCDNSuccess()
+            pump()
+            refreshSleepAssertion()
+        }
+    }
+
+    /// 清理某任务的失败残留：目标位置半成品 + aria2 控制文件 + 临时文件 + 旧 staging 位置。
+    /// 不清理的话，下次 --continue 会把 0 字节/半截文件当"已下载"续写，拼出损坏文件。
+    private func cleanupFailedArtifacts(task: DownloadTask, path: String) {
+        let fm = FileManager.default
+        try? fm.removeItem(atPath: path)
+        try? fm.removeItem(atPath: path + ".aria2")
+        // 目标目录内的引擎临时文件（统一命名后与 tmpFileName 一致）
+        let dir = task.dir
+        try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(tmpFileName(for: task)))
+        try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(tmpFileName(for: task) + ".aria2"))
+        // 兼容历史遗留命名（<gid>-<name>，早期版本用过）
+        let legacy = (dir as NSString).appendingPathComponent(legacyAria2FileName(for: task))
+        try? fm.removeItem(atPath: legacy)
+        try? fm.removeItem(atPath: legacy + ".aria2")
+        aria2StagingPaths.removeValue(forKey: task.gid)
     }
 
     /// 等到所有任务离开 active/waiting(下载完成或失败)。

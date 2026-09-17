@@ -105,6 +105,11 @@ final class CreationTaskStore {
         while !hasFetched || (nextCursor != nil && now > since) {
             if Task.isCancelled { return }
 
+            // 限流自适应：X API 处于限流/离线/登录失效时**挂起**而不是失败退出——
+            // cursor 与进度都保留，状态恢复后自动续跑。避免"越限越试"把限流拖长。
+            await waitWhileThrottled(userId: userId)
+            if Task.isCancelled { return }
+
             do {
                 let posts: [TwitterPost]
                 let newCursor: String?
@@ -202,11 +207,43 @@ final class CreationTaskStore {
     }
 
     /// 页间节流。上游靠浏览器渲染节奏自然限速，Swift 循环无此节流，显式等价（防 429）。
+    ///
+    /// 节奏随限流状态自适应：正常 500ms；曾触发限流（或当前处于限流/异常状态）时放缓到 1.5s。
     private static func pageThrottle() async throws {
+        let caution = await MainActor.run {
+            AccountStatusStore.shared.effectiveHealth != .normal
+        }
+        let nanos: UInt64 = caution ? 1_500_000_000 : 500_000_000
         do {
-            try await Task.sleep(nanoseconds: 500_000_000)
+            try await Task.sleep(nanoseconds: nanos)
         } catch {
             throw CancellationError()
+        }
+    }
+
+    /// 限流期间挂起：等状态恢复或熔断冷却结束再继续（cursor 不变，进度保留）。
+    /// 只对"继续爬也没用"的状态挂起：限流、离线、超时、登录失效。
+    private func waitWhileThrottled(userId: String) async {
+        var logged = false
+        while !Task.isCancelled {
+            let blocked: Bool = await MainActor.run {
+                switch AccountStatusStore.shared.effectiveHealth {
+                case .rateLimited, .timedOut, .offline, .unauthenticated: return true
+                case .normal, .serverError: return false
+                }
+            }
+            guard blocked else {
+                if logged {
+                    AppLogger.info("限流解除,创建任务续跑", category: "DL", ["userId": userId])
+                }
+                return
+            }
+            if !logged {
+                AppLogger.warn("限流中,创建任务挂起等待恢复", category: "DL", ["userId": userId])
+                logged = true
+            }
+            // 分段等待：期间用户点「重试」或冷却到期即可续跑
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
     }
 

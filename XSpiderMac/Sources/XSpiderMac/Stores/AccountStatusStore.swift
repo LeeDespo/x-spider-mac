@@ -37,6 +37,8 @@ final class AccountStatusStore {
     var breakerOpen: Bool = false
     /// 手动探测进行中（按钮转圈用）
     private(set) var probing = false
+    /// 媒体 CDN 探测进行中
+    private(set) var probingCDN = false
 
     private init() {}
 
@@ -76,6 +78,8 @@ final class AccountStatusStore {
     func reset() {
         health = .normal
         breakerOpen = false
+        cdnRateLimitedUntil = nil
+        cdnLastFailure = nil
         changedAt = Date()
     }
 
@@ -188,6 +192,123 @@ final class AccountStatusStore {
             AppLogger.warn("手动探测:仍然异常", category: "NET", ["error": error.localizedDescription])
         }
     }
+
+    // MARK: - 媒体 CDN 状态（与 GraphQL API 是不同域、不同配额，故独立跟踪）
+
+    /// 媒体 CDN（pbs.twimg.com / video.twimg.com）的限流状态。
+    /// 与上方 GraphQL 状态分开：CDN 限流只影响下载，不该把"能否翻页"也说成异常；
+    /// 反之 API 正常而下载 429 也应能单独看出。
+    private(set) var cdnRateLimitedUntil: Date?
+    /// CDN 最近一次失败原因（非限流类）
+    private(set) var cdnLastFailure: String?
+
+    /// CDN 是否处于限流冷却中
+    var cdnThrottled: Bool {
+        guard let until = cdnRateLimitedUntil else { return false }
+        return Date() < until
+    }
+
+    /// CDN 限流剩余秒数
+    var cdnRemainingSeconds: Int {
+        guard let until = cdnRateLimitedUntil else { return 0 }
+        return max(0, Int(until.timeIntervalSinceNow))
+    }
+
+    /// CDN 行文案（nil = 正常）
+    var cdnStatusText: String? {
+        if cdnThrottled {
+            return L("媒体 CDN 限流，%ds 后恢复").replacingOccurrences(of: "%d", with: "\(cdnRemainingSeconds)")
+        }
+        if let failure = cdnLastFailure {
+            return L("媒体下载异常：") + failure
+        }
+        return nil
+    }
+
+    var cdnHelpText: String {
+        if cdnThrottled {
+            return L("媒体服务器（pbs.twimg.com / video.twimg.com）返回 429。已自动降低下载并发，倒计时结束或点右侧按钮重试。\n这与 X 的 API 限流是两个独立的配额。")
+        }
+        if let failure = cdnLastFailure {
+            return L("最近一次媒体下载失败：") + failure
+        }
+        return L("媒体下载正常。")
+    }
+
+    /// CDN 异常（被下载路径调用）
+    func noteCDNRateLimited(retryAfter: TimeInterval?) {
+        let window = max(retryAfter ?? 0, TimeInterval(SettingsStore.shared.settings.cdnCooldownSeconds))
+        let until = Date().addingTimeInterval(window)
+        if let existing = cdnRateLimitedUntil, existing >= until { return } // 只延长不退步
+        cdnRateLimitedUntil = until
+        cdnLastFailure = nil
+        changedAt = Date()
+        AppLogger.warn("媒体 CDN 触发限流", category: "DL", ["holdSec": "\(Int(window))"])
+    }
+
+    func noteCDNFailure(_ message: String) {
+        guard cdnLastFailure != message else { return }
+        cdnLastFailure = message
+    }
+
+    func noteCDNSuccess() {
+        guard cdnRateLimitedUntil != nil || cdnLastFailure != nil else { return }
+        cdnRateLimitedUntil = nil
+        cdnLastFailure = nil
+    }
+
+    /// 到期判定（视图调用，非轮询）
+    func refreshCDNExpiry() {
+        guard let until = cdnRateLimitedUntil, Date() >= until else { return }
+        cdnRateLimitedUntil = nil
+        AppLogger.info("媒体 CDN 限流到期恢复", category: "DL")
+    }
+
+    /// 用户点媒体 CDN 行的「重试」：结束 CDN 冷却并真的探一次媒体服务器。
+    ///
+    /// 探测方式：对一张公开的 X 媒体缩略图发一次极小的 HEAD/GET（只读首字节就断开），
+    /// 比下载整个文件便宜得多，失败也只影响这一次探测。用固定的官方静态图，
+    /// 避免依赖用户当前列表里恰好有可下载的媒体。
+    func probeCDN() async {
+        guard !probingCDN else { return }
+        probingCDN = true
+        defer { probingCDN = false }
+
+        // 先解除冷却（用户明确要求"别再拦我"）
+        cdnRateLimitedUntil = nil
+
+        let probeURL = URL(string: "https://pbs.twimg.com/media/EV5m1XjXQAAEqUd?format=jpg&name=small")!
+        var request = URLRequest(url: probeURL)
+        request.httpMethod = "GET"
+        request.setValue(Self.cdnProbeUserAgent, forHTTPHeaderField: "User-Agent")
+        // 只取首个分片即判定连通（不等整个文件；服务器不支持 Range 时会返回全量，
+        // 但我们只检查状态码，data 体积由 URLSession 自行处理，不会阻塞判定）
+        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 12
+        // 只取极少量数据即判定连通（不等整个文件）
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 429 {
+                let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                noteCDNRateLimited(retryAfter: after)
+                AppLogger.warn("CDN 探测:仍被限流", category: "DL")
+            } else if (200..<400).contains(status), !data.isEmpty {
+                noteCDNSuccess()
+                AppLogger.info("CDN 探测:连接正常", category: "DL", ["bytes": "\(data.count)"])
+            } else {
+                noteCDNFailure("HTTP \(status)")
+                AppLogger.warn("CDN 探测:异常状态", category: "DL", ["status": "\(status)"])
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            noteCDNFailure(error.localizedDescription)
+            AppLogger.warn("CDN 探测失败", category: "DL", ["error": error.localizedDescription])
+        }
+    }
+
+    private static let cdnProbeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
     // MARK: - 展示
 

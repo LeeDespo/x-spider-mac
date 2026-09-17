@@ -45,36 +45,37 @@ struct SidebarView: View {
 
     }
 
-    // MARK: - 账号状态栏（边栏最底端）
+    // MARK: - 账号状态栏（边栏最底端，两行：X API / 媒体 CDN）
 
-    /// 状态灯 + 文案 + 「重试」按钮。
-    /// 状态是**被动**采集的（由真实请求遇阻推导），只有点重试才主动探测一次。
+    /// 两行状态：上行 X GraphQL API（翻页、爬虫），下行媒体 CDN（图片视频下载）。
+    /// 二者是不同域、不同配额，分开显示才能一眼看出是哪一侧出了问题。
+    /// 状态全部**被动**采集（由真实请求遇阻推导），只有点重试才主动探测。
     private var accountStatusBar: some View {
         VStack(spacing: 0) {
             Divider()
                 .padding(.horizontal, 12)
 
-            HStack(spacing: 8) {
-                statusLamp
-
-                statusLabel
-
-                Spacer(minLength: 4)
-
-                Button {
-                    Task { await statusStore.probeAndRecover() }
-                } label: {
-                    if statusStore.probing {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(statusStore.probing)
-                .help(L("重试：立即探测与 X 的连接；若正在熔断则同时结束熔断"))
+            VStack(spacing: 4) {
+                statusRow(
+                    label: L("X API"),
+                    lamp: lampColor(for: statusStore.severity),
+                    text: { statusStore.statusText },
+                    help: statusStore.helpText,
+                    isDim: statusStore.severity == .ok,
+                    deadline: statusStore.breakerOpen ? statusStore.rateLimitDeadline : nil,
+                    probing: statusStore.probing,
+                    retry: { Task { await statusStore.probeAndRecover() } }
+                )
+                statusRow(
+                    label: L("媒体 CDN"),
+                    lamp: statusStore.cdnThrottled ? .red : (statusStore.cdnStatusText == nil ? .green : .orange),
+                    text: { statusStore.cdnStatusText ?? L("下载正常") },
+                    help: statusStore.cdnHelpText,
+                    isDim: statusStore.cdnStatusText == nil,
+                    deadline: statusStore.cdnRateLimitedUntil,
+                    probing: statusStore.probingCDN,
+                    retry: { Task { await statusStore.probeCDN() } }
+                )
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -82,47 +83,81 @@ struct SidebarView: View {
         .background(.thinMaterial)
     }
 
-    /// 状态文案。熔断中需要每秒刷新倒计时——用 TimelineView **只驱动这一个文本**，
-    /// 不重绘整棵侧边栏；非熔断态走普通 Text，零额外开销。
-    @ViewBuilder
-    private var statusLabel: some View {
-        let base = Text(statusStore.statusText)
-            .font(.caption)
-            .foregroundStyle(statusStore.severity == .ok ? .secondary : .primary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(statusStore.helpText)
+    /// 单行状态：灯 + 标签 + 文案 + 重试
+    private func statusRow(
+        label: String,
+        lamp: Color,
+        text: @escaping () -> String,
+        help: String,
+        isDim: Bool,
+        deadline: Date?,
+        probing: Bool,
+        retry: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(lamp)
+                .frame(width: 7, height: 7)
+                .overlay { Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1) }
 
-        if statusStore.breakerOpen, statusStore.rateLimitDeadline != nil {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                base
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .leading)
+
+            statusText(text, deadline: deadline)
+                .font(.caption2)
+                .foregroundStyle(isDim ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(help)
+
+            Spacer(minLength: 2)
+
+            Button(action: retry) {
+                if probing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
             }
-            // 倒计时归零后把状态真正落回正常（一次性，不是轮询）
-            .task(id: statusStore.rateLimitDeadline) {
-                guard let deadline = statusStore.rateLimitDeadline else { return }
-                let wait = deadline.timeIntervalSinceNow
-                guard wait > 0 else { statusStore.refreshExpiry(); return }
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 200_000_000)
-                guard !Task.isCancelled else { return }
-                statusStore.refreshExpiry()
-            }
-        } else {
-            base
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(probing)
+            .help(L("重试：立即探测连接；若正在限流则同时结束限流"))
         }
     }
 
-    /// 状态灯：绿灯正常 / 红灯限流 / 橙灯其它异常
-    private var statusLamp: some View {
-        Circle()
-            .fill(lampColor)
-            .frame(width: 8, height: 8)
-            .overlay {
-                Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1)
+    /// 状态文案。有截止时间时用 TimelineView 每秒重算一次（**只驱动这一个文本**，
+    /// 不重绘整棵侧边栏——文案里的倒计时由 store 按当前时间生成）；
+    /// 无截止时间则普通 Text，零额外开销。
+    @ViewBuilder
+    private func statusText(_ text: @escaping () -> String, deadline: Date?) -> some View {
+        if let deadline {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(text())
             }
+            // 到期后把状态真正落回正常（一次性回调，不是轮询）
+            .task(id: deadline) {
+                let wait = deadline.timeIntervalSinceNow
+                guard wait > 0 else {
+                    statusStore.refreshExpiry()
+                    statusStore.refreshCDNExpiry()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 200_000_000)
+                guard !Task.isCancelled else { return }
+                statusStore.refreshExpiry()
+                statusStore.refreshCDNExpiry()
+            }
+        } else {
+            Text(text())
+        }
     }
 
-    private var lampColor: Color {
-        switch statusStore.severity {
+    private func lampColor(for severity: AccountStatusStore.Severity) -> Color {
+        switch severity {
         case .ok: return .green
         case .critical: return .red
         case .warning: return .orange

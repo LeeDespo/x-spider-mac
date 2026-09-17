@@ -6,6 +6,31 @@
 
 ---
 
+## 0.0 实施状态（2026-09-17 更新）
+
+**已实现并通过 76 项单元测试**（按本文 §8 的顺序落地）：
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| §1 完整性校验（止血 0 字节文件） | ✅ | `Services/FileIntegrity.swift`（新建）+ `DownloadStore.finalizeDownload` + `Aria2Engine` 完成回调 |
+| §5.3 记录与文件双向校验（自愈坏记录） | ✅ | `DownloadStore.recordEntryIsBackedByFile` / `purgeRecordEntry`；记录升级为 v2（含 `files` 映射，兼容 v1） |
+| §2 临时文件命名统一 + 引擎切换丢弃断点 | ✅ | `tmpFileName` 唯一化、`legacyAria2FileName` 仅用于清旧残留、`discardPartialArtifacts`；`DownloadTask.engine` 记录实际引擎 |
+| §6 CDN 与 GraphQL 分开的限流状态 | ✅ | `AccountStatusStore.cdnRateLimitedUntil` / `noteCDNRateLimited` / `probeCDN`；侧边栏两行 |
+| §3 aria2 常驻 + RPC | ✅ | `Services/Aria2RPCClient.swift`（新建）；`Aria2Engine` 优先 RPC、失败自动回退子进程 |
+| §4 引擎按大小分流 | ✅ | `DownloadStore.engineFor` / `estimatedSize`；`DownloadEngine.auto` |
+| 用户补充：aria2 端口可配 | ✅ | `Aria2PortMode`（固定 6801 / 随机空闲端口）+ `Settings.aria2Port` |
+| §6 CDN 自适应并发 + 指数退避 | ✅ | `pump()` 的 `effectiveMaxConcurrent()`；`handleTaskError` 指数退避 + 可重试判定 |
+| 爬虫限流挂起（保 cursor） | ✅ | `CreationTaskStore.waitWhileThrottled` / `pageThrottle` 自适应 |
+| §7 精简（拆分 DownloadStore 等） | ⬜ 未做 | 见 §7，可独立提交 |
+
+**实测验证（不是推断）**：
+- 用内置 aria2next 对不可达 URL 下载，**三次**都留下 0 字节文件；
+- RPC 服务器可正常启动、`--rpc-secret` 鉴权生效（未授权调用返回 `Unauthorized`）；
+- **`aria2.addUri` 确实支持 `dir`/`out`**：实测按参数创建了 `custom-dir/custom-name.jpg`；
+- `--conf-path=/dev/null` 生效（`getGlobalOption` 回读确认），不会被其它 aria2 安装的配置污染。
+
+---
+
 ## 0. 先把结论说清楚
 
 你问的几件事，答案如下（细节见后文）：
