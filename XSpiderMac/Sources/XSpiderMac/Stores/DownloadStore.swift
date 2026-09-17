@@ -105,6 +105,18 @@ final class DownloadStore {
     private init() {
         restoreTasks()
         loadRecordCaches()
+        // CDN 限流解除（到期 / 用户点重试 / 某任务成功后确认恢复）时唤醒等待队列。
+        // 没有这条回调，限流期间被压住的 waiting 任务在恢复后不会自动启动——
+        // 并发上限虽回到设置值，却没人调用 pump。
+        AccountStatusStore.shared.onCDNRecovered = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                AppLogger.info("媒体 CDN 恢复,唤醒下载队列", category: "DL", [
+                    "effectiveConcurrent": "\(self.effectiveMaxConcurrent())",
+                ])
+                self.pump()
+            }
+        }
     }
 
     /// 启动时扫描各用户文件夹的记录文件到内存缓存（避免覆盖旧记录）
@@ -469,7 +481,15 @@ final class DownloadStore {
         refreshSleepAssertion()
     }
 
-    /// 有效并发：CDN 限流期间降到用户配置的上限（默认 1）
+    /// 有效并发 = min(用户设置, CDN 限流时的降级上限)。
+    ///
+    /// CDN 限流的完整流程：
+    /// 1. 某任务收到 429 → `noteCDNRateLimited` 记下截止时刻 → 本函数开始返回降级上限（默认 1）；
+    /// 2. **已在下载中的任务不被打断**（pump 只负责拉起 waiting，从不暂停 active ——
+    ///    中途掐断正在写的文件正是损坏的来源之一）；
+    /// 3. waiting 任务保持排队，每次有任务结束触发 pump 时只补足到降级上限；
+    /// 4. 恢复（三条路径）：任务成功确认正常 / 冷却到期 / 用户点 CDN 行重试。
+    ///    三条路径都会触发 `onCDNRecovered` → pump → 上限回到用户设置值并继续拉起积压任务。
     private func effectiveMaxConcurrent() -> Int {
         let configured = settings.maxConcurrentDownloads
         guard settings.cdnThrottleEnabled, AccountStatusStore.shared.cdnThrottled else {

@@ -202,6 +202,12 @@ final class AccountStatusStore {
     /// CDN 最近一次失败原因（非限流类）
     private(set) var cdnLastFailure: String?
 
+    /// CDN 限流解除时的回调（由 DownloadStore 注册 → 唤醒等待队列）。
+    /// 用回调而不是让状态层直接依赖下载层，避免两个 store 循环引用。
+    /// **必须存在**：限流期间并发被压到 1，若解除时无人唤醒队列，
+    /// 等待中的任务会静默卡住（要等下次用户操作才恢复）。
+    var onCDNRecovered: (() -> Void)?
+
     /// CDN 是否处于限流冷却中
     var cdnThrottled: Bool {
         guard let until = cdnRateLimitedUntil else { return false }
@@ -253,8 +259,11 @@ final class AccountStatusStore {
 
     func noteCDNSuccess() {
         guard cdnRateLimitedUntil != nil || cdnLastFailure != nil else { return }
+        let wasThrottled = cdnRateLimitedUntil != nil
         cdnRateLimitedUntil = nil
         cdnLastFailure = nil
+        // 限流解除 → 通知下载队列恢复并发（否则等待中的任务静默卡住）
+        if wasThrottled { onCDNRecovered?() }
     }
 
     /// 到期判定（视图调用，非轮询）
@@ -262,6 +271,14 @@ final class AccountStatusStore {
         guard let until = cdnRateLimitedUntil, Date() >= until else { return }
         cdnRateLimitedUntil = nil
         AppLogger.info("媒体 CDN 限流到期恢复", category: "DL")
+        // 同样必须唤醒队列：到期只是"标记清了"，不唤醒的话并发上限虽恢复，
+        // 却没有任务会被重新拉起
+        onCDNRecovered?()
+    }
+
+    /// 测试辅助：把 CDN 限流截止时间设为指定值（构造"已过期"等边界）
+    func setCDNThrottleDeadlineForTesting(_ deadline: Date?) {
+        cdnRateLimitedUntil = deadline
     }
 
     /// 用户点媒体 CDN 行的「重试」：结束 CDN 冷却并真的探一次媒体服务器。
@@ -274,18 +291,22 @@ final class AccountStatusStore {
         probingCDN = true
         defer { probingCDN = false }
 
-        // 先解除冷却（用户明确要求"别再拦我"）
+        // 用户明确要求"别再拦我" → 立即解除冷却并唤醒队列。
+        // 注意顺序：必须**先**记录并触发回调，再清标记——否则 noteCDNSuccess()
+        // 会认为"本来就没限流"，回调不触发，队列仍然卡着。
+        let wasThrottled = cdnRateLimitedUntil != nil
         cdnRateLimitedUntil = nil
+        if wasThrottled { onCDNRecovered?() }
 
-        let probeURL = URL(string: "https://pbs.twimg.com/media/EV5m1XjXQAAEqUd?format=jpg&name=small")!
+        // 探测 URL 必须属于媒体 CDN 域（pbs.twimg.com）。
+        // 早前用的 /media/EV5m1XjXQAAEqUd 实测已 404，会把正常网络误报成异常。
+        let probeURL = URL(string: "https://pbs.twimg.com/profile_images/1683325380441128960/yRsRRjGO.jpg")!
         var request = URLRequest(url: probeURL)
         request.httpMethod = "GET"
         request.setValue(Self.cdnProbeUserAgent, forHTTPHeaderField: "User-Agent")
-        // 只取首个分片即判定连通（不等整个文件；服务器不支持 Range 时会返回全量，
-        // 但我们只检查状态码，data 体积由 URLSession 自行处理，不会阻塞判定）
+        // 只取首个分片即判定连通（服务器不支持 Range 时会返回全量，但我们只看状态码）
         request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
         request.timeoutInterval = 12
-        // 只取极少量数据即判定连通（不等整个文件）
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -294,7 +315,8 @@ final class AccountStatusStore {
                 noteCDNRateLimited(retryAfter: after)
                 AppLogger.warn("CDN 探测:仍被限流", category: "DL")
             } else if (200..<400).contains(status), !data.isEmpty {
-                noteCDNSuccess()
+                // 已在上方清过限流标记，这里只需清失败原因（不再依赖 noteCDNSuccess 触发回调）
+                cdnLastFailure = nil
                 AppLogger.info("CDN 探测:连接正常", category: "DL", ["bytes": "\(data.count)"])
             } else {
                 noteCDNFailure("HTTP \(status)")

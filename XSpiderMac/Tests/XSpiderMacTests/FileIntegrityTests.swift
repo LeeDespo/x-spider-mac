@@ -268,4 +268,73 @@ final class CDNStatusTests: XCTestCase {
         }
         store.reset()
     }
+
+    // MARK: - 恢复必须唤醒下载队列（曾静默卡住的缺口）
+
+    /// 限流到期时必须触发恢复回调。
+    /// 回归：早前 refreshCDNExpiry 只清标记、不通知队列 → 并发上限虽恢复，
+    /// waiting 任务却无人拉起，队列静默卡住直到用户下次操作。
+    @MainActor
+    func testExpiryNotifiesRecovery() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        var notified = 0
+        store.onCDNRecovered = { notified += 1 }
+        defer { store.onCDNRecovered = nil }
+
+        store.noteCDNRateLimited(retryAfter: nil)
+        store.setCDNThrottleDeadlineForTesting(Date().addingTimeInterval(-1))  // 构造已过期
+        store.refreshCDNExpiry()
+        XCTAssertFalse(store.cdnThrottled)
+        XCTAssertEqual(notified, 1, "到期恢复必须通知下载队列（否则等待任务卡住）")
+    }
+
+    /// 任务成功确认 CDN 正常时也必须通知
+    @MainActor
+    func testSuccessNotifiesRecovery() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        var notified = 0
+        store.onCDNRecovered = { notified += 1 }
+        defer { store.onCDNRecovered = nil }
+
+        store.noteCDNRateLimited(retryAfter: 60)
+        store.noteCDNSuccess()
+        XCTAssertEqual(notified, 1, "成功恢复必须通知下载队列")
+    }
+
+    /// 未处于限流时不应触发恢复回调（避免无谓的 pump）
+    @MainActor
+    func testNoRecoveryCallbackWhenNotThrottled() {
+        let store = AccountStatusStore.shared
+        store.reset()
+        var notified = 0
+        store.onCDNRecovered = { notified += 1 }
+        defer { store.onCDNRecovered = nil }
+
+        store.noteCDNSuccess()   // 本来就没限流
+        store.refreshCDNExpiry() // 本来就没到期状态
+        XCTAssertEqual(notified, 0)
+    }
+
+    /// 用户点重试：即使随后探测失败，也应先解除限流并唤醒一次
+    /// （用户明确表达"别再拦我"）
+    @MainActor
+    func testProbeClearsThrottleAndNotifies() async {
+        let store = AccountStatusStore.shared
+        store.reset()
+        store.noteCDNRateLimited(retryAfter: 3600)
+        XCTAssertTrue(store.cdnThrottled)
+
+        // 不等待网络结果，只验证"先解除 + 通知"这一步的语义
+        var notified = 0
+        store.onCDNRecovered = { notified += 1 }
+        defer { store.onCDNRecovered = nil }
+
+        // probeCDN 会真发一次网络请求；测试环境可能失败，但解除与通知必须先发生
+        await store.probeCDN()
+        XCTAssertFalse(store.cdnThrottled, "用户重试应立即解除限流")
+        XCTAssertGreaterThanOrEqual(notified, 1, "用户重试应唤醒队列")
+        store.reset()
+    }
 }
