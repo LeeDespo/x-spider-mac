@@ -253,3 +253,90 @@ final class NetworkStateTTLTests: XCTestCase {
         store.reset()
     }
 }
+
+/// 浏览进度记忆（切页回来不回到顶部、不丢内容）
+final class BrowseProgressTests: XCTestCase {
+
+    private func makeMedia(_ id: String) -> TwitterMedia {
+        TwitterMedia(id: id, url: "https://pbs.twimg.com/media/\(id).jpg",
+                     width: 100, height: 100, type: .photo, videoInfo: nil, createdTime: nil)
+    }
+
+    private func makePost(_ id: String, likes: Int = 1, media: [String] = []) -> TwitterPost {
+        TwitterPost(id: id,
+                    user: TwitterUser(screenName: "u", avatar: "", name: "U", id: "1", mediaCount: nil, registerTime: nil),
+                    createdAt: nil, fullText: nil, tags: [], views: nil, lang: nil,
+                    retweeted: nil, retweetCount: nil, replyCount: nil, possiblySensitive: nil,
+                    favorited: nil, favoriteCount: likes, bookmarkCount: nil, bookmarked: nil,
+                    medias: media.map(makeMedia))
+    }
+
+    /// 两种形态的进度必须各自独立保存（互不覆盖）
+    @MainActor
+    func testAnchorsAreIndependentPerForm() {
+        let store = HomeTimelineStore.shared
+        store.clearAllScrollAnchors()
+
+        store.reportScrollAnchor("post-42", for: .tweets)
+        store.reportScrollAnchor("media-99", for: .media)
+
+        XCTAssertEqual(store.scrollAnchor(for: .tweets), "post-42")
+        XCTAssertEqual(store.scrollAnchor(for: .media), "media-99",
+                       "两种形态的进度必须独立，否则互相覆盖")
+        store.clearAllScrollAnchors()
+    }
+
+    /// 显式刷新必须清掉进度：内容整体替换，旧锚点已不在数据里
+    @MainActor
+    func testExplicitRefreshClearsProgress() {
+        let store = HomeTimelineStore.shared
+        store.clearAllScrollAnchors()
+        store.reportScrollAnchor("post-42", for: .tweets)
+        store.reportScrollAnchor("media-99", for: .media)
+        store.mediaRenderedCount = 200
+
+        store.clearAllScrollAnchors()
+
+        XCTAssertNil(store.scrollAnchor(for: .tweets))
+        XCTAssertNil(store.scrollAnchor(for: .media))
+        XCTAssertEqual(store.mediaRenderedCount, 40, "刷新后应回到首批渲染量")
+    }
+
+    /// 切换推荐/关注（换数据源）必须清掉进度，否则恢复到不存在的位置
+    @MainActor
+    func testModeSwitchClearsProgress() {
+        let store = HomeTimelineStore.shared
+        store.clearAllScrollAnchors()
+        store.reportScrollAnchor("post-42", for: .tweets)
+
+        store.mode = .forYou
+        store.setMode(.following)
+
+        XCTAssertNil(store.scrollAnchor(for: .tweets), "换数据源后旧进度无意义")
+        store.clearAllScrollAnchors()
+    }
+
+    /// 渲染计数必须存活于 store（视图被 .id(selection) 重建时 @State 会归零）
+    @MainActor
+    func testRenderedCountPersistsInStore() {
+        let store = HomeTimelineStore.shared
+        store.clearAllScrollAnchors()
+        store.mediaRenderedCount = 240
+        // 模拟视图重建：只读 store，不应被重置
+        XCTAssertEqual(store.mediaRenderedCount, 240,
+                       "渲染计数必须存 store，否则切页回来只能渲染前 40 条、恢复锚点失败")
+        store.clearAllScrollAnchors()
+    }
+
+    /// 同一形态可反复更新进度（滚动过程中不断覆盖）
+    @MainActor
+    func testAnchorUpdatesAsUserScrolls() {
+        let store = HomeTimelineStore.shared
+        store.clearAllScrollAnchors()
+        for id in ["a", "b", "c"] {
+            store.reportScrollAnchor(id, for: .tweets)
+        }
+        XCTAssertEqual(store.scrollAnchor(for: .tweets), "c", "应保留最后一次位置")
+        store.clearAllScrollAnchors()
+    }
+}

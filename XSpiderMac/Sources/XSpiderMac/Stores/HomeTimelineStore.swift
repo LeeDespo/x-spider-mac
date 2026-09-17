@@ -87,6 +87,8 @@ final class HomeTimelineStore {
     func setMode(_ m: HomeTimelineMode) {
         guard m != mode else { return }
         mode = m
+        // 换数据源（推荐↔关注）内容完全不同，旧浏览进度无意义
+        clearAllScrollAnchors()
         Task { await reload() }
     }
 
@@ -166,6 +168,74 @@ final class HomeTimelineStore {
     func retry() async {
         loadError = nil
         if posts.isEmpty { await reload() } else { await loadMore() }
+    }
+
+    /// 用户点「刷新」：**显式**重新加载（与切页回来时的"自动刷新"相对）。
+    ///
+    /// 语义：重置到首屏。推荐流每次请求内容都不同，所以刷新后已加载内容会被替换 ——
+    /// 这是用户主动要求的，属预期；而切页回来**不应**发生这件事（见 scrollAnchor）。
+    func refreshExplicitly() async {
+        loadError = nil
+        // 内容整体替换 → 旧锚点在数据里已不存在
+        clearAllScrollAnchors()
+        await reload()
+    }
+
+    // MARK: - 浏览进度记忆（下拉位置）
+
+    /// 两种形态各自的滚动锚点：记录"顶部可见的那条"的 ID。
+    ///
+    /// 为什么存锚点而不是像素偏移：非 lazy 的瀑布流在滚动中会不断加载新内容，
+    /// 内容高度持续变化，存绝对 offset 会在恢复时落到错误位置。
+    /// 锚点（media/post ID）在数据追加时保持稳定，是唯一可靠的参照。
+    ///
+    /// 生命周期：**仅进程内**（不落盘）——按需求"重启应用后消失"。
+    /// 切换分段会清掉对应锚点（换数据源后旧锚点无意义）。
+    ///
+    /// `@ObservationIgnored` 是必须的：锚点由视图的 `onAppear` 写入，
+    /// 若参与观察则会**触发重渲染 → 探针重建 → onAppear 再写 → 无限循环**
+    /// （实测表现为应用启动即挂死、测试 runner 连不上）。
+    /// 锚点是记账数据，不驱动任何 UI，本就不该进观察图。
+    @ObservationIgnored private var tweetAnchor: String?
+    @ObservationIgnored private var mediaAnchor: String?
+
+    /// 媒体瀑布流已渲染条数。
+    ///
+    /// 必须放在 store 而不是视图 `@State`：`ContentView` 用 `.id(selection)` 驱动切页动画，
+    /// 会销毁并重建整个视图 → `@State` 归零。若只恢复滚动锚点而条数回到 40，
+    /// 用户原本浏览到第 200 条时锚点尚未渲染，恢复必然失败。
+    var mediaRenderedCount = 40
+
+    /// 视图上报当前顶部锚点（滚动停止时调用，节流由视图负责）
+    func reportScrollAnchor(_ id: String?, for type: HomeTimelineContentType) {
+        switch type {
+        case .tweets: tweetAnchor = id
+        case .media: mediaAnchor = id
+        }
+    }
+
+    /// 视图读取待恢复的锚点（取用后不清除：同一次会话内反复切页都应回到同一位置）
+    func scrollAnchor(for type: HomeTimelineContentType) -> String? {
+        switch type {
+        case .tweets: return tweetAnchor
+        case .media: return mediaAnchor
+        }
+    }
+
+    /// 清空某个形态的浏览进度（换数据源时调用——旧锚点在新数据里不存在，
+    /// 留着会让恢复逻辑做无意义的查找）
+    func clearScrollAnchor(for type: HomeTimelineContentType) {
+        switch type {
+        case .tweets: tweetAnchor = nil
+        case .media: mediaAnchor = nil
+        }
+    }
+
+    /// 清空全部浏览进度（显式刷新时调用：内容整体替换，旧锚点失效）
+    func clearAllScrollAnchors() {
+        tweetAnchor = nil
+        mediaAnchor = nil
+        mediaRenderedCount = 40   // 回到首批，避免刷新后仍展开大量已失效内容
     }
 
     /// 测试辅助：清空错误态（Store 是单例，测试间需隔离）

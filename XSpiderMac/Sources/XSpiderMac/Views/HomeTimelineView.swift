@@ -46,6 +46,21 @@ struct HomeTimelineView: View {
                 .frame(width: 150)
 
                 Spacer()
+
+                // 刷新：显式重新加载（放在最右，与分段控制器同栏）
+                Button {
+                    Task { await store.refreshExplicitly() }
+                } label: {
+                    if store.loading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(store.loading)
+                .help(L("刷新：重新加载当前时间线"))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -70,34 +85,40 @@ struct HomeTimelineView: View {
                     // 形态切换时淡入淡出，避免内容"跳"一下
                     .transition(.opacity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(store.visiblePosts) { post in
-                            TimelinePostCard(post: post, onTap: {
-                                DetailOverlayCenter.shared.open(post)
-                            }, onAvatar: {
-                                onAvatarTap?(post.user.screenName)
-                            }, showFollowButton: true)
-                            // 预取一屏：倒数第 3 条出现时就拉下一页，而不是等最后一条。
-                            // 与瀑布流阈值语义一致（提前约一屏），用户滚到底时数据已就绪。
-                            // LazyVStack 会销毁滚出视口的卡片，故 onAppear 可重复触发。
-                            .onAppear {
-                                let posts = store.visiblePosts
-                                guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
-                                if idx >= posts.count - 3 {
-                                    Task { await store.loadMore() }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(store.visiblePosts) { post in
+                                TimelinePostCard(post: post, onTap: {
+                                    DetailOverlayCenter.shared.open(post)
+                                }, onAvatar: {
+                                    onAvatarTap?(post.user.screenName)
+                                }, showFollowButton: true)
+                                // 预取一屏：倒数第 3 条出现时就拉下一页，而不是等最后一条。
+                                // 与瀑布流阈值语义一致（提前约一屏），用户滚到底时数据已就绪。
+                                // LazyVStack 会销毁滚出视口的卡片，故 onAppear 可重复触发。
+                                .onAppear {
+                                    let posts = store.visiblePosts
+                                    guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
+                                    // LazyVStack 的 onAppear 可靠（滚动中会销毁/重建），
+                                    // 正好可用来记录浏览位置
+                                    store.reportScrollAnchor(post.id, for: .tweets)
+                                    if idx >= posts.count - 3 {
+                                        Task { await store.loadMore() }
+                                    }
                                 }
                             }
+                            if store.loadingMore {
+                                ProgressView().padding(10)
+                            } else if let error = store.loadError {
+                                // 翻页失败：底部给出重试入口（不再静默卡住）
+                                footerRetry(error)
+                            }
                         }
-                        if store.loadingMore {
-                            ProgressView().padding(10)
-                        } else if let error = store.loadError {
-                            // 翻页失败：底部给出重试入口（不再静默卡住）
-                            footerRetry(error)
-                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 20)
+                    .onAppear { restoreAnchor(proxy: proxy, type: .tweets) }
                 }
                 .transition(.opacity)
             }
@@ -162,30 +183,77 @@ struct HomeTimelineView: View {
     ///
     /// 分批渲染很关键：`WaterfallLayout` 是 `Layout`（非 lazy），会测量**全部**子视图，
     /// 每个单元还会触发缩略图请求。若一次塞入上百条，切换形态时要等布局+首批图片完成，
-    /// 表现为"切换要等很久"。这里只渲染前 `waterfallVisibleCount` 条，滚到底再追加一批。
-    @State private var waterfallVisibleCount = 40
+    /// 表现为"切换要等很久"。只渲染前 `store.mediaRenderedCount` 条，滚到底再追加一批。
+    /// 计数存 store（视图会被 `.id(selection)` 重建，@State 会归零丢失进度）。
 
     private var homeMediaWaterfall: some View {
         GeometryReader { geo in
             // 目标列宽约 220pt，随窗口自适应（2–6 列）
             let columns = min(6, max(2, Int((geo.size.width - 32) / 220)))
-            ScrollView {
-                // 分批渲染：只渲染已展开的部分
-                WaterfallLayout(columnCount: columns, spacing: 10) {
-                    ForEach(store.flatMedia.prefix(waterfallVisibleCount), id: \.media.id) { item in
-                        WaterfallMediaCell(media: item.media) {
-                            DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // 分批渲染：只渲染已展开的部分
+                    WaterfallLayout(columnCount: columns, spacing: 10) {
+                        ForEach(Array(store.flatMedia.prefix(store.mediaRenderedCount).enumerated()), id: \.element.media.id) { index, item in
+                            WaterfallMediaCell(media: item.media) {
+                                DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+                            }
+                            // 供 ScrollViewReader 定位（restoreAnchor 用它滚回上次位置）
+                            .id(item.media.id)
+                            // 稀疏位置锚点：每 20 条一个 1px 探针，用于记住浏览位置。
+                            // 不能给每个格子挂 GeometryReader —— 瀑布流非 lazy，
+                            // 上百个 reader 的持续重算代价过高；稀疏后开销降到 1/20。
+                            .background(alignment: .top) {
+                                if index % Self.anchorStride == 0, let mid = item.media.id {
+                                    scrollAnchorProbe(id: mid)
+                                }
+                            }
                         }
                     }
-                }
-                .padding(.horizontal, 16)
+                    .padding(.horizontal, 16)
 
-                // 触底哨兵：必须先展开本地未渲染的批次，再向服务端翻页
-                mediaLoader(viewportHeight: geo.size.height)
-                    .padding(.vertical, 12)
+                    // 触底哨兵：必须先展开本地未渲染的批次，再向服务端翻页
+                    mediaLoader(viewportHeight: geo.size.height)
+                        .padding(.vertical, 12)
+                }
+                .padding(.bottom, 20)
+                .coordinateSpace(name: homeTimelineScrollSpace)
+                // 恢复浏览位置：视图被 `.id(selection)` 重建后回到上次锚点
+                .onAppear { restoreAnchor(proxy: proxy, type: .media) }
             }
-            .padding(.bottom, 20)
-            .coordinateSpace(name: homeTimelineScrollSpace)
+        }
+    }
+
+    /// 每多少条插一个位置锚点（越小越精确、开销越大）
+    private static let anchorStride = 20
+
+    /// 位置锚点：滚到视口顶或更上时，把自己上报为"当前浏览位置"
+    private func scrollAnchorProbe(id: String) -> some View {
+        GeometryReader { proxy in
+            let minY = proxy.frame(in: .named(homeTimelineScrollSpace)).minY
+            Color.clear
+                .onChange(of: minY) { _, y in
+                    if y <= 1 { store.reportScrollAnchor(id, for: store.contentType) }
+                }
+                .onAppear {
+                    if minY <= 1 { store.reportScrollAnchor(id, for: store.contentType) }
+                }
+        }
+        .frame(height: 1)
+    }
+
+    /// 把滚动位置恢复到上次锚点。
+    /// 只在 store 记有锚点、且该锚点确实还在已渲染范围内时才滚——
+    /// 否则保持顶部（首次访问的正常行为）。
+    private func restoreAnchor(proxy: ScrollViewProxy, type: HomeTimelineContentType) {
+        guard let anchor = store.scrollAnchor(for: type) else { return }
+        let exists = type == .media
+            ? store.flatMedia.prefix(store.mediaRenderedCount).contains { $0.media.id == anchor }
+            : store.displayPosts.contains { $0.id == anchor }
+        guard exists else { return }
+        // 延后一拍：等布局确定目标位置，否则刚 onAppear 时滚动会被忽略
+        DispatchQueue.main.async {
+            proxy.scrollTo(anchor, anchor: .top)
         }
     }
 
@@ -200,7 +268,7 @@ struct HomeTimelineView: View {
     /// 2) `WaterfallLayout` 是 `Layout`（非 lazy），所有子视图始终在层级中，
     ///    所以 `.task` 会在挂载时立即触发、与滚动位置无关 → 自动连翻（429 风暴）。
     private func mediaLoader(viewportHeight: CGFloat) -> some View {
-        let renderedCount = min(waterfallVisibleCount, store.flatMedia.count)
+        let renderedCount = min(store.mediaRenderedCount, store.flatMedia.count)
         let allRendered = renderedCount >= store.flatMedia.count
         let canPage = store.hasMore
         return Group {
@@ -241,7 +309,7 @@ struct HomeTimelineView: View {
         let prefetchLine = viewportHeight * 2
         guard sentinelMaxY <= prefetchLine else { return }
         if !allRendered {
-            waterfallVisibleCount += 40
+            store.mediaRenderedCount += 40
         } else if canPage {
             Task { await store.loadMore() }
         }
