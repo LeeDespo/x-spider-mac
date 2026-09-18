@@ -48,8 +48,11 @@ struct MediaDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             // 右:推文卡 + 评论卡(两张独立玻璃卡片)
             VStack(spacing: 20) {
+                // 推文卡按内容自适应高度（长正文可滚），并设上限：
+                // 固定 260pt 会压缩长正文、把标签行挤出卡片造成重叠；
+                // 完全不限高则长推文会把评论卡挤没。minHeight 保证短推文时卡片不塌。
                 tweetCard
-                    .frame(height: 260)
+                    .frame(minHeight: 180, maxHeight: 340)
                 repliesCard
                     .frame(maxHeight: .infinity)
             }
@@ -257,26 +260,41 @@ struct MediaDetailView: View {
                 }
             }
 
+            // 正文 + 标签：**两者分开**，正文独占可滚动区，标签固定在正文之后。
+            //
+            // 旧实现把正文与 tags 塞进同一个 ScrollView，且正文用
+            // `.frame(maxWidth: .infinity)` + `fixedSize(vertical:)` —— 在 ScrollView 里
+            // 横向约束是未定的，maxWidth:.infinity 会与 fixedSize 互相拉扯，
+            // 表现为标签行错位、并压到正文上。
+            // 现在正文用 ScrollView 承载（长文可滚），标签放在其外层之后，不再重叠。
+            // **不**给正文设 maxHeight:.infinity —— 那会与卡片外层的 maxHeight 上限
+            // 冲突（两层都想吃掉剩余空间），高度协商异常时内容被压扁或溢出。
+            // 让它自然占据剩余空间，上下限统一由外层 frame 决定。
             ScrollView {
                 Text(post.fullText ?? "")
                     .font(.callout)
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if let tags = post.tags, !tags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(tags, id: \.self) { tag in
-                                Text("#\(tag)")
-                                    .font(.caption.weight(.medium))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Color.accentColor.opacity(0.12), in: Capsule())
-                                    .foregroundStyle(Color.accentColor)
-                            }
+            }
+            .layoutPriority(1)
+
+            // 标签：独立一行，横向可滚动（标签多时不换行、不挤压正文）
+            if let tags = post.tags, !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(tags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                                .fixedSize()
                         }
                     }
-                    .padding(.top, 4)
                 }
+                .frame(height: 22)   // 固定行高：避免 ScrollView 在 VStack 里撑出不确定高度
             }
 
             // 计数行（回复 · 转推 · 赞 · 浏览）
