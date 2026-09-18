@@ -389,16 +389,6 @@ struct MediaDetailView: View {
                     .padding(14)
                 }
             }
-
-            Divider()
-            // 评论输入框（发送走 CreateTweet;UI 占位）
-            HStack {
-                TextField(L("发布你的评论…"), text: .constant(""))
-                    .textFieldStyle(.roundedBorder)
-                Button(L("发送")) {}
-                    .disabled(true)
-            }
-            .padding(12)
         }
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture {} // 卡内点击不穿透到遮罩层

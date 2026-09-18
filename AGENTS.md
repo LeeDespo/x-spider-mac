@@ -68,3 +68,8 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 - 代码注释与 UI 文案以中文为主（与现状一致）；L10n 走 `Support/L10n.swift` 的 `L()`。
 - 状态一律放 `@Observable` Store（`Stores/`），视图 `@State` 只放纯 UI 态；单例 `*.shared`。
 - 下载引擎为内置 aria2Next（`Services/Aria2Engine.swift`），不引入其它下载器。
+- **最低系统版本 macOS 14.4**（改动时不要降低；14.4 是为了用系统
+  `Translation` 框架的 `translationTask`，见 `docs/DEVELOPMENT.md`）。
+  改动系统 API 前先确认其可用版本不低于 14.4。
+- **不要为版本差异写降级分支**：支持范围就是 14.4+，直接使用满足该版本的 API，
+  不要再加"旧系统隐藏按钮/回退旧实现"这类分支（会增加维护面且无法测试）。

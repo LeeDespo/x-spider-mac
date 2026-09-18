@@ -72,8 +72,6 @@ enum L10n {
         ("把关注的用户加入同步清单，一键逐个同步最新媒体;支持蜂窝/Dock 两种布局,同步记录文件可加快二次同步。", "把關注的使用者加入同步清單，一鍵逐個同步最新媒體；支援蜂巢/Dock 兩種版面，同步記錄檔可加快二次同步。"),
 
         ("评论加载失败", "評論載入失敗"),
-        ("发布你的评论…", "發佈你的評論…"),
-        ("发送", "發送"),
         ("下载当前", "下載目前"),
 
         ("点赞", "點讚"),
@@ -654,8 +652,6 @@ enum L10n {
         ("把关注的用户加入同步清单，一键逐个同步最新媒体;支持蜂窝/Dock 两种布局,同步记录文件可加快二次同步。", "Add accounts you follow to the sync list and sync their latest media one by one; honeycomb and Dock layouts are available, and sync record files speed up later syncs."),
 
         ("评论加载失败", "Failed to load replies"),
-        ("发布你的评论…", "Post your reply…"),
-        ("发送", "Post"),
         ("下载当前", "Download this"),
 
         ("点赞", "Like"),

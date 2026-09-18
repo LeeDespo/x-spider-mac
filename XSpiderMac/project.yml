@@ -3,7 +3,7 @@ targets:
   XSpiderMac:
     type: application
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "14.4"
     sources:
       - Sources
       - path: Resources
@@ -22,7 +22,7 @@ targets:
       DEVELOPMENT_TEAM: ""
       ENABLE_HARDENED_RUNTIME: YES
       SWIFT_VERSION: "6.0"
-      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      MACOSX_DEPLOYMENT_TARGET: "14.4"
       # 内置 aria2Next:保持可执行位,随应用签名
       OTHER_CODE_SIGN_FLAGS: "--deep"
     entitlements:
@@ -36,13 +36,13 @@ targets:
   XSpiderMacTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "14.4"
     sources:
       - Tests
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac.tests
       SWIFT_VERSION: "6.0"
-      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      MACOSX_DEPLOYMENT_TARGET: "14.4"
     dependencies:
       - target: XSpiderMac
