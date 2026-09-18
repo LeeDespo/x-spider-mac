@@ -609,7 +609,7 @@ actor TwitterAPI {
             }
         }
 
-        return results.compactMap(Self.mapTwitterPost)
+        return results.compactMap { Self.mapTwitterPost($0) }
     }
 
     /// UserTweets 专用：entryId 以 tweet- 开头取单推文；profile-conversation- 开头取会话内全部推文。
@@ -645,7 +645,7 @@ actor TwitterAPI {
         if requireMedia {
             filtered = filtered.filter { Self.hasPath($0, ["legacy", "entities", "media"]) }
         }
-        return filtered.compactMap(Self.mapTwitterPost)
+        return filtered.compactMap { Self.mapTwitterPost($0) }
     }
 
     static func extractBottomCursor(_ instructions: [[String: Any]]) -> String? {
@@ -671,7 +671,9 @@ actor TwitterAPI {
 
     // MARK: - 推文字段映射（对应上游 mapTwitterPosts）
 
-    static func mapTwitterPost(_ item: [String: Any]) -> TwitterPost? {
+    /// - Parameter includeQuoted: 是否解析被引用的推文。递归时**必须**传 false ——
+    ///   X 不允许"引用里再引用"，真出现嵌套即为异常数据；不设防会无限递归。
+    static func mapTwitterPost(_ item: [String: Any], includeQuoted: Bool = true) -> TwitterPost? {
         let legacy = item["legacy"] as? [String: Any] ?? [:]
         let coreUser = Self.path(item, ["core", "user_results", "result"]) as? [String: Any]
         // 用户字段:legacy 与新版 core 双结构逐字段回退(新版 legacy 里 name/screen_name 缺失,在 core.core)
@@ -731,8 +733,19 @@ actor TwitterAPI {
             favoriteCount: legacy["favorite_count"] as? Int,
             bookmarkCount: legacy["bookmark_count"] as? Int,
             bookmarked: legacy["bookmarked"] as? Bool,
-            medias: Self.mapTwitterMedias(entities["media"] as? [[String: Any]], createdAt: TwitterDate.parse(legacy["created_at"] as? String))
+            medias: Self.mapTwitterMedias(entities["media"] as? [[String: Any]], createdAt: TwitterDate.parse(legacy["created_at"] as? String)),
+            quotedPost: includeQuoted ? Self.mapQuotedPost(item) : nil
         )
+    }
+
+    /// 解析被引用的推文（`legacy.quoted_status_result.result`）。
+    /// 递归一层即止：内层显式传 `includeQuoted: false`。
+    static func mapQuotedPost(_ item: [String: Any]) -> QuotedPostBox? {
+        guard let raw = Self.path(item, ["legacy", "quoted_status_result", "result"]) as? [String: Any] else {
+            return nil
+        }
+        // TweetWithVisibilityResults 包裹时取内层 tweet；内层禁止再取引用（防无限递归）
+        return Self.mapTwitterPost(Self.unwrapVisibility(raw), includeQuoted: false).map(QuotedPostBox.init)
     }
 
     static func mapTwitterMedias(_ medias: [[String: Any]]?, createdAt: Date? = nil) -> [TwitterMedia]? {

@@ -416,3 +416,108 @@ final class JudgmentSemanticsTests: XCTestCase {
                              "切换判定依据必须自增版本号，否则媒体卡按钮状态不更新")
     }
 }
+
+/// 引用推文与转推的解析契约
+final class QuotedPostParsingTests: XCTestCase {
+
+    private func tweet(_ id: String, text: String, extra: [String: Any] = [:]) -> [String: Any] {
+        var legacy: [String: Any] = ["full_text": text, "created_at": "Sat Jan 20 15:15:36 +0000 2024"]
+        for (k, v) in extra { legacy[k] = v }
+        return [
+            "__typename": "Tweet",
+            "rest_id": id,
+            "legacy": legacy,
+            "core": ["user_results": ["result": [
+                "rest_id": "u\(id)",
+                "legacy": ["screen_name": "user\(id)", "name": "User \(id)",
+                           "profile_image_url_https": "https://x.com/a.jpg"],
+            ] as [String: Any]]] as [String: Any],
+        ]
+    }
+
+    /// 引用推文应解析出 quotedPost，且内容正确
+    func testQuotedPostParsed() {
+        let inner = tweet("999", text: "被引用的内容")
+        var outer = tweet("111", text: "我的评论")
+        (outer["legacy"] as? [String: Any]).map { _ in
+            outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
+                ["quoted_status_result": ["result": inner] as [String: Any]]) { _, new in new }
+        }
+        let post = TwitterAPI.mapTwitterPost(outer)
+        XCTAssertNotNil(post)
+        XCTAssertEqual(post?.id, "111")
+        XCTAssertEqual(post?.quotedPost?.value.id, "999", "应解析出被引用推文")
+        XCTAssertEqual(post?.quotedPost?.value.fullText, "被引用的内容")
+    }
+
+    /// 无引用时 quotedPost 必须为 nil（不能凭空造）
+    func testNoQuotedPostWhenAbsent() {
+        let post = TwitterAPI.mapTwitterPost(tweet("222", text: "普通推文"))
+        XCTAssertNotNil(post)
+        XCTAssertNil(post?.quotedPost)
+    }
+
+    /// 回归：嵌套引用必须被截断（只递归一层），否则异常数据会无限递归。
+    /// X 不允许"引用里再引用"，真出现即为脏数据。
+    func testNestedQuoteIsTruncatedToOneLevel() {
+        let innermost = tweet("333", text: "最内层")
+        var middle = tweet("222", text: "中间层")
+        middle["legacy"] = (middle["legacy"] as! [String: Any]).merging(
+            ["quoted_status_result": ["result": innermost] as [String: Any]]) { _, new in new }
+        var outer = tweet("111", text: "最外层")
+        outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
+            ["quoted_status_result": ["result": middle] as [String: Any]]) { _, new in new }
+
+        let post = TwitterAPI.mapTwitterPost(outer)
+        XCTAssertEqual(post?.quotedPost?.value.id, "222", "第一层引用应解析")
+        XCTAssertNil(post?.quotedPost?.value.quotedPost,
+                     "第二层引用必须被截断（防无限递归）")
+    }
+
+    /// TweetWithVisibilityResults 包裹的引用推文也要能取到内层
+    func testQuotedPostUnwrapsVisibility() {
+        let wrapped: [String: Any] = [
+            "__typename": "TweetWithVisibilityResults",
+            "tweet": tweet("444", text: "被包裹的引用"),
+        ]
+        var outer = tweet("111", text: "外层")
+        outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
+            ["quoted_status_result": ["result": wrapped] as [String: Any]]) { _, new in new }
+        let post = TwitterAPI.mapTwitterPost(outer)
+        XCTAssertEqual(post?.quotedPost?.value.id, "444")
+    }
+
+    /// 旧的历史记录（无 quotedPost/retweetedBy 键）必须仍可解码
+    func testLegacyCodableStillDecodes() throws {
+        let legacyJSON = """
+        {"id":"1","user":{"screenName":"u","avatar":"","name":"U","id":"1"},
+         "createdAt":null,"fullText":"旧记录","tags":null,"views":null,"lang":null,
+         "retweeted":null,"retweetCount":null,"replyCount":null,"possiblySensitive":null,
+         "favorited":null,"favoriteCount":null,"bookmarkCount":null,"bookmarked":null,
+         "medias":null}
+        """
+        let decoder = JSONDecoder()
+        let post = try decoder.decode(TwitterPost.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(post.id, "1")
+        XCTAssertNil(post.quotedPost, "旧记录缺该键应取 nil，而非解码失败")
+        XCTAssertNil(post.retweetedBy)
+    }
+
+    /// 引用推文可编码再解码（历史记录持久化路径）
+    func testQuotedPostRoundTrip() throws {
+        let inner = TwitterPost(id: "999", user: TwitterUser(screenName: "a", avatar: "", name: "A", id: "1", mediaCount: nil, registerTime: nil),
+                                createdAt: nil, fullText: "内层", tags: nil, views: nil, lang: nil,
+                                retweeted: nil, retweetCount: nil, replyCount: nil, possiblySensitive: nil,
+                                favorited: nil, favoriteCount: nil, bookmarkCount: nil, bookmarked: nil,
+                                medias: nil)
+        let outer = TwitterPost(id: "111", user: inner.user, createdAt: nil, fullText: "外层",
+                                tags: nil, views: nil, lang: nil, retweeted: nil, retweetCount: nil,
+                                replyCount: nil, possiblySensitive: nil, favorited: nil,
+                                favoriteCount: nil, bookmarkCount: nil, bookmarked: nil, medias: nil,
+                                quotedPost: QuotedPostBox(inner))
+        let data = try JSONEncoder().encode(outer)
+        let back = try JSONDecoder().decode(TwitterPost.self, from: data)
+        XCTAssertEqual(back.quotedPost?.value.id, "999", "引用推文应能往返编解码")
+        XCTAssertEqual(back.quotedPost?.value.fullText, "内层")
+    }
+}

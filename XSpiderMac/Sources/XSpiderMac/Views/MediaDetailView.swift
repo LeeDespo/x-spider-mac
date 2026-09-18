@@ -51,8 +51,9 @@ struct MediaDetailView: View {
                 // 推文卡按内容自适应高度（长正文可滚），并设上限：
                 // 固定 260pt 会压缩长正文、把标签行挤出卡片造成重叠；
                 // 完全不限高则长推文会把评论卡挤没。minHeight 保证短推文时卡片不塌。
+                // 上限取 420：引用推文会额外占高，340 时容易被压得正文只剩一两行。
                 tweetCard
-                    .frame(minHeight: 180, maxHeight: 340)
+                    .frame(minHeight: 180, maxHeight: 420)
                 repliesCard
                     .frame(maxHeight: .infinity)
             }
@@ -295,6 +296,14 @@ struct MediaDetailView: View {
                     }
                 }
                 .frame(height: 22)   // 固定行高：避免 ScrollView 在 VStack 里撑出不确定高度
+            }
+
+            // 引用推文：内嵌在正文下方（与时间线卡片一致）
+            if let quoted = post.quotedPost?.value {
+                QuotedPostCard(post: quoted, onOpen: {
+                    // 用 detail 里的最新副本，保证引用内容与主推文同源
+                    DetailOverlayCenter.shared.open(quoted)
+                }, onAvatar: { onSearchUser?(quoted.user.screenName) })
             }
 
             // 计数行（回复 · 转推 · 赞 · 浏览）

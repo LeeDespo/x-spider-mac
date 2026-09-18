@@ -355,6 +355,14 @@ struct TimelinePostCard: View {
                 ExpandableText(text: text, collapsedLines: 6)
             }
 
+            // 引用推文：缩小内嵌在正文下方。点击打开**被引用推文**的详情，
+            // 与点击卡片其余部分（打开主推文）区分——内层手势优先，无需额外处理。
+            if let quoted = post.quotedPost?.value {
+                QuotedPostCard(post: quoted, onOpen: {
+                    DetailOverlayCenter.shared.open(quoted)
+                }, onAvatar: onAvatar)
+            }
+
             if let tags = post.tags, !tags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
