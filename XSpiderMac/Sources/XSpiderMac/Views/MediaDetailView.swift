@@ -379,9 +379,11 @@ struct MediaDetailView: View {
                                     }
                                     .contentShape(Rectangle())
                                     .onTapGesture { onSearchUser?(reply.user.screenName) }
-                                    Text(reply.fullText ?? "")
-                                        .font(.callout)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    // 评论过长时折叠（列表里逐条全展开会把滚动条拉得很长）
+                                    ExpandableText(text: reply.fullText ?? "",
+                                                   collapsedLines: 4,
+                                                   expandThreshold: 140,
+                                                   font: .callout)
                                 }
                             }
                         }

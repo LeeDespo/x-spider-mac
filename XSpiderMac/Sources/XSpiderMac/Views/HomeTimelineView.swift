@@ -351,10 +351,8 @@ struct TimelinePostCard: View {
             }
 
             if let text = post.fullText, !text.isEmpty {
-                Text(text)
-                    .font(.callout)
-                    .lineLimit(6)
-                    .fixedSize(horizontal: false, vertical: true)
+                // 长文可展开（原先 lineLimit(6) 静默截断且无展开入口）
+                ExpandableText(text: text, collapsedLines: 6)
             }
 
             if let tags = post.tags, !tags.isEmpty {

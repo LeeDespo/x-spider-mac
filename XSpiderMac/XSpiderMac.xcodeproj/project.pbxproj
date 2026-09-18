@@ -76,6 +76,7 @@
 		EF3CE8524E037D15E5F77E94 /* CookieImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD11699500B1791EFEAA1F95 /* CookieImportView.swift */; };
 		F1A7C9493F8DCEDDE44BAD62 /* HomeTimelineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45CFD806B90195310DE91A6 /* HomeTimelineStoreTests.swift */; };
 		F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C685570A33E16C638B5293CD /* FollowButton.swift */; };
+		F4A53548E7E41010D8EDA2D7 /* ExpandableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FCBE1562C679131AF24E8A /* ExpandableText.swift */; };
 		F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D769C342F080744CE4324F /* FloatingDownloadBar.swift */; };
 		FB7B6DC7ACB1882C83BEE29E /* ScrollWheelCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */; };
 		FDB03CDFF7F2C83FA65C4297 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */; };
@@ -167,6 +168,7 @@
 		F1A6494CC89C67122E3F3122 /* HomepageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomepageStore.swift; sourceTree = "<group>"; };
 		F21570464BAC241A0771180A /* RequestGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestGate.swift; sourceTree = "<group>"; };
 		F52E6EBC6E44EE82061C8673 /* L10nTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10nTests.swift; sourceTree = "<group>"; };
+		F9FCBE1562C679131AF24E8A /* ExpandableText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableText.swift; sourceTree = "<group>"; };
 		FADCA961AD9D4F3C749F8A46 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreationTaskStore.swift; sourceTree = "<group>"; };
 		FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -208,6 +210,7 @@
 				EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */,
 				85CFC477417C1D3E25F35D77 /* DockSyncLayout.swift */,
 				BA9515D2A5D149F0C6884E21 /* DownloadsView.swift */,
+				F9FCBE1562C679131AF24E8A /* ExpandableText.swift */,
 				66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */,
 				76D769C342F080744CE4324F /* FloatingDownloadBar.swift */,
 				C685570A33E16C638B5293CD /* FollowButton.swift */,
@@ -482,6 +485,7 @@
 				16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */,
 				AC227416870F9297A4DBB582 /* DownloadTask.swift in Sources */,
 				FDB03CDFF7F2C83FA65C4297 /* DownloadsView.swift in Sources */,
+				F4A53548E7E41010D8EDA2D7 /* ExpandableText.swift in Sources */,
 				EC28A95C1C6ACEBDB757F6C4 /* FeatureIntroSheet.swift in Sources */,
 				DADC9397446116F0EB5B6772 /* FileIntegrity.swift in Sources */,
 				7B23E6A11881F0FEC654415F /* FileNameTemplate.swift in Sources */,
