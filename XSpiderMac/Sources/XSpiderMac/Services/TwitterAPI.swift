@@ -85,13 +85,16 @@ actor TwitterAPI {
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
         }
-        let instructions = Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]]
-            ?? (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? [])
-        let posts = Self.extractPostsFromTweetEntries(instructions)
-        guard let focal = posts.first(where: { $0.id == id }) ?? posts.first else {
+        // focal 必须按 ID 精确取（理由同 getTweet：按 requireMedia 过滤会把
+        // 无媒体的 focal 丢掉，退化到评论区推文）。回复列表另走不带媒体过滤的解析。
+        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
             throw TwitterAPIError.parseFailure
         }
-        return (focal, posts.filter { $0.id != focal.id })
+        let instructions = (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]])
+            ?? (Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]])
+            ?? []
+        let replies = Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
+        return (focal, replies.filter { $0.id != focal.id })
     }
 
     // MARK: - 单条推文（TweetDetail，用于推文链接搜索）
@@ -124,18 +127,46 @@ actor TwitterAPI {
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
         }
-        let instructions = Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]]
-            ?? (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? [])
-        let posts = Self.extractPostsFromTweetEntries(instructions)
-        // focal 推文 = id 匹配的第一条；TweetDetail 也可能只返回 conversation 模块
-        if let focal = posts.first(where: { $0.id == id }) {
-            return focal
-        }
-        // 退化：返回第一条有媒体的
-        guard let first = posts.first else {
+        // TweetDetail 的响应结构（2026-09 实测）：
+        //   只有 `data.threaded_conversation_with_injections_v2.instructions`，
+        //   **没有** `data.tweetResult`（旧假设，曾导致 focal 推文取不到）。
+        //   focal 推文是 entries 里 entryId 为 `tweet-<id>` 的那一条。
+        //
+        // 若直接用带 requireMedia 的解析（旧行为），**无媒体的 focal 会被过滤掉**，
+        // 于是退化分支返回"第一条有媒体的推文"——那往往是评论区的广告或带图评论，
+        // 表现为"详情弹出来的是别人的推文"。因此这里必须按 ID 直接取 focal。
+        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
             throw TwitterAPIError.parseFailure
         }
-        return first
+        return focal
+    }
+
+    /// 从 TweetDetail 响应里按 ID 取出 focal 推文。
+    ///
+    /// 不经过 `extractPostsFromTweetEntries`：那条路径会按 `requireMedia` 过滤，
+    /// 无媒体的 focal 会被丢弃，进而退化到评论区的推文（真实 bug）。
+    static func extractFocalTweet(json: [String: Any], id: String) -> TwitterPost? {
+        // 路径一（当前线上）：threaded_conversation_with_injections_v2
+        let instructions = (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]])
+            // 路径二（部分版本）：data.tweetResult.result.timeline.instructions
+            ?? (Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]])
+            ?? []
+        guard let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
+              let entries = addEntries["entries"] as? [[String: Any]] else { return nil }
+
+        // 优先按 entryId `tweet-<id>` 精确命中
+        if let entry = entries.first(where: { ($0["entryId"] as? String) == "tweet-\(id)" }),
+           let result = Self.path(entry, ["content", "itemContent", "tweet_results", "result"]) as? [String: Any] {
+            return Self.mapTwitterPost(Self.unwrapVisibility(result))
+        }
+        // 退路：任意 tweet- 开头条目中 rest_id 匹配者（顺序可能变化）
+        for entry in entries where (entry["entryId"] as? String)?.hasPrefix("tweet") == true {
+            if let result = Self.path(entry, ["content", "itemContent", "tweet_results", "result"]) as? [String: Any],
+               (Self.unwrapVisibility(result)["rest_id"] as? String) == id {
+                return Self.mapTwitterPost(Self.unwrapVisibility(result))
+            }
+        }
+        return nil
     }
 
     static let tweetDetailFeatures = #"{"articles_preview_enabled":false,"c9s_tweet_anatomy_moderator_badge_enabled":true,"communities_web_enable_tweet_community_results_fetch":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"longform_notetweets_consumption_enabled":true,"longform_notetweets_inline_media_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"responsive_web_enhance_cards_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":false,"responsive_web_media_download_video_enabled":false,"responsive_web_profile_redirect_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"rweb_tipjar_consumption_enabled":true,"rweb_video_timestamps_enabled":true,"standardized_nudges_misinfo":true,"tweet_awards_web_tipping_enabled":false,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"tweet_with_visibility_results_prefer_gql_media_interstitial_enabled":false,"tweetypie_unmention_optimization_enabled":true,"verified_phone_label_enabled":false,"view_counts_everywhere_api_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"premium_content_api_read_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":false,"responsive_web_grok_share_attachment_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":false,"responsive_web_grok_image_annotation_enabled":false,"responsive_web_grok_analysis_button_from_backend":false,"responsive_web_jetfuel_frame":false,"rweb_video_screen_enabled":true,"responsive_web_grok_show_grok_translated_post":true}"#
@@ -772,14 +803,23 @@ actor TwitterAPI {
         )
     }
 
-    /// 解析被引用的推文（`legacy.quoted_status_result.result`）。
+    /// 解析被引用的推文。
+    ///
+    /// **路径已用真实响应核对**（TweetDetail，2026-09 实测）：
+    /// 引用位于 `result.quoted_status_result.result` —— 是 `result` 的**直接**子键，
+    /// **不是** `result.legacy.quoted_status_result`。
+    /// 后者是常见误写，会导致引用永远解析不到（表现为引用卡空白）。
+    /// `legacy.is_quote_status` 为 true 时该键必然存在，可作校验。
+    ///
     /// 递归一层即止：内层显式传 `includeQuoted: false`。
     static func mapQuotedPost(_ item: [String: Any]) -> QuotedPostBox? {
-        guard let raw = Self.path(item, ["legacy", "quoted_status_result", "result"]) as? [String: Any] else {
-            return nil
-        }
+        let raw = (item["quoted_status_result"] as? [String: Any])
+            ?? (Self.path(item, ["legacy", "quoted_status_result"]) as? [String: Any])
+        guard let raw else { return nil }
+        // 兼容两种包裹：{result: {...}} 与直接就是 tweet 对象
+        let inner = (raw["result"] as? [String: Any]) ?? (raw["tweet"] as? [String: Any]) ?? raw
         // TweetWithVisibilityResults 包裹时取内层 tweet；内层禁止再取引用（防无限递归）
-        return Self.mapTwitterPost(Self.unwrapVisibility(raw), includeQuoted: false).map(QuotedPostBox.init)
+        return Self.mapTwitterPost(Self.unwrapVisibility(inner), includeQuoted: false).map(QuotedPostBox.init)
     }
 
     static func mapTwitterMedias(_ medias: [[String: Any]]?, createdAt: Date? = nil) -> [TwitterMedia]? {

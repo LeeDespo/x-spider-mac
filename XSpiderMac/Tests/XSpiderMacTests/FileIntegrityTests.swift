@@ -647,12 +647,169 @@ final class TranslationLanguageTests: XCTestCase {
                        "自动翻译默认应为关")
     }
 
-    /// 目标语言默认跟随系统
-    func testTargetLanguageDefaultsToSystem() {
-        let settings = SettingsStore.shared.settings
+    /// 空值语义：存储为空字符串表示"跟随系统"。
+    /// **不要**断言真实 settings 的当前值——测试宿主是应用本体，
+    /// 用户的已存设置（如 zh-Hans）会污染这类断言。
+    /// 这里只验证"空 → 跟随系统"这条映射规则本身。
+    func testEmptyTargetLanguageMeansFollowSystem() {
+        var settings = Settings()
+        settings.app.translateTargetLanguage = nil
         XCTAssertEqual(settings.translateTargetLanguageRaw, "",
                        "未设置时应为空（表示跟随系统）")
         XCTAssertEqual(settings.translateTargetLanguage.languageCode,
-                       Locale.current.language.languageCode)
+                       Locale.current.language.languageCode,
+                       "未设置时应回落到系统语言")
+
+        settings.app.translateTargetLanguage = "ja"
+        XCTAssertEqual(settings.translateTargetLanguageRaw, "ja")
+        XCTAssertEqual(settings.translateTargetLanguage.languageCode, "ja")
+
+        // 空字符串写回应为 nil（表示跟随系统），而不是存一个空串
+        settings.translateTargetLanguageRaw = ""
+        XCTAssertNil(settings.app.translateTargetLanguage)
+    }
+}
+
+/// TweetDetail 的 focal 推文提取与引用解析。
+///
+/// 这一组针对两个真实 bug（2026-09 用真实响应定位）：
+/// 1. focal 走 `extractPostsFromTweetEntries`（默认 requireMedia=true）时，
+///    **无媒体的 focal 会被过滤掉**，退化分支返回"第一条有媒体的推文"——
+///    那往往是评论区的带图评论或广告，表现为"详情弹出的是别人的推文"；
+/// 2. 引用写在 `legacy.quoted_status_result` 上永远取不到——
+///    真实路径是 `result.quoted_status_result.result`（result 的直接子键）。
+final class TweetDetailParsingTests: XCTestCase {
+
+    /// 构造 focal 推文（可带/不带媒体、可带引用）
+    private func focal(hasMedia: Bool, quoted: [String: Any]? = nil) -> [String: Any] {
+        var legacy: [String: Any] = [
+            "full_text": "主推文正文",
+            "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+            "lang": "fr",
+        ]
+        if hasMedia {
+            legacy["entities"] = ["media": [["id_str": "m1", "type": "photo",
+                                             "media_url_https": "https://pbs.twimg.com/media/a.jpg"]]]
+        }
+        var result: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "1000",
+            "legacy": legacy,
+            "core": ["user_results": ["result": [
+                "rest_id": "u1",
+                "legacy": ["screen_name": "author", "name": "作者", "profile_image_url_https": "x"],
+            ] as [String: Any]]] as [String: Any],
+        ]
+        // 关键：引用挂在 result 的直接子键上（不是 legacy 下）
+        if let quoted { result["quoted_status_result"] = ["result": quoted] as [String: Any] }
+        return result
+    }
+
+    /// 一条评论（带媒体），用于验证"不会退回评论区"
+    private func replyWithMedia() -> [String: Any] {
+        [
+            "__typename": "Tweet",
+            "rest_id": "9999",
+            "legacy": [
+                "full_text": "评论区的推文",
+                "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+                "entities": ["media": [["id_str": "ad1", "type": "photo",
+                                        "media_url_https": "https://pbs.twimg.com/media/ad.jpg"]]],
+            ] as [String: Any],
+        ]
+    }
+
+    private func detailJSON(focalResult: [String: Any], includeReplyThread: Bool = true) -> [String: Any] {
+        var entries: [[String: Any]] = [[
+            "entryId": "tweet-1000",
+            "content": ["itemContent": ["tweet_results": ["result": focalResult]]],
+        ]]
+        if includeReplyThread {
+            entries.append([
+                "entryId": "conversationthread-9999",
+                "content": ["items": [[
+                    "item": ["itemContent": ["tweet_results": ["result": replyWithMedia()]]],
+                ]]],
+            ])
+        }
+        return ["data": ["threaded_conversation_with_injections_v2": [
+            "instructions": [[
+                "type": "TimelineAddEntries",
+                "entries": entries,
+            ]],
+        ]]]
+    }
+
+    /// **回归**：无媒体的 focal 必须按 ID 精确取到，不能退回评论区的推文
+    func testFocalWithoutMediaIsExtractedNotReply() {
+        let json = detailJSON(focalResult: focal(hasMedia: false))
+        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
+        XCTAssertNotNil(post, "无媒体的 focal 必须能取到（旧逻辑会返回 nil 并退化）")
+        XCTAssertEqual(post?.id, "1000", "必须是 focal 本身，而不是评论区的 9999")
+        XCTAssertEqual(post?.fullText, "主推文正文")
+        XCTAssertNil(post?.medias, "该 focal 确实没有媒体")
+    }
+
+    /// 有媒体的 focal 同样按 ID 精确取
+    func testFocalWithMediaIsExtracted() {
+        let json = detailJSON(focalResult: focal(hasMedia: true))
+        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
+        XCTAssertEqual(post?.id, "1000")
+        XCTAssertEqual(post?.medias?.count, 1)
+    }
+
+    /// **回归**：引用在 `result.quoted_status_result`（直接子键），必须解析出来
+    func testQuotedPostFromDirectKeyParsed() {
+        let quoted: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "2000",
+            "legacy": ["full_text": "被引用的推文",
+                       "created_at": "Sat Jan 20 15:15:36 +0000 2024"] as [String: Any],
+        ]
+        let json = detailJSON(focalResult: focal(hasMedia: false, quoted: quoted))
+        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
+        XCTAssertEqual(post?.id, "1000")
+        XCTAssertNotNil(post?.quotedPost, "引用必须从 result 直接子键解析出来")
+        XCTAssertEqual(post?.quotedPost?.value.id, "2000")
+        XCTAssertEqual(post?.quotedPost?.value.fullText, "被引用的推文")
+    }
+
+    /// focal entry 不在首位时也要能取到（顺序不应影响）
+    func testFocalFoundRegardlessOfEntryOrder() {
+        let json: [String: Any] = ["data": ["threaded_conversation_with_injections_v2": [
+            "instructions": [[
+                "type": "TimelineAddEntries",
+                "entries": [
+                    ["entryId": "conversationthread-9999",
+                     "content": ["items": [["item": ["itemContent": ["tweet_results": ["result": replyWithMedia()]]]]]]],
+                    ["entryId": "tweet-1000",
+                     "content": ["itemContent": ["tweet_results": ["result": focal(hasMedia: false)]]]],
+                ],
+            ]],
+        ]]]
+        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
+        XCTAssertEqual(post?.id, "1000")
+    }
+
+    /// 目标推文不存在时应返回 nil（让调用方报错），**不得**退化成评论区推文
+    func testMissingFocalReturnsNilNotReply() {
+        let json = detailJSON(focalResult: focal(hasMedia: true))
+        let post = TwitterAPI.extractFocalTweet(json: json, id: "12345")
+        XCTAssertNil(post, "找不到 focal 时应返回 nil，而不是返回评论区推文")
+    }
+
+    /// 兼容 legacy 路径（部分响应把引用放在 legacy 下）
+    func testQuotedFromLegacyPathStillWorks() {
+        var legacy: [String: Any] = ["full_text": "主推文", "created_at": "Sat Jan 20 15:15:36 +0000 2024"]
+        legacy["quoted_status_result"] = ["result": [
+            "__typename": "Tweet", "rest_id": "3000",
+            "legacy": ["full_text": "legacy 路径的引用"] as [String: Any],
+        ] as [String: Any]]
+        let result: [String: Any] = [
+            "__typename": "Tweet", "rest_id": "1000", "legacy": legacy,
+        ]
+        let post = TwitterAPI.mapTwitterPost(result)
+        XCTAssertEqual(post?.quotedPost?.value.id, "3000",
+                       "legacy 路径也应兼容（部分响应版本如此）")
     }
 }
