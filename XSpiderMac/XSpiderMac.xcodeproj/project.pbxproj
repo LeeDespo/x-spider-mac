@@ -8,9 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		000A80B75B44F4533CF03039 /* AppDirectories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A6B14AF6CFCF99A2703814 /* AppDirectories.swift */; };
+		0437D649EA3532D1E1F60A9B /* TranslationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4EBAB7F6DF06D7D56186F2 /* TranslationStore.swift */; };
 		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
 		0F47BB2443DF850442B690E6 /* CookieLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */; };
+		11D8850DCA918D37D7CAA6A4 /* TranslatableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06EB16B79AA2B554F917225 /* TranslatableText.swift */; };
 		157A8BC0BB28D7BB7F4A1762 /* SelectiveDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9584DB531B7E025682E82DD2 /* SelectiveDownloadSheet.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
 		19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */; };
@@ -109,6 +111,7 @@
 		29B9F72E780FE56434B59E8A /* HomeTimelineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTimelineStore.swift; sourceTree = "<group>"; };
 		2B628263D9561601F809C4F8 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		2C67A4155E3A3ADB82010417 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		2E4EBAB7F6DF06D7D56186F2 /* TranslationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationStore.swift; sourceTree = "<group>"; };
 		3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollWheelCatcher.swift; sourceTree = "<group>"; };
 		3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacTests.swift; sourceTree = "<group>"; };
 		491496E19FE861DE65FB5614 /* WindowConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowConfig.swift; sourceTree = "<group>"; };
@@ -158,6 +161,7 @@
 		D591D72697C9E0A53F5DE3B4 /* QuotedPostCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotedPostCard.swift; sourceTree = "<group>"; };
 		D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplateTests.swift; sourceTree = "<group>"; };
 		DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineTests.swift; sourceTree = "<group>"; };
+		E06EB16B79AA2B554F917225 /* TranslatableText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslatableText.swift; sourceTree = "<group>"; };
 		E39372895FAA6B9A4C468E94 /* SyncView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncView.swift; sourceTree = "<group>"; };
 		E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationItem.swift; sourceTree = "<group>"; };
 		E70DBBE98EADA3D2FD08805F /* NumberStepperField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberStepperField.swift; sourceTree = "<group>"; };
@@ -228,6 +232,7 @@
 				9400B7A22AAE4F79E7F30449 /* SettingsView.swift */,
 				2C67A4155E3A3ADB82010417 /* SidebarView.swift */,
 				E39372895FAA6B9A4C468E94 /* SyncView.swift */,
+				E06EB16B79AA2B554F917225 /* TranslatableText.swift */,
 				9581358135FD0DE6D9D57B4A /* WaterfallLayout.swift */,
 			);
 			path = Views;
@@ -358,6 +363,7 @@
 				29B9F72E780FE56434B59E8A /* HomeTimelineStore.swift */,
 				BB8EEDF1ACB6AD7671621145 /* SettingsStore.swift */,
 				17C8CCC2EAAB122A6FF0E343 /* SyncStore.swift */,
+				2E4EBAB7F6DF06D7D56186F2 /* TranslationStore.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -523,6 +529,8 @@
 				5A10313AC85910D71F6B950B /* String+Path.swift in Sources */,
 				DFE2F534E1C4BE0F7D032E38 /* SyncStore.swift in Sources */,
 				9EFAD365062561FEB3E4076E /* SyncView.swift in Sources */,
+				11D8850DCA918D37D7CAA6A4 /* TranslatableText.swift in Sources */,
+				0437D649EA3532D1E1F60A9B /* TranslationStore.swift in Sources */,
 				EA5C133940AF31C444504ADE /* TwitterAPI.swift in Sources */,
 				89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */,
 				C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */,
@@ -619,7 +627,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac.tests;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 6.0;
@@ -643,7 +651,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;
@@ -662,7 +670,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac.tests;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 6.0;
@@ -686,7 +694,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;

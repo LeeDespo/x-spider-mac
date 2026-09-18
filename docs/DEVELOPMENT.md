@@ -298,3 +298,58 @@ Button(L("发送")) {}                              // 空实现
 **明确约定：不为版本差异写降级/隐藏分支。** 支持范围就是 14.4+，
 直接用满足该版本的 API 即可。不要加"旧系统隐藏按钮"或"回退旧实现"这类代码——
 那会增加维护面、且无法在本机测试（本机系统远高于 14.4）。
+
+---
+
+## 8. 翻译（系统框架，不消耗 X 配额）
+
+**最低系统版本因此为 macOS 15.0**（`Translation.framework` 的要求）。
+
+### 8.1 为什么用系统翻译
+
+| 方案 | 结论 |
+|---|---|
+| **系统 `Translation.framework`** | ✅ 采用。**零 X 配额**、语言包下载后可离线、无需维护 queryId |
+| 抓 X 的翻译 GraphQL 端点 | ❌ 需自行获取 queryId（随改版失效），每次翻译消耗配额、可能诱发 429 |
+
+项目一直在对抗 429 限流，**"不消耗 X 配额"是决定性理由**。
+翻译全程不经 `RequestGate`，也不产生任何 X 请求。
+
+### 8.2 Swift 6 严格并发的坑（重写这块务必看）
+
+`TranslationSession` **未标 `Sendable`**，而它的 `translate` 是 `nonisolated` 方法。
+在 Swift 6 下，只要「session 与非隔离域状态出现在同一段代码」就会被判定为
+跨隔离域发送，报：
+
+```
+sending 'session' risks causing data races [#RegionIsolation::SendingRisksDataRace]
+```
+
+踩过的三种写法**都不行**：把 session 传进 `@MainActor` 的 store、
+在 `translationTask` 闭包内 `await MainActor.run`、把翻译抽成 `nonisolated` 静态函数
+（反而把主 actor 隔离的 session 送出去）。
+
+**正确做法**：
+1. `@preconcurrency import Translation` —— 这是官方为"尚未适配严格并发的系统框架"
+   提供的退路，也是这个问题的**根因解法**；
+2. `translationTask` 挂在一个**只持有 config/text/key 三个值**的极简子视图上
+   （本项目的 `TranslationRunner`），闭包不捕获外层视图状态；
+3. 会话之外的状态读写走 `MainActor.run`，且**不与 session 同处一个 await 链**。
+
+### 8.3 交互与状态
+
+- `TranslationStore`（`@MainActor @Observable`）：译文缓存、翻译中、显示状态、错误。
+  key 用推文 ID（同一条正文只翻一次，来回切换不重算）。
+- 每处正文（时间线卡 / 详情卡 / 每条评论）都带「翻译 / 显示原文」按钮。
+- **必须新建 `TranslationSession.Configuration` 实例**才能触发会话；复用同一实例不会重新执行。
+- 目标语言变更时要 `TranslationStore.clearAll()` —— 旧译文对应旧目标语言。
+
+### 8.4 自动翻译的判据
+
+**只翻译"语言已知且 ≠ 目标语言"的推文**：
+
+- `TwitterPost.lang` 来自 GraphQL `legacy.lang`，**无需额外请求**；
+- `lang` 为 nil/空时**不自动翻译**（不猜语言，交给用户手点）；
+- 语言比对只比主语言子标签（`zh-Hans` 与 `zh` 视为同语言），见 `isSameLanguage`。
+
+自动翻译**默认关闭**：默认开启会让每次浏览都触发翻译，打扰且耗电。

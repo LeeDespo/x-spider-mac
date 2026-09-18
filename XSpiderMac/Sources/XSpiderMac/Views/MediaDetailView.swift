@@ -272,11 +272,9 @@ struct MediaDetailView: View {
             // 冲突（两层都想吃掉剩余空间），高度协商异常时内容被压扁或溢出。
             // 让它自然占据剩余空间，上下限统一由外层 frame 决定。
             ScrollView {
-                Text(post.fullText ?? "")
-                    .font(.callout)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                TranslatableText(text: post.fullText ?? "",
+                                 translationKey: post.id,
+                                 lang: post.lang)
             }
             .layoutPriority(1)
 
@@ -388,11 +386,11 @@ struct MediaDetailView: View {
                                     }
                                     .contentShape(Rectangle())
                                     .onTapGesture { onSearchUser?(reply.user.screenName) }
-                                    // 评论过长时折叠（列表里逐条全展开会把滚动条拉得很长）
-                                    ExpandableText(text: reply.fullText ?? "",
-                                                   collapsedLines: 4,
-                                                   expandThreshold: 140,
-                                                   font: .callout)
+                                    // 评论过长时折叠 + 可翻译
+                                    TranslatableText(text: reply.fullText ?? "",
+                                                     translationKey: reply.id,
+                                                     lang: reply.lang,
+                                                     collapsedLines: 4)
                                 }
                             }
                         }

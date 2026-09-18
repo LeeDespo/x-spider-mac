@@ -14,6 +14,7 @@ struct SettingsView: View {
             engineSection
             downloadSection
             homeSection
+            translationSection
             rateLimitSection
             proxySection
             uiSection
@@ -364,6 +365,49 @@ struct SettingsView: View {
     }
 
     // MARK: - 主页设置
+
+    // MARK: - 翻译
+
+    /// 翻译设置。使用系统 Translation 框架（**不消耗 X API 配额**）。
+    private var translationSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.autoTranslateEnabled },
+                set: { settingsStore.settings.app.autoTranslate = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("自动翻译"))
+                    InfoHint(text: L("开启后，仅当推文语言与目标语言不同时才自动翻译（语言未知的不翻译，由你手动点）。\n使用系统翻译，不消耗 X 的接口配额。"))
+                }
+            }
+
+            Picker(L("翻译目标语言"), selection: Binding(
+                get: { settingsStore.settings.translateTargetLanguageRaw },
+                set: { newValue in
+                    settingsStore.settings.app.translateTargetLanguage = newValue.isEmpty ? nil : newValue
+                    // 换目标语言后旧译文作废（它们对应旧语言）
+                    TranslationStore.shared.clearAll()
+                }
+            )) {
+                Text(L("跟随系统")).tag("")
+                Text("简体中文").tag("zh-Hans")
+                Text("繁體中文").tag("zh-Hant")
+                Text("English").tag("en")
+                Text("日本語").tag("ja")
+                Text("한국어").tag("ko")
+                Text("Français").tag("fr")
+                Text("Deutsch").tag("de")
+                Text("Español").tag("es")
+                Text("Русский").tag("ru")
+            }
+
+            Text(L("首次翻译某语言时，系统会提示下载语言包；下载后可离线翻译。"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        } header: {
+            Label(L("翻译"), systemImage: "character.book.closed")
+        }
+    }
 
     private var homeSection: some View {
         Section {

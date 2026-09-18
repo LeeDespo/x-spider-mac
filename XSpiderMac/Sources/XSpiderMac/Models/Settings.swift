@@ -209,6 +209,10 @@ struct AppSettings: Codable, Sendable {
     var glassBlur: Int?
     /// 限流缓解设置
     var rateLimit: RateLimitSettings?
+    /// 翻译目标语言（BCP-47，空 = 跟随系统）
+    var translateTargetLanguage: String?
+    /// 自动翻译（仅翻译语言与目标语言不同的推文）
+    var autoTranslate: Bool?
 }
 
 struct Settings: Codable, Sendable {
@@ -303,6 +307,25 @@ struct Settings: Codable, Sendable {
     var cdnMaxConcurrent: Int { min(10, max(1, app.rateLimit?.cdnMaxConcurrent ?? 1)) }
     /// CDN 限流后的暂停秒数（默认 120，钳制 10–3600）
     var cdnCooldownSeconds: Int { min(3600, max(10, app.rateLimit?.cdnCooldownSeconds ?? 120)) }
+
+    // MARK: - 翻译（nil 安全）
+
+    /// 目标语言：空/未设 = 跟随系统语言
+    var translateTargetLanguage: Locale.Language {
+        if let raw = app.translateTargetLanguage, !raw.isEmpty {
+            return Locale.Language(identifier: raw)
+        }
+        return Locale.current.language
+    }
+
+    /// 目标语言的存储原值（设置页 Picker 绑定用，空字符串表示跟随系统）
+    var translateTargetLanguageRaw: String {
+        get { app.translateTargetLanguage ?? "" }
+        set { app.translateTargetLanguage = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// 自动翻译（默认关：默认开启会在每次浏览时都触发翻译，打扰且耗电）
+    var autoTranslateEnabled: Bool { app.autoTranslate ?? false }
 
     /// 有效引擎（auto 时按阈值分流，见 DownloadStore.engineFor）
     var engineMode: DownloadEngine {

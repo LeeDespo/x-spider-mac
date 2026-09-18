@@ -612,3 +612,47 @@ final class RetweetParsingTests: XCTestCase {
         }
     }
 }
+
+/// 翻译的语言判定契约（自动翻译"只翻非目标语言"的核心判据）
+@MainActor
+final class TranslationLanguageTests: XCTestCase {
+
+    /// 主语言子标签比对：忽略地区/书写变体
+    func testSameLanguageIgnoresRegionAndScript() {
+        // zh-Hans 与 zh 视为同语言（只比主标签）
+        XCTAssertTrue(TranslationStore.isSameLanguage("zh-Hans", Locale.Language(identifier: "zh")))
+        XCTAssertTrue(TranslationStore.isSameLanguage("zh", Locale.Language(identifier: "zh-Hans")))
+        // en-US 与 en 同语言
+        XCTAssertTrue(TranslationStore.isSameLanguage("en-US", Locale.Language(identifier: "en")))
+        // 不同语言必须判为不同（否则该翻的不翻）
+        XCTAssertFalse(TranslationStore.isSameLanguage("ja", Locale.Language(identifier: "zh-Hans")))
+        XCTAssertFalse(TranslationStore.isSameLanguage("en", Locale.Language(identifier: "ja")))
+    }
+
+    /// 空语言码不应被误判为"同语言"（否则会漏翻）
+    func testEmptyLanguageIsNotSame() {
+        XCTAssertFalse(TranslationStore.isSameLanguage("", Locale.Language(identifier: "en")))
+    }
+
+    /// 语言未知（nil）时不自动翻译 —— 按用户决策：不确定就交给手动
+    func testUnknownLanguageDoesNotAutoTranslate() {
+        // 语言未知 → 判据第一步就应返回 false（不猜）
+        XCTAssertFalse(TranslationStore.shouldAutoTranslate(lang: nil))
+        XCTAssertFalse(TranslationStore.shouldAutoTranslate(lang: ""))
+    }
+
+    /// 自动翻译默认关闭：开启会让每次浏览都触发翻译，打扰且耗电
+    func testAutoTranslateDefaultsOff() {
+        XCTAssertFalse(SettingsStore.shared.settings.autoTranslateEnabled,
+                       "自动翻译默认应为关")
+    }
+
+    /// 目标语言默认跟随系统
+    func testTargetLanguageDefaultsToSystem() {
+        let settings = SettingsStore.shared.settings
+        XCTAssertEqual(settings.translateTargetLanguageRaw, "",
+                       "未设置时应为空（表示跟随系统）")
+        XCTAssertEqual(settings.translateTargetLanguage.languageCode,
+                       Locale.current.language.languageCode)
+    }
+}

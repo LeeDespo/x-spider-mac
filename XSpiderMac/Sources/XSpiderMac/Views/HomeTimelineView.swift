@@ -367,8 +367,9 @@ struct TimelinePostCard: View {
             }
 
             if let text = post.fullText, !text.isEmpty {
-                // 长文可展开（原先 lineLimit(6) 静默截断且无展开入口）
-                ExpandableText(text: text, collapsedLines: 6)
+                // 长文可展开（原先 lineLimit(6) 静默截断且无展开入口）+ 可翻译
+                TranslatableText(text: text, translationKey: post.id,
+                                 lang: post.lang, collapsedLines: 6)
             }
 
             // 引用推文：缩小内嵌在正文下方。点击打开**被引用推文**的详情，

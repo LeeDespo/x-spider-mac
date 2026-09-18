@@ -34,7 +34,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
   -destination 'platform=macOS,arch=arm64' test
 ```
 
-最低系统要求 macOS 14.4。下载引擎二进制（`XSpiderMac/Resources/Binaries/aria2next`）随仓库提供。
+最低系统要求 macOS 15.0（翻译功能依赖系统 Translation 框架）。下载引擎二进制（`XSpiderMac/Resources/Binaries/aria2next`）随仓库提供。
 
 ## 仓库结构
 
