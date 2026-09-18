@@ -331,6 +331,22 @@ struct TimelinePostCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // 转推标签：「某某 转推」。主体是原作者的正文，本行说明由谁转发
+            // （与 X 网页端一致；由 extractPostsFromTweetEntries 展平时填充）
+            if let by = post.retweetedBy {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.2.squarepath")
+                        .font(.caption2.weight(.semibold))
+                    // 用占位符而非字符串插值：插值会让整串成为查表 key，永远命中不到翻译表
+                    Text(L("%@ 转推").replacingOccurrences(of: "%@", with: by.name))
+                        .font(.caption2)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+                .onTapGesture { onAvatar?() }   // 点标签同样可跳到转发者
+            }
+
             // 作者行 + 正文
             HStack(spacing: 10) {
                 CachedAvatarView(urlString: post.user.avatar, size: 38)

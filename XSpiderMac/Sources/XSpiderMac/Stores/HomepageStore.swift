@@ -258,7 +258,11 @@ final class HomepageStore {
     private func fetchPage(userId: String, cursor: String?) async throws -> (posts: [TwitterPost], cursor: String?) {
         if filter.source == .tweets {
             // 展示用不过滤无媒体推文(requireMedia:false);下载过滤在创建任务里做
-            return try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: cursor, requireMedia: false)
+            // 展示路径：保留转推（卡片顶部显示「某某 转推」）；
+            // 爬虫路径不传此参数（默认过滤），避免转推媒体与原创重复下载
+            return try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: cursor,
+                                                             requireMedia: false,
+                                                             includeRetweets: true)
         }
         return try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: cursor)
     }

@@ -479,7 +479,8 @@ actor TwitterAPI {
         // requireMedia:false —— 返回全部推文，由展示层区分：
         // 「推文」分段显示全部（含纯文字），「媒体」分段从同一份数据里取有媒体的瀑布流。
         // 若在此过滤，「推文」分段就只剩带媒体的推文，两个分段内容会完全一样。
-        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
+        // includeRetweets: true —— 主页时间线是展示路径，要显示「某某 转推」标签
+        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: false, includeRetweets: true)
         let bottom = Self.extractBottomCursor(instructions)
         return (posts, bottom)
     }
@@ -533,7 +534,10 @@ actor TwitterAPI {
     /// 上游 UserTweets（queryId 9zyyd1hebl7oNWIPdA8HRw）。
     /// 与 UserMedia 不同：entries 里 tweet-* 是单推文 entry，profile-conversation 是会话模块（其 items 里含多推文）。
     /// requireMedia=false 时不过滤无媒体推文（搜索页「推文时间线」要展示全部推文；爬虫保持 true 只要有媒体的）。
-    func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20, requireMedia: Bool = true) async throws -> (posts: [TwitterPost], cursor: String?) {
+    /// - Parameter includeRetweets: 展示路径传 true（要显示「某某 转推」）；
+    ///   爬虫路径保持默认 false（转推媒体与原创重复，避免重复下载）。
+    func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20,
+                       requireMedia: Bool = true, includeRetweets: Bool = false) async throws -> (posts: [TwitterPost], cursor: String?) {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/9zyyd1hebl7oNWIPdA8HRw/UserTweets"
         let url = URL(string: "https://\(host)\(path)")!
@@ -562,7 +566,7 @@ actor TwitterAPI {
             throw TwitterAPIError.parseFailure
         }
         let instructions = Self.path(json, ["data", "user", "result", "timeline_v2", "timeline", "instructions"]) as? [[String: Any]] ?? []
-        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: requireMedia)
+        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: requireMedia, includeRetweets: includeRetweets)
         let cursor = Self.extractBottomCursor(instructions)
         return (posts, cursor)
     }
@@ -613,8 +617,15 @@ actor TwitterAPI {
     }
 
     /// UserTweets 专用：entryId 以 tweet- 开头取单推文；profile-conversation- 开头取会话内全部推文。
-    /// 过滤转推（retweeted_status_result 存在）；requireMedia=false 时不滤无媒体推文（评论面板要纯文字回复）。
-    static func extractPostsFromTweetEntries(_ instructions: [[String: Any]], requireMedia: Bool = true) -> [TwitterPost] {
+    /// requireMedia=false 时不滤无媒体推文（评论面板要纯文字回复）。
+    ///
+    /// - Parameter includeRetweets: 是否保留转推条目。
+    ///   **展示路径传 true**（推文时间线要显示「某某 转推」），
+    ///   **爬虫/下载路径保持 false**（转推指向的媒体与原创重复，保留会重复下载）。
+    ///   默认 false，既有调用方（爬虫）行为不变。
+    static func extractPostsFromTweetEntries(_ instructions: [[String: Any]],
+                                            requireMedia: Bool = true,
+                                            includeRetweets: Bool = false) -> [TwitterPost] {
         var rawResults: [[String: Any]] = []
 
         guard let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
@@ -640,8 +651,29 @@ actor TwitterAPI {
             }
         }
 
-        var filtered = rawResults
-            .filter { !Self.hasPath($0, ["legacy", "retweeted_status_result"]) }
+        // 转推：按参数保留或过滤。保留时**展平**成"被转发的原推文 + __retweeted_by（转发者）"，
+        // 与 X 网页端一致：卡片主体是原作者的正文，顶部标注由谁转推。
+        // 展平后正文明细/媒体/作者都来自原推文，后续 requireMedia 等判定自然适用。
+        var flattened: [[String: Any]] = []
+        for result in rawResults {
+            // 注意 X 在不同端点上用了两种包裹键：`retweeted_status_result.result`
+            // 与 `retweeted_status_result.tweet`（后者见于部分时间线响应，实测存在）。
+            // 只认一种会把另一种当普通推文放行，导致转推混入、媒体重复下载。
+            let retweeted = (Self.path(result, ["legacy", "retweeted_status_result", "result"]) as? [String: Any])
+                ?? (Self.path(result, ["legacy", "retweeted_status_result", "tweet"]) as? [String: Any])
+            if let retweeted {
+                guard includeRetweets else { continue }   // 爬虫路径：丢弃转推
+                let original = Self.unwrapVisibility(retweeted)
+                var merged = original
+                // 转发者 = 外层条目的作者；带过去供上层映射为 retweetedBy
+                merged["__retweeted_by"] = Self.path(result, ["core", "user_results", "result"])
+                flattened.append(merged)
+            } else {
+                flattened.append(result)
+            }
+        }
+
+        var filtered = flattened
         if requireMedia {
             filtered = filtered.filter { Self.hasPath($0, ["legacy", "entities", "media"]) }
         }
@@ -734,7 +766,9 @@ actor TwitterAPI {
             bookmarkCount: legacy["bookmark_count"] as? Int,
             bookmarked: legacy["bookmarked"] as? Bool,
             medias: Self.mapTwitterMedias(entities["media"] as? [[String: Any]], createdAt: TwitterDate.parse(legacy["created_at"] as? String)),
-            quotedPost: includeQuoted ? Self.mapQuotedPost(item) : nil
+            quotedPost: includeQuoted ? Self.mapQuotedPost(item) : nil,
+            // 转推的转发者：由 extractPostsFromTweetEntries 在展平时塞入（内部键，非 X 字段）
+            retweetedBy: (item["__retweeted_by"] as? [String: Any]).flatMap(Self.mapTwitterUser)
         )
     }
 

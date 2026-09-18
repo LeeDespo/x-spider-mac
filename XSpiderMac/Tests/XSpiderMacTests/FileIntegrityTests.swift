@@ -521,3 +521,94 @@ final class QuotedPostParsingTests: XCTestCase {
         XCTAssertEqual(back.quotedPost?.value.fullText, "内层")
     }
 }
+
+/// 转推解析契约（展示保留 / 爬虫过滤）
+final class RetweetParsingTests: XCTestCase {
+
+    /// 构造一条转推 entry：外层是转发者，内层 retweeted_status_result 是原推文
+    private func retweetInstructions() -> [[String: Any]] {
+        let original: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "orig1",
+            "legacy": [
+                "full_text": "原推文内容",
+                "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+                "entities": ["media": [["id_str": "m1", "type": "photo",
+                                        "media_url_https": "https://pbs.twimg.com/media/a.jpg"]]],
+            ] as [String: Any],
+            "core": ["user_results": ["result": [
+                "rest_id": "author1",
+                "legacy": ["screen_name": "author", "name": "原作者",
+                           "profile_image_url_https": "https://x.com/a.jpg"],
+            ] as [String: Any]]] as [String: Any],
+        ]
+        let retweetEntry: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "rt1",
+            "legacy": ["full_text": "RT @author: 原推文内容",
+                       "retweeted_status_result": ["result": original] as [String: Any]] as [String: Any],
+            "core": ["user_results": ["result": [
+                "rest_id": "retweeter1",
+                "legacy": ["screen_name": "retweeter", "name": "转发者",
+                           "profile_image_url_https": "https://x.com/r.jpg"],
+            ] as [String: Any]]] as [String: Any],
+        ]
+        return [[
+            "type": "TimelineAddEntries",
+            "entries": [
+                ["entryId": "tweet-rt1",
+                 "content": ["itemContent": ["tweet_results": ["result": retweetEntry]]]],
+            ] as [[String: Any]],
+        ]]
+    }
+
+    /// 展示路径：保留转推，主体为原作者，并带上转发者
+    func testRetweetKeptOnDisplayPath() {
+        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(),
+                                                           requireMedia: false,
+                                                           includeRetweets: true)
+        XCTAssertEqual(posts.count, 1, "展示路径应保留转推")
+        let p = posts[0]
+        XCTAssertEqual(p.id, "orig1", "主体应为被转发的原推文")
+        XCTAssertEqual(p.user.screenName, "author", "作者应为原作者，而非转发者")
+        XCTAssertEqual(p.fullText, "原推文内容")
+        XCTAssertEqual(p.retweetedBy?.screenName, "retweeter", "应带出转发者用于标签")
+    }
+
+    /// 爬虫路径（默认）：丢弃转推，避免重复下载同一媒体
+    func testRetweetDroppedOnCrawlerPath() {
+        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(),
+                                                           requireMedia: false,
+                                                           includeRetweets: false)
+        XCTAssertTrue(posts.isEmpty, "爬虫路径必须丢弃转推（媒体与原创重复）")
+    }
+
+    /// 默认参数必须保持旧行为（既有爬虫调用方不传参数）
+    func testDefaultExcludesRetweets() {
+        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(), requireMedia: false)
+        XCTAssertTrue(posts.isEmpty, "默认应过滤转推以保持既有语义")
+    }
+
+    /// 非转推条目在两条路径下都保留
+    func testNormalTweetKeptOnBothPaths() {
+        let normal: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "n1",
+            "legacy": ["full_text": "普通推文", "created_at": "Sat Jan 20 15:15:36 +0000 2024"] as [String: Any],
+            "core": ["user_results": ["result": [
+                "rest_id": "u1",
+                "legacy": ["screen_name": "u", "name": "U", "profile_image_url_https": "x"],
+            ] as [String: Any]]] as [String: Any],
+        ]
+        let instructions: [[String: Any]] = [[
+            "type": "TimelineAddEntries",
+            "entries": [["entryId": "tweet-n1",
+                         "content": ["itemContent": ["tweet_results": ["result": normal]]]]] as [[String: Any]],
+        ]]
+        for include in [true, false] {
+            let posts = TwitterAPI.extractPostsFromTweetEntries(instructions, requireMedia: false,
+                                                               includeRetweets: include)
+            XCTAssertEqual(posts.count, 1, "普通推文在 includeRetweets=\(include) 下都应保留")
+        }
+    }
+}
