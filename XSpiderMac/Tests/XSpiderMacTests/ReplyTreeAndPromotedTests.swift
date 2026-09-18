@@ -340,6 +340,98 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
         XCTAssertFalse(nodes.contains { ($0.post.fullText ?? "").contains("限時加碼") })
     }
 
+    // MARK: - 评论自带媒体与计数（真实：@leoakok 在 2100550768965423303 下的评论）
+
+    /// 真实形状：`@leoakok`（Leo）的评论带一张照片，且有赞数与回复数。
+    /// 实测 `legacy.favorite_count = 326`、`legacy.reply_count = 3`、
+    /// `legacy.entities.media[0]` 为 947×2048 的 photo。
+    ///
+    /// 回归的是"评论区不显示媒体"：解析层本就该带出 `medias`，
+    /// 之前渲染层完全没画，导致带图评论只剩文字。
+    func testReplyMediaAndCountsAreParsed() {
+        var legacy: [String: Any] = [
+            "full_text": "@TheAppleDesign this ☠️ https://t.co/T2I4ES67Qj",
+            "created_at": "Sat Jan 20 15:15:36 +0000 2024",
+            "favorite_count": 326,
+            "reply_count": 3,
+            "in_reply_to_status_id_str": "2100550768965423303",
+            "in_reply_to_screen_name": "TheAppleDesign",
+            "entities": [
+                "media": [[
+                    "id_str": "2100584214701727780",
+                    "type": "photo",
+                    "media_url_https": "https://pbs.twimg.com/media/HSbGNYhXQAAKuL1.jpg",
+                    "original_info": ["width": 947, "height": 2048] as [String: Any],
+                ] as [String: Any]],
+            ] as [String: Any],
+        ]
+        legacy["lang"] = "en"
+        let result: [String: Any] = [
+            "__typename": "Tweet",
+            "rest_id": "2100584214701727780",
+            "legacy": legacy,
+            "core": ["user_results": ["result": user("leoakok", name: "Leo")] as [String: Any]],
+        ]
+        let ins = instructions([
+            tweetEntry("2100550768965423303", tweet("2100550768965423303", text: "主推文")),
+            threadEntry("2100550768965423303", [result]),
+        ])
+        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "2100550768965423303")
+        let node = nodes.first { $0.post.user.screenName == "leoakok" }
+        XCTAssertNotNil(node, "Leo 的评论必须在结果里")
+        XCTAssertEqual(node?.post.medias?.count, 1, "评论自带的媒体必须解析出来（渲染层才有得画）")
+        XCTAssertEqual(node?.post.medias?.first?.type, .photo)
+        XCTAssertEqual(node?.post.medias?.first?.width, 947)
+        XCTAssertEqual(node?.post.medias?.first?.height, 2048)
+        XCTAssertEqual(node?.post.favoriteCount, 326, "评论点赞数要解析出来")
+        XCTAssertEqual(node?.post.replyCount, 3, "评论的回复数要解析出来")
+        XCTAssertEqual(node?.parentScreenName, "TheAppleDesign")
+    }
+
+    /// 评论缩略图 URL：`/media/` 图片加 `name=small`；非 media 路径（视频封面）原样返回
+    func testReplyThumbnailURLUsesSmallVariant() {
+        let photo = TwitterMedia(
+            id: "m1",
+            url: "https://pbs.twimg.com/media/HSbGNYhXQAAKuL1.jpg",
+            width: 947, height: 2048, type: .photo, videoInfo: nil, createdTime: nil)
+        let url = ReplyMediaThumb.thumbnailURL(for: photo)
+        XCTAssertNotNil(url)
+        XCTAssertTrue(url!.contains("name=small"),
+                      "缩略图必须走 name=small（680px），不能按原图解码，实际: \(url!)")
+
+        // 已有 name 参数时替换而不是追加，避免出现两个 name
+        let already = TwitterMedia(
+            id: "m2",
+            url: "https://pbs.twimg.com/media/x.jpg?name=orig",
+            width: 100, height: 100, type: .photo, videoInfo: nil, createdTime: nil)
+        let replaced = ReplyMediaThumb.thumbnailURL(for: already)!
+        XCTAssertEqual(replaced.components(separatedBy: "name=").count - 1, 1,
+                       "不能出现两个 name 参数：\(replaced)")
+        XCTAssertTrue(replaced.contains("name=small"))
+
+        // 视频封面路径不带 /media/：原样返回，不加 query
+        let video = TwitterMedia(
+            id: "m3",
+            url: "https://pbs.twimg.com/amplify_video_thumb/123/img/x.jpg",
+            width: 100, height: 100, type: .video, videoInfo: nil, createdTime: nil)
+        XCTAssertEqual(ReplyMediaThumb.thumbnailURL(for: video),
+                       "https://pbs.twimg.com/amplify_video_thumb/123/img/x.jpg")
+
+        let noURL = TwitterMedia(id: "m4", url: nil, width: nil, height: nil,
+                                 type: .photo, videoInfo: nil, createdTime: nil)
+        XCTAssertNil(ReplyMediaThumb.thumbnailURL(for: noURL))
+    }
+
+    /// 评论没有媒体时 `medias` 应为 nil（渲染层据此不画缩略图行）
+    func testReplyWithoutMediaHasNilMedias() {
+        let ins = instructions([
+            tweetEntry("1000", tweet("1000")),
+            threadEntry("1000", [tweet("2000", text: "纯文字评论", replyTo: "1000")]),
+        ])
+        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "1000")
+        XCTAssertNil(nodes.first?.post.medias, "无媒体评论不应造出空数组")
+    }
+
     // MARK: - 评论排序
 
     private func node(_ id: String, likes: Int, minutesAgo: Int, depth: Int = 1) -> ReplyNode {

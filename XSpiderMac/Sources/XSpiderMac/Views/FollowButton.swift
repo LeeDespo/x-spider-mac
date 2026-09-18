@@ -27,9 +27,14 @@ struct FollowButton: View {
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(following ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor.opacity(0.18)),
+                // 强调色用在**背景**上，图案/文字用白色——
+                // 而不是"淡色底 + 强调色文字"那种弱化写法：
+                // 「关注」是卡片上的主操作，实心强调色才是它的视觉权重。
+                // 「已关注」是中性状态（点它=取关），保持淡底灰字，不抢视线。
+                .background(following ? AnyShapeStyle(.quaternary)
+                                      : AnyShapeStyle(Color.accentColor),
                             in: Capsule())
-                .foregroundStyle(following ? Color.secondary : Color.accentColor)
+                .foregroundStyle(following ? Color.secondary : Color.white)
         }
         .buttonStyle(.plain)
         .disabled(busy)

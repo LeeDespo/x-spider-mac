@@ -113,17 +113,18 @@ struct MediaDetailView: View {
     // MARK: - 左：媒体卡
 
     /// 返回按钮：与点赞/书签/分享同一行，靠右。
-    /// 图案为返回箭头、用**强调色**（用户要求）——它与「关闭」语义不同：
-    /// 点引用推文进来后按它回到原推文，点头像搜用户后按它回到原详情。
+    ///
+    /// **强调色用在背景上**（圆底填强调色 + 白色图案），而不是把图案本身染成强调色——
+    /// 后者在玻璃底上对比度不足、也不像"主操作"。这样返回是这一行里最醒目的按钮。
     private var backButton: some View {
         Button {
             back()
         } label: {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.white)
                 .frame(width: 36, height: 36)
-                .liquidGlass(interactive: true, cornerRadius: 18)
+                .background(Circle().fill(Color.accentColor))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -463,10 +464,78 @@ struct MediaDetailView: View {
                                      translationKey: node.post.id,
                                      lang: node.post.lang,
                                      collapsedLines: 4)
+
+                    // 评论自带的媒体缩略图。
+                    // 此前**完全没有渲染**——带图评论（如 @leoakok 那张照片）只显示文字，
+                    // 用户会以为图片丢了。
+                    if let medias = node.post.medias, !medias.isEmpty {
+                        replyMediaRow(medias)
+                    }
+
+                    // 计数行：点赞数 + 评论数（用户要求）。
+                    // 用 `Label` + `.titleAndIcon`，与推文卡计数行视觉一致。
+                    HStack(spacing: 14) {
+                        Label("\(node.post.favoriteCount ?? 0)", systemImage: "heart")
+                        Label("\(node.post.replyCount ?? 0)", systemImage: "bubble.right")
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 1)
                 }
             }
         }
         .padding(.leading, CGFloat(indent) * 16)
+    }
+
+    /// 评论里的媒体缩略图行。
+    ///
+    /// **单张保持宽高比**（与 X 一致）：像 @leoakok 那张 947×2048 的竖长图，
+    /// 方形裁切只剩中间一条，看不出是什么。
+    /// **多张用小方格**（最多 4 张），尺寸必须收着算：
+    /// 卡片宽 410，减去内边距与缩进（最深 48）、头像（30+10）后约 294pt，
+    /// 4×64 + 3×4 = 268 才放得下；用 84 会溢出被裁。
+    ///
+    /// 解码一律走 `ImageCache` + 目标尺寸降采样：评论一次可显示几十条，
+    /// 按原图解码（可能 2048px）会拖慢滚动。
+    @ViewBuilder
+    private func replyMediaRow(_ medias: [TwitterMedia]) -> some View {
+        if medias.count == 1, let only = medias.first {
+            ReplyMediaThumb(media: only, decodePixelSize: 320)
+                .aspectRatio(only.aspectRatioValue, contentMode: .fit)
+                .frame(maxWidth: 168, maxHeight: 168, alignment: .leading)
+        } else {
+            HStack(spacing: 4) {
+                ForEach(Array(medias.prefix(4).enumerated()), id: \.offset) { index, media in
+                    ReplyMediaThumb(media: media, decodePixelSize: 180)
+                        .frame(width: 64, height: 64)
+                        .overlay(alignment: .bottomTrailing) {
+                            // 视频/GIF 角标：静态缩略图看不出是视频
+                            if media.type == .video || media.type == .gif {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(3)
+                                    .background(.black.opacity(0.55), in: Circle())
+                                    .padding(3)
+                            }
+                        }
+                        // 第 4 张且有更多时，角标出剩余数量
+                        .overlay(alignment: .topTrailing) {
+                            if index == 3, medias.count > 4 {
+                                Text("+\(medias.count - 4)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(.black.opacity(0.6), in: Capsule())
+                                    .padding(2)
+                            }
+                        }
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     // MARK: - 动作
@@ -556,6 +625,58 @@ struct MediaDetailView: View {
             return
         }
         mediaIndex = newIndex
+    }
+}
+
+/// 评论里的单张媒体缩略图。
+///
+/// 与媒体网格同样的做法：URL 加 `?name=small`（实际约 680px 宽，不是 120px），
+/// 再由 `ImageCache` 在后台线程**按目标尺寸降采样解码**并做磁盘/内存双缓存。
+/// 评论可能一次显示几十条，走缓存后滚动时零重复解码。
+///
+/// 只负责取图与裁形，**尺寸与比例由调用方决定**（单张保比例、多张方格）。
+struct ReplyMediaThumb: View {
+    let media: TwitterMedia
+    /// 解码降采样的最大边长（由展示尺寸决定，避免按原图解码）
+    var decodePixelSize: Int = 240
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(.quaternary.opacity(0.4))
+                    .overlay {
+                        Image(systemName: media.type == .photo ? "photo" : "video.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .help(L("评论附带的媒体"))
+        .task(id: media.id) {
+            guard image == nil, let urlString = Self.thumbnailURL(for: media) else { return }
+            image = await ImageCache.shared.image(for: urlString,
+                                                 category: .mediaThumbnails,
+                                                 maxPixelSize: decodePixelSize)
+        }
+    }
+
+    /// 缩略图 URL：图片加 `name=small`；视频封面路径不带 /media/，原样使用
+    static func thumbnailURL(for media: TwitterMedia) -> String? {
+        guard let raw = media.url, let url = URL(string: raw) else { return nil }
+        guard url.path.contains("/media/"),
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return raw }
+        var items = comps.queryItems?.filter { $0.name != "name" } ?? []
+        items.append(URLQueryItem(name: "name", value: "small"))
+        comps.queryItems = items
+        return comps.url?.absoluteString ?? raw
     }
 }
 

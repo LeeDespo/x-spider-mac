@@ -62,6 +62,12 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
 11. **原生焦点环画在 SwiftUI 之上**：搜索框的蓝色焦点环会盖住详情浮层，
     `zIndex` 无效。用 `.textFieldStyle(.plain)` + `.focusEffectDisabled()`，
     并在浮层出现时广播 `.homeResignSearchFocus` 交出焦点。
+12. **评论媒体不是"没有数据"，是渲染层没画**：`legacy.entities.media` 早已
+    映射进 `post.medias`。遇到"某功能好像不存在"，先分清**解析缺失**还是**渲染缺失**。
+    评论缩略图：单张保宽高比、多张 64pt 方格（4 张才放得进 410pt 卡片），
+    一律走 `ImageCache` 降采样。
+13. **强调色用在按钮背景上**，不是把图标/文字染成强调色
+    （回看 `docs/DEVELOPMENT.md` §10.3）。行内文字型小操作仍可用强调色文字。
 
 ## 构建与验证
 
@@ -84,6 +90,9 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 
 ## 其他约定
 
+- **不要截图 / 录屏做视觉验收**（用户明确要求）：太耗 token。
+  需要"看一眼"的验收由用户自己做。改完 UI 后说明改了什么、请用户确认，
+  自己则用单测 + 真实 API 响应核对正确性。
 - 代码注释与 UI 文案以中文为主（与现状一致）；L10n 走 `Support/L10n.swift` 的 `L()`。
 - 状态一律放 `@Observable` Store（`Stores/`），视图 `@State` 只放纯 UI 态；单例 `*.shared`。
 - 下载引擎为内置 aria2Next（`Services/Aria2Engine.swift`），不引入其它下载器。
