@@ -43,6 +43,25 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
 4. **空页必须终结**：上游 getUserMedias 解析出 0 条时返回 `cursor: null`（到底信号）。
 5. **图片按 `?name=small` 全尺寸解码**：small 是 680px 宽（不是 120px）。缩略图必须离主线程、
    按目标尺寸降采样解码，并做缓存；否则网格滑动卡顿。
+6. **评论区混进广告**：TweetDetail 的 `conversationthread-*` 里会插广告，
+   判据是 `item.itemContent.promotedMetadata` 非空（实测 3 条/会话）。
+   三个解析入口（`extractPostsFromModuleInstructions` / `extractPostsFromTweetEntries` /
+   `extractReplyNodes`）都要过滤，漏一个就会在对应界面露出广告。
+7. **评论扁平化会丢掉父指针**：`legacy.in_reply_to_status_id_str` 与
+   `in_reply_to_screen_name` 是响应里**现成**的，别再压平成 `[TwitterPost]`。
+   层级用 `extractReplyNodes`；孤儿（父不在本页）**不能丢**，要标 `isPartialParent`。
+   「回复 @xxx」必须用**被回复者**，不是本条作者。
+8. **浮层内换推文必须 `.id(post.id)`**：不加的话 SwiftUI 复用视图实例，
+   `@State`（replies/liked/mediaIndex）串味、`.task` 不重跑，
+   表现为"跳到引用推文后内容还是上一条的"。（代价见下条）
+9. **别为回退重复请求**：`.id` 重建会重跑 `.task` → 再请求一次 TweetDetail。
+   回看已看过的推文走 `TweetDetailCache`（TTL 5 分钟）；
+   详情页只调 `getTweetDetailTree` 一个入口（分别取 focal 与回复会把同一请求打两遍）。
+10. **一个窗口只能有一个 `.escape` 快捷键**：两个都注册时只有一个生效，
+    语义随注册顺序漂移（"ESC 有时返回、有时直接关"）。
+11. **原生焦点环画在 SwiftUI 之上**：搜索框的蓝色焦点环会盖住详情浮层，
+    `zIndex` 无效。用 `.textFieldStyle(.plain)` + `.focusEffectDisabled()`，
+    并在浮层出现时广播 `.homeResignSearchFocus` 交出焦点。
 
 ## 构建与验证
 
@@ -71,5 +90,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 - **最低系统版本 macOS 15.0**（改动时不要降低；15.0 是为了用系统
   `Translation` 框架，见 `docs/DEVELOPMENT.md` §8）。
   改动系统 API 前先确认其可用版本不低于 15.0。
-- **不要为版本差异写降级分支**：支持范围就是 14.4+，直接使用满足该版本的 API，
+- **不要为版本差异写降级分支**：支持范围就是 15.0+，直接使用满足该版本的 API，
   不要再加"旧系统隐藏按钮/回退旧实现"这类分支（会增加维护面且无法测试）。
+- 返回导航统一走 `Support/NavigationHistory.swift`，不要在视图里各自维护"上一步"——
+  多入口（引用推文 / 头像 / 搜索）各自记账必然互相打架。

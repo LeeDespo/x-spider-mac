@@ -57,76 +57,11 @@ actor TwitterAPI {
         xclidReady = true
     }
 
-    /// TweetDetail：返回 focal 推文 + conversation 时间线里的回复（媒体详情弹窗评论区用）
-    func getTweetWithReplies(id: String) async throws -> (focal: TwitterPost, replies: [TwitterPost]) {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
-        let url = URL(string: "https://\(host)\(path)")!
-        let variables = Self.encodeJSON([
-            "focalTweetId": id,
-            "with_rux_injections": true,
-            "includePromotedContent": true,
-            "withCommunity": true,
-            "withQuickPromoteEligibilityTweetFields": true,
-            "withBirdwatchNotes": true,
-            "withVoice": true,
-            "withV2Timeline": true,
-        ] as [String: Any]) ?? "{}"
-
-        let resp = try await client.request(
-            url: url,
-            query: [
-                "variables": variables,
-                "features": Self.tweetDetailFeatures,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
-        // focal 必须按 ID 精确取（理由同 getTweet：按 requireMedia 过滤会把
-        // 无媒体的 focal 丢掉，退化到评论区推文）。回复列表另走不带媒体过滤的解析。
-        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
-            throw TwitterAPIError.parseFailure
-        }
-        let instructions = (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]])
-            ?? (Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]])
-            ?? []
-        let replies = Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
-        return (focal, replies.filter { $0.id != focal.id })
-    }
-
     // MARK: - 单条推文（TweetDetail，用于推文链接搜索）
 
     /// 上游 op XMOz5h24KAZ86qKffKTLdQ/TweetDetail。返回 focal 推文（含媒体）。
     func getTweet(id: String) async throws -> TwitterPost {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
-        let url = URL(string: "https://\(host)\(path)")!
-        let variables = Self.encodeJSON([
-            "focalTweetId": id,
-            "with_rux_injections": true,
-            "includePromotedContent": true,
-            "withCommunity": true,
-            "withQuickPromoteEligibilityTweetFields": true,
-            "withBirdwatchNotes": true,
-            "withVoice": true,
-            "withV2Timeline": true,
-        ] as [String: Any]) ?? "{}"
-
-        let resp = try await client.request(
-            url: url,
-            query: [
-                "variables": variables,
-                "features": Self.tweetDetailFeatures,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
+        let (json, _) = try await fetchTweetDetail(focalId: id)
         // TweetDetail 的响应结构（2026-09 实测）：
         //   只有 `data.threaded_conversation_with_injections_v2.instructions`，
         //   **没有** `data.tweetResult`（旧假设，曾导致 focal 推文取不到）。
@@ -450,13 +385,29 @@ actor TwitterAPI {
         )
     }
 
-    /// TweetDetail 会话时间线的全部推文（focal + 回复）。评论面板用。
-    func getTweetReplies(id: String) async throws -> [TwitterPost] {
+    /// 一次 TweetDetail 请求同时拿到 focal 推文与回复树。
+    ///
+    /// **详情卡只用这一个入口**：TweetDetail 是重端点，分别取 focal 与回复会把
+    /// 同一个请求（同样的 focalTweetId、同样的 features）打两遍，白白翻倍消耗
+    /// X 配额——项目一直在对抗 429，这种重复请求是实打实的放大器。
+    func getTweetDetailTree(id: String) async throws -> (focal: TwitterPost, replies: [ReplyNode]) {
+        let (json, instructions) = try await fetchTweetDetail(focalId: id)
+        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
+            throw TwitterAPIError.parseFailure
+        }
+        let replies = Self.extractReplyNodes(instructions, focalId: id)
+        return (focal, replies)
+    }
+
+    /// TweetDetail 单次请求 → (原始 JSON, instructions)。
+    /// 两处 TweetDetail 调用（getTweet / getTweetDetailTree）曾各自拼接 variables，
+    /// 容易漂移；统一到这里，改动只需一处。
+    private func fetchTweetDetail(focalId: String) async throws -> ([String: Any], [[String: Any]]) {
         try await ensureXClIdLoaded()
         let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
         let url = URL(string: "https://\(host)\(path)")!
         let variables = Self.encodeJSON([
-            "focalTweetId": id,
+            "focalTweetId": focalId,
             "with_rux_injections": true,
             "includePromotedContent": true,
             "withCommunity": true,
@@ -474,9 +425,10 @@ actor TwitterAPI {
         guard let json = (try? resp.json()) as? [String: Any] else {
             throw TwitterAPIError.parseFailure
         }
-        let instructions = Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]] ?? []
-        // 评论 = 纯文字回复也要 → requireMedia: false
-        return Self.extractPostsFromTweetEntries(instructions, requireMedia: false)
+        let instructions = (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]])
+            ?? (Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]])
+            ?? []
+        return (json, instructions)
     }
 
     // MARK: - 主页时间线
@@ -607,6 +559,9 @@ actor TwitterAPI {
     /// UserMedia：上游取第一个 TimelineTimelineModule 的 items（或 TimelineAddToModule 的 moduleItems）。
     /// 此处为上游的超集：额外收集散装 tweet-* 单推文条目——X 偶发返回没有 module 的页
     /// （上游会解析为 0 条导致提前到底），超集保证不漏；同页重复推文按 rest_id 去重。
+    ///
+    /// 广告（`itemContent.promotedMetadata`）在此过滤：媒体网格里插广告会让"下载全部"
+    /// 把无关媒体的链接也算进去，且卡片数量与媒体数对不上。
     static func extractPostsFromModuleInstructions(_ instructions: [[String: Any]]) -> [TwitterPost] {
         var results: [[String: Any]] = []
         var seen = Set<String>()
@@ -621,13 +576,19 @@ actor TwitterAPI {
             if let module = entries.first(where: { (($0["content"] as? [String: Any])?["entryType"] as? String) == "TimelineTimelineModule" }),
                let items = (module["content"] as? [String: Any])?["items"] as? [[String: Any]] {
                 for item in items {
+                    let itemContent = Self.path(item, ["item", "itemContent"]) as? [String: Any]
+                    guard !Self.isPromotedItemContent(itemContent) else { continue }
                     if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {
                         append(Self.unwrapVisibility(result))
                     }
                 }
             }
             for entry in entries {
-                guard (entry["entryId"] as? String ?? "").hasPrefix("tweet") else { continue }
+                let entryId = entry["entryId"] as? String ?? ""
+                guard entryId.hasPrefix("tweet") else { continue }
+                guard !Self.isPromotedEntryId(entryId) else { continue }
+                let itemContent = Self.path(entry, ["content", "itemContent"]) as? [String: Any]
+                guard !Self.isPromotedItemContent(itemContent) else { continue }
                 if let result = Self.path(entry, ["content", "itemContent", "tweet_results", "result"]) as? [String: Any] {
                     append(Self.unwrapVisibility(result))
                 }
@@ -638,6 +599,8 @@ actor TwitterAPI {
            let addToModule = instructions.first(where: { $0["type"] as? String == "TimelineAddToModule" }),
            let moduleItems = addToModule["moduleItems"] as? [[String: Any]] {
             for item in moduleItems {
+                let itemContent = Self.path(item, ["item", "itemContent"]) as? [String: Any]
+                guard !Self.isPromotedItemContent(itemContent) else { continue }
                 if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {
                     append(Self.unwrapVisibility(result))
                 }
@@ -665,8 +628,11 @@ actor TwitterAPI {
         for entry in entries {
             let entryId = entry["entryId"] as? String ?? ""
             let content = entry["content"] as? [String: Any] ?? [:]
+            // 推广内容（广告）：entryId 明示或 itemContent.promotedMetadata 非空
+            guard !Self.isPromotedEntryId(entryId) else { continue }
 
             if entryId.hasPrefix("tweet") {
+                guard !Self.isPromotedItemContent(Self.path(content, ["itemContent"]) as? [String: Any]) else { continue }
                 if let result = Self.path(content, ["itemContent", "tweet_results", "result"]) as? [String: Any] {
                     rawResults.append(Self.unwrapVisibility(result))
                 }
@@ -674,6 +640,8 @@ actor TwitterAPI {
                 // profile-conversation = UserTweets 会话模块;conversationthread = TweetDetail 回复模块
                 if let items = content["items"] as? [[String: Any]] {
                     for item in items {
+                        let itemContent = Self.path(item, ["item", "itemContent"]) as? [String: Any]
+                        guard !Self.isPromotedItemContent(itemContent) else { continue }
                         if let result = Self.path(item, ["item", "itemContent", "tweet_results", "result"]) as? [String: Any] {
                             rawResults.append(Self.unwrapVisibility(result))
                         }
@@ -711,6 +679,102 @@ actor TwitterAPI {
         return filtered.compactMap { Self.mapTwitterPost($0) }
     }
 
+    /// TweetDetail 会话时间线 → 带层级的回复树（扁平数组，depth 已算好，父先于子）。
+    ///
+    /// **为什么不能复用 `extractPostsFromTweetEntries`**：那条路径把
+    /// `conversationthread-*` 的 items 压平成 `[TwitterPost]`，
+    /// `legacy.in_reply_to_status_id_str` 这个**现成的父指针**就此丢失，
+    /// 评论区只能平铺。此处保留父指针并算深度。
+    ///
+    /// 父指针来自响应的 `legacy.in_reply_to_status_id_str`，**不需要额外请求**。
+    ///
+    /// 孤儿处理（必须）：X 只返回部分会话，父推文可能不在本页。
+    /// 这类回复挂到根下并标 `isPartialParent = true`，**绝不丢弃**。
+    ///
+    /// - Parameter focalId: 根推文 ID（focal）。它的直接回复 depth = 1。
+    static func extractReplyNodes(_ instructions: [[String: Any]], focalId: String) -> [ReplyNode] {
+        // 1) 收集 raw result + 父指针（ID 与作者名）
+        var raw: [(result: [String: Any], parentId: String?, parentScreenName: String?)] = []
+        guard let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
+              let entries = addEntries["entries"] as? [[String: Any]] else { return [] }
+
+        func collect(itemContent: [String: Any]?) {
+            guard !Self.isPromotedItemContent(itemContent) else { return }
+            guard let result = Self.path(itemContent ?? [:], ["tweet_results", "result"]) as? [String: Any] else { return }
+            let unwrapped = Self.unwrapVisibility(result)
+            let legacy = unwrapped["legacy"] as? [String: Any]
+            raw.append((unwrapped,
+                        legacy?["in_reply_to_status_id_str"] as? String,
+                        legacy?["in_reply_to_screen_name"] as? String))
+        }
+
+        for entry in entries {
+            let entryId = entry["entryId"] as? String ?? ""
+            guard !Self.isPromotedEntryId(entryId) else { continue }
+            let content = entry["content"] as? [String: Any] ?? [:]
+            if entryId.hasPrefix("tweet") {
+                collect(itemContent: Self.path(content, ["itemContent"]) as? [String: Any])
+            } else if entryId.hasPrefix("conversationthread") || entryId.hasPrefix("profile-conversation") {
+                for item in (content["items"] as? [[String: Any]]) ?? [] {
+                    collect(itemContent: Self.path(item, ["item", "itemContent"]) as? [String: Any])
+                }
+            }
+        }
+
+        // 2) 按 rest_id 去重（同一会话模块可能重复出现）。
+        // **排除 focal 本身**：返回的是"回复"，focal 是根——它没有父指针，
+        // 若留在结果里会被算成 depth 1，与"直接回复"无法区分，渲染时也会重复显示主推文。
+        var seenIds = Set<String>()
+        var nodes: [(post: TwitterPost, parentId: String?, parentScreenName: String?, depth: Int, partial: Bool)] = []
+        for entry in raw {
+            guard let post = Self.mapTwitterPost(entry.result), !post.id.isEmpty else { continue }
+            guard post.id != focalId else { continue }
+            guard seenIds.insert(post.id).inserted else { continue }
+            nodes.append((post, entry.parentId, entry.parentScreenName, 1, false))
+        }
+
+        // 3) 算深度：迭代解析父链，父不在集合里即视为孤儿（挂根下）
+        let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.post.id, $0) })
+
+        /// 返回 (深度, 是否孤儿, 父作者名)。
+        /// 父作者名优先用响应里自带的 `in_reply_to_screen_name`（无需查父节点），
+        /// 缺失时才从父节点的 post.user 取。
+        func resolve(_ id: String, _ visiting: inout Set<String>) -> (depth: Int, partial: Bool, parentScreenName: String?)? {
+            guard let node = byId[id] else { return nil }
+            // 环保护：异常数据里自引用/互引用会死循环
+            guard visiting.insert(id).inserted else { return (1, true, node.parentScreenName) }
+            defer { visiting.remove(id) }
+            guard let parentId = node.parentId, !parentId.isEmpty, parentId != focalId else {
+                return (1, false, node.parentScreenName)   // 直接回复 focal（或顶层）
+            }
+            guard let parent = resolve(parentId, &visiting) else {
+                return (1, true, node.parentScreenName)    // 父不在本页 → 孤儿
+            }
+            // 父在本页时，优先用父节点的作者名（响应里若没带 in_reply_to_screen_name）
+            let parentAuthor = node.parentScreenName ?? byId[parentId]?.post.user.screenName
+            return (parent.depth + 1, parent.partial, parentAuthor)
+        }
+
+        var result: [ReplyNode] = []
+        for node in nodes {
+            var visiting = Set<String>()
+            let resolved = resolve(node.post.id, &visiting) ?? (1, false, node.parentScreenName)
+            result.append(ReplyNode(post: node.post,
+                                    parentId: node.parentId,
+                                    parentScreenName: resolved.parentScreenName,
+                                    depth: resolved.depth,
+                                    isPartialParent: resolved.partial))
+        }
+        // 4) 父先于子输出，父在前保证缩进渲染顺序自然
+        return result.sorted { lhs, rhs in
+            if lhs.depth != rhs.depth { return lhs.depth < rhs.depth }
+            let lt = lhs.post.createdAt ?? .distantPast
+            let rt = rhs.post.createdAt ?? .distantPast
+            if lt != rt { return lt < rt }
+            return lhs.post.id < rhs.post.id
+        }
+    }
+
     static func extractBottomCursor(_ instructions: [[String: Any]]) -> String? {
         guard let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
               let entries = addEntries["entries"] as? [[String: Any]] else { return nil }
@@ -721,6 +785,36 @@ actor TwitterAPI {
             }
         }
         return nil
+    }
+
+    // MARK: - 推广内容（广告）过滤
+
+    /// 该条 `itemContent` 是否为推广内容（广告）。
+    ///
+    /// 判据来自 X 的 TimelineTweet schema：**`itemContent.promotedMetadata` 非空即为广告**
+    /// （见 `.fetch/openapi.yaml` 的 `TimelineTweet.promotedMetadata`）。
+    /// 实测广告条目必然带该键，普通推文不含。
+    ///
+    /// 为什么要过滤：TweetDetail 的会话时间线里会插广告（推广推文），
+    /// 主页时间线/用户时间线同样会插。它们会混进评论区与推文卡列表，
+    /// 表现为"评论区里出现一条与上下文无关的推文"。
+    /// 之前靠 `requireMedia` 之类的媒体过滤偶然挡掉一部分，媒体形态不同就漏。
+    ///
+    /// 额外兼容：少数响应把 `promotedMetadata` 放在 `tweet_results.result` 内层，
+    /// 或把 `entryId` 直接写成 `promoted-*`（见 `isPromotedEntryId`）。
+    static func isPromotedItemContent(_ itemContent: [String: Any]?) -> Bool {
+        guard let itemContent else { return false }
+        if let meta = itemContent["promotedMetadata"] as? [String: Any], !meta.isEmpty { return true }
+        if let result = Self.path(itemContent, ["tweet_results", "result"]) as? [String: Any],
+           let meta = result["promotedMetadata"] as? [String: Any], !meta.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    /// 条目 ID 是否明示为推广（部分时间线用 `promoted-*` 作 entryId）
+    static func isPromotedEntryId(_ entryId: String) -> Bool {
+        entryId.hasPrefix("promoted")
     }
 
     /// TweetWithVisibilityResults → 实际推文

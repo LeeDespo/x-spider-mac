@@ -91,3 +91,78 @@ extension QuotedPostBox: Equatable {
         lhs === rhs
     }
 }
+
+// MARK: - 评论树
+
+/// 评论区的一条回复，带层级信息。
+///
+/// **为什么需要单独的结构**：`TwitterPost` 里没有父子指针——X 把会话以
+/// `conversationthread-*` entry 返回，其 `content.items[]` 内每条推文都带
+/// `legacy.in_reply_to_status_id_str`，但扁平化成 `[TwitterPost]` 后这个关系就丢了，
+/// 评论只能平铺显示。这里把父指针与算好的深度一并保留。
+///
+/// `parentId` 直接来自响应（`in_reply_to_status_id_str`），**不需要额外请求**。
+struct ReplyNode: Identifiable, Sendable {
+    var post: TwitterPost
+    /// 父推文 ID（`legacy.in_reply_to_status_id_str`）
+    var parentId: String?
+    /// 被回复者的 screen_name。优先取响应里的 `in_reply_to_screen_name`；
+    /// 缺失时由构建树时从父节点解析；父不在本页（孤儿）则为 nil。
+    /// 展示层用它加「回复 @xxx」前缀——**必须是父的作者**，
+    /// 用回复自己的作者会写成"我回复我自己"，是错的。
+    var parentScreenName: String?
+    /// 相对根（focal 推文）的深度。根的直接回复为 1。
+    var depth: Int
+    /// 父推文不在本页结果里（X 只返回部分会话）。
+    /// 这类评论**不能丢**，挂到根下并标记，展示时加「回复 @xxx」前缀。
+    var isPartialParent: Bool
+
+    var id: String { post.id }
+
+    init(post: TwitterPost, parentId: String? = nil, parentScreenName: String? = nil,
+         depth: Int = 1, isPartialParent: Bool = false) {
+        self.post = post
+        self.parentId = parentId
+        self.parentScreenName = parentScreenName
+        self.depth = depth
+        self.isPartialParent = isPartialParent
+    }
+}
+
+/// 评论排序方式。
+///
+/// `relevance` 用**服务端返回顺序**（X 的默认排序即"相关"），不做本地重排——
+/// 服务端顺序携带了它自己的相关性信号，本地重排只会更差。
+/// 另外两种是服务端未提供时的本地兜底（TweetDetail 没有排序变量）。
+enum ReplySort: String, CaseIterable, Sendable {
+    /// 相关：保持服务端顺序
+    case relevance
+    /// 喜欢：按点赞数降序
+    case likes
+    /// 最近：按发布时间降序
+    case recent
+
+    /// 本地排序。`relevance` 原样返回。
+    ///
+    /// 排序是**稳定**的：同键值保持原有相对顺序，避免每次刷新评论顺序乱跳。
+    func sorted(_ nodes: [ReplyNode]) -> [ReplyNode] {
+        switch self {
+        case .relevance:
+            return nodes
+        case .likes:
+            return nodes.enumerated().sorted { lhs, rhs in
+                let l = lhs.element.post.favoriteCount ?? 0
+                let r = rhs.element.post.favoriteCount ?? 0
+                if l != r { return l > r }
+                return lhs.offset < rhs.offset
+            }.map(\.element)
+        case .recent:
+            return nodes.enumerated().sorted { lhs, rhs in
+                let l = lhs.element.post.createdAt ?? .distantPast
+                let r = rhs.element.post.createdAt ?? .distantPast
+                if l != r { return l > r }
+                return lhs.offset < rhs.offset
+            }.map(\.element)
+        }
+    }
+}

@@ -32,6 +32,69 @@ final class HomepageStore {
     /// 当前列表归属的 screen_name（视图判断网格属于哪个用户）
     private(set) var listOwnerScreenName: String?
 
+    // MARK: - 搜索态快照（供返回导航还原上一个搜索）
+
+    /// 一次"用户时间线 / 推文搜索结果"的完整可还原状态。
+    ///
+    /// **为什么要存快照而不是返回时重新请求**：重新 `loadUser` 会再打
+    /// UserByScreenName + UserMedia 两个请求——项目一直在对抗 429，
+    /// 为了"回退一步"额外消耗配额是不可接受的；而且重新加载会让列表闪一下、
+    /// 丢失已翻的页。快照还原是纯内存操作，**零请求**、瞬时、列表原样。
+    struct SearchState {
+        var keyword: String
+        var userInfo: TwitterUser?
+        var tweetSearchMode: Bool
+        var postList: [TwitterPost]
+        var postListCursor: String?
+        var seenPostIds: Set<String>
+        var listOwnerScreenName: String?
+        var hasLoadedList: Bool
+        var filter: DownloadFilter
+    }
+
+    /// 当前搜索态快照。未处于搜索态（无用户、非推文搜索）时返回 nil。
+    func snapshotSearchState() -> SearchState? {
+        guard userInfo != nil || tweetSearchMode else { return nil }
+        return SearchState(
+            keyword: keyword,
+            userInfo: userInfo,
+            tweetSearchMode: tweetSearchMode,
+            postList: postList,
+            postListCursor: postListCursor,
+            seenPostIds: seenPostIds,
+            listOwnerScreenName: listOwnerScreenName,
+            hasLoadedList: hasLoadedList,
+            filter: filter
+        )
+    }
+
+    /// 还原搜索态快照。**不发起任何网络请求。**
+    ///
+    /// 先作废在途请求（自增代际 + 取消填充），否则飞行中的旧响应可能在还原后
+    /// 落地并覆盖刚还原的列表（与切换用户时的竞态同源）。
+    func restoreSearchState(_ state: SearchState) {
+        userGeneration += 1
+        cancelFill()
+        loadUserTask?.cancel()
+        loadPostListTask?.cancel()
+
+        keyword = state.keyword
+        userInfo = state.userInfo
+        tweetSearchMode = state.tweetSearchMode
+        postList = state.postList
+        postListCursor = state.postListCursor
+        seenPostIds = state.seenPostIds
+        listOwnerScreenName = state.listOwnerScreenName
+        hasLoadedList = state.hasLoadedList
+        filter = state.filter
+
+        userInfoLoading = false
+        postListLoading = false
+        postListError = nil
+        lastError = nil
+        rebuildFlatMediaList()
+    }
+
     // MARK: - 用户加载（上游 loadUser：abort 旧请求 → getUser → 成功后加载媒体）
 
     func loadUser(screenName: String) async {

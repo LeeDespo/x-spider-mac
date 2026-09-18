@@ -353,3 +353,117 @@ sending 'session' risks causing data races [#RegionIsolation::SendingRisksDataRa
 - 语言比对只比主语言子标签（`zh-Hans` 与 `zh` 视为同语言），见 `isSameLanguage`。
 
 自动翻译**默认关闭**：默认开启会让每次浏览都触发翻译，打扰且耗电。
+
+---
+
+## 9. 评论区层级、推广内容过滤与返回导航（2026-09-18）
+
+本轮四项改动，全部用**真实 TweetDetail 响应**核对过结构
+（`2100649211276529930` 无媒体且引用他人、`2099484254740631767` 带媒体且引用他人）。
+
+### 9.1 推广内容（广告）过滤
+
+**判据**：`itemContent.promotedMetadata` 非空即为广告
+（schema 见 `.fetch/openapi.yaml` 的 `TimelineTweet.promotedMetadata`）。
+
+实测确认：真实响应里广告挂在 **`conversationthread-*` entry 的 item 上**
+（路径 `entry.content.items[0].item.itemContent.promotedMetadata`），
+`adMetadataContainer` / `advertiser_results` / `impressionId` 等键齐全，
+正文与主推文毫无关系（`2100649211276529930` 里是 3 条投资/背包广告）。
+
+三处解析入口都已过滤：
+
+| 入口 | 用途 |
+|---|---|
+| `extractPostsFromModuleInstructions` | UserMedia → 媒体网格 |
+| `extractPostsFromTweetEntries` | UserTweets / 主页时间线 / 推文时间线 |
+| `extractReplyNodes` | TweetDetail → 评论区 |
+
+**为什么必须过滤**：评论区里混进广告是用户直接反馈的问题；
+媒体网格里混广告会让"下载全部"把无关媒体的链接也算进去。
+
+### 9.2 评论层级树（保留父指针）
+
+**旧问题**：`extractPostsFromTweetEntries` 把 `conversationthread-*` 的 items
+压平成 `[TwitterPost]`，`legacy.in_reply_to_status_id_str` 这个**现成的父指针**就此丢失，
+评论区只能平铺，看不出评论的评论从属于谁。
+
+**新结构**：`ReplyNode { post, parentId, parentScreenName, depth, isPartialParent }`，
+由 `TwitterAPI.extractReplyNodes(_:focalId:)` 构建。**不需要额外请求**——
+父指针与 `in_reply_to_screen_name` 都在响应里
+（实测每条回复两者都有）。
+
+必须遵守的四条：
+
+1. **排除 focal 本身**：它是根不是回复。留着会被算成 depth 1，
+   与"直接回复"无法区分，且渲染时重复显示主推文。
+2. **孤儿不能丢**：X 只返回部分会话，父可能不在本页。这类回复 depth 记 1、
+   标 `isPartialParent = true`，展示时加「回复 @xxx」前缀（有专门单测）。
+3. **环保护**：异常数据里 A 回 B、B 回 A 会死循环，`resolve` 用 visiting 集合挡住。
+4. **「回复 @xxx」用被回复者**（`parentScreenName`），不是本条作者——
+   用错了会显示成"张三 回复 张三"。优先取响应里的 `in_reply_to_screen_name`，
+   缺失时回落到父节点的 `post.user.screenName`。
+
+### 9.3 评论排序（相关 / 喜欢 / 最近）
+
+`ReplySort`：`relevance` **保持服务端顺序**（X 默认排序自带相关性信号，
+本地重排只会更差）；`likes` / `recent` 是服务端没提供排序变量时的本地兜底。
+排序**稳定**（同键值保持原序），避免每次刷新顺序乱跳。
+
+### 9.4 返回导航（`NavigationHistory`）
+
+**需求**：详情里点引用推文跳到 B，返回要回到 A；点头像去搜用户，返回也要回到 A。
+
+**设计**：一个显式历史栈，只记**跨越界面**的跳转（对称的"打开详情→关闭"不入栈）：
+
+- 详情里点**引用推文** → 入栈当前推文（`DetailOverlayCenter.openFromDetail`）；
+- 详情里点**头像** → 依次入栈"主页状态 + 当前推文"，于是返回两下依次回到详情、主页；
+- 主页搜索某用户 → 入栈"当前主页状态"。
+
+主页状态用**快照还原**（`HomepageStore.SearchState`），**零请求**且列表原样：
+重新 `loadUser` 会再打两个 GraphQL 请求，为"回退一步"消耗配额不可接受。
+
+三处容易踩的坑：
+
+1. **`.id(post.id)` 必须加**（`ContentView`）：浮层内换推文时若不加，
+   SwiftUI 复用同一视图实例 → `@State`（detail/replies/liked/mediaIndex）
+   全保留上一条的值，`.task` 也不重跑，表现为"跳到引用推文后内容还是上一条的"。
+2. **ESC 只能注册一个**：返回按钮与背景快捷键都注册 `.escape` 时只有一个生效，
+   语义会随注册顺序漂移（"有时返回、有时直接关"）。
+   现在 ESC = 返回，点卡外空白 = 直接关闭。
+3. **返回按钮用强调色 + 返回图案**（`arrow.uturn.backward`），
+   与「关闭」语义区分开。
+
+#### 两个「关闭」必须区分清楚
+
+| 方法 | 语义 | 是否动历史 |
+|---|---|---|
+| `DetailOverlayCenter.close()` | 用户**离开详情**（点卡外、ESC 到栈空） | **截断**回进入时的深度 |
+| `DetailOverlayCenter.dismissOverlay()` | 只是收起浮层，之后还会回来 | 不动 |
+
+不截断的话会残留：关闭详情 A → 从主页打开详情 C → 按返回会跳到无关的 A。
+反过来，`searchUser`（点头像去搜用户）与 ContentView 重放 `.home` 时**不能**用
+`close()`——前者会丢掉刚压入的"返回回详情"记录，后者会把更早的记录一起丢。
+
+### 9.5 详情短期缓存（`TweetDetailCache`）
+
+为解决 9.4 第 1 条的"重建视图"代价：重建会重跑 `.task` → 再请求一次 TweetDetail。
+于是"点引用推文 → 返回"会把看过的推文重新请求一遍。
+
+`TweetDetailCache` 按推文 ID 缓存 `(focal, replies)`，**TTL 5 分钟**、容量 12 条、进程内。
+回看刚看过的推文**零请求**。用户点赞/书签/转推后 `invalidate` 该条（计数已过时）。
+
+TTL 取 5 分钟的原因：评论会变（新回复、点赞数），缓存太久显得数据陈旧。
+
+### 9.6 搜索框焦点：原生焦点环的层级问题
+
+两个用户反馈合并成一个根因：
+
+- 「篮框会浮现推文详情上」——原生焦点环由 **AppKit 单独绘制**，
+  层级在 SwiftUI 之上，`zIndex` 管不到它；
+- 「点输入框会变色一闪一闪」——带 `roundedBorder` 时聚焦/失焦会切换背景色。
+
+**解法**：输入框改 `.textFieldStyle(.plain)` + `.focusEffectDisabled()`
+（视觉容器交给外层已有的玻璃条），并在详情浮层出现时广播
+`.homeResignSearchFocus` 主动交出焦点（双保险）。
+

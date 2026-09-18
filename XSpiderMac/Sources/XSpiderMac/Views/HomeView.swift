@@ -121,7 +121,24 @@ struct HomeView: View {
                 }
             }
         } else {
-            Task { await store.loadUser(screenName: text) }
+            loadUserPushingHistory(text)
+        }
+    }
+
+    /// 搜索用户，并把"当前主页状态"记入导航历史。
+    ///
+    /// 这样用户在结果页点返回会回到上一个界面（主页时间线，或上一次的搜索结果），
+    /// 而不是被困在搜索结果里——用户明确要求"点击返回也应该返回上一个界面"。
+    private func loadUserPushingHistory(_ screenName: String) {
+        NavigationHistory.shared.push(NavigationHistory.currentHomeEntry())
+        Task { await store.loadUser(screenName: screenName) }
+    }
+
+    /// 搜索框左侧的返回箭头：优先回退导航历史（回到上一个搜索/主页状态），
+    /// 历史为空时退回主页时间线。
+    private func clearSearchPushingHistory() {
+        if !NavigationHistory.shared.back() {
+            store.clearSearch()
         }
     }
 
@@ -135,7 +152,7 @@ struct HomeView: View {
             // 搜索态:返回时间线(替换放大镜图标,退出搜索后还原)
             if store.userInfo != nil || store.tweetSearchMode {
                 Button {
-                    store.clearSearch()
+                    clearSearchPushingHistory()
                 } label: {
                     Image(systemName: "chevron.backward")
                         .font(.system(size: 14, weight: .semibold))
@@ -156,6 +173,13 @@ struct HomeView: View {
             ))
             .focused($searchFieldFocused)
             .onSubmit { submitSearch() }
+            // 输入框自身不画边框与焦点环：
+            // 1) 原生焦点环由 AppKit 单独绘制，层级会**浮在**推文详情浮层之上
+            //    （用户反馈"篮框会浮现推文详情上"），SwiftUI 的 zIndex 管不到它；
+            // 2) 带上 roundedBorder 时，聚焦/失焦会切换背景色，表现为输入框"变色一闪一闪"。
+            // 视觉容器交给外层已有的玻璃条，输入框只负责文字与光标。
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
 
             if !appStore.searchHistory.isEmpty {
                 Button {
@@ -189,6 +213,10 @@ struct HomeView: View {
         .liquidGlass(interactive: true, cornerRadius: 16)
         .onReceive(NotificationCenter.default.publisher(for: .homeFocusSearch)) { _ in
             searchFieldFocused = true
+        }
+        // 打开推文详情时主动交出焦点：即便有原生焦点环也先消失，不会留在浮层上方
+        .onReceive(NotificationCenter.default.publisher(for: .homeResignSearchFocus)) { _ in
+            searchFieldFocused = false
         }
     }
 

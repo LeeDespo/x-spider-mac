@@ -374,9 +374,14 @@ struct TimelinePostCard: View {
 
             // 引用推文：缩小内嵌在正文下方。点击打开**被引用推文**的详情，
             // 与点击卡片其余部分（打开主推文）区分——内层手势优先，无需额外处理。
+            // 走 openFromDetail：若详情浮层已打开，点它会记入历史，可逐层返回。
             if let quoted = post.quotedPost?.value {
                 QuotedPostCard(post: quoted, onOpen: {
-                    DetailOverlayCenter.shared.open(quoted)
+                    if DetailOverlayCenter.shared.post != nil {
+                        DetailOverlayCenter.shared.openFromDetail(quoted)
+                    } else {
+                        DetailOverlayCenter.shared.open(quoted)
+                    }
                 }, onAvatar: onAvatar)
             }
 

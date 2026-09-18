@@ -40,27 +40,63 @@ struct ContentView: View {
         }
         .animation(.spring(duration: 0.35), value: selection)
         .overlay {
-            // 推文详情全窗浮层:盖住边栏+内容;点击任何非卡区退出;ESC 退出
+            // 推文详情全窗浮层:盖住边栏+内容;点击任何非卡区退出;ESC 返回
             if let post = DetailOverlayCenter.shared.post {
                 MediaDetailView(
                     post: post,
                     initialMediaIndex: DetailOverlayCenter.shared.initialMediaIndex,
                     onSearchUser: { sn in
-                        DetailOverlayCenter.shared.close()
-                        DetailOverlayCenter.shared.onSearchUser?(sn)
+                        DetailOverlayCenter.shared.searchUser(sn)
                     },
-                    onClose: { DetailOverlayCenter.shared.close() }
+                    onBack: { DetailOverlayCenter.shared.back() }
                 )
+                // 按推文 ID 重建身份：**必须**。
+                // 浮层内可以换推文（点引用推文、返回上一条），若不加 .id，
+                // SwiftUI 会复用同一个视图实例 → `@State`（detail/replies/liked/mediaIndex）
+                // 全部保留上一条推文的值，`.task` 也不会重跑 ——
+                // 表现为"跳到引用推文后，评论和媒体还是原来那条的"。
+                .id(post.id)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .zIndex(200)
             }
         }
         .animation(.easeOut(duration: 0.18), value: DetailOverlayCenter.shared.post != nil)
+        .onChange(of: DetailOverlayCenter.shared.post?.id) { _, newValue in
+            // 详情浮层出现即让搜索框交出焦点：原生焦点环会盖在浮层之上，
+            // 且输入框聚焦态会持续闪色（见 HomeView.searchBar 的注释）
+            if newValue != nil {
+                NotificationCenter.default.post(name: .homeResignSearchFocus, object: nil)
+            }
+        }
         .onAppear {
             DetailOverlayCenter.shared.onSearchUser = { sn in
                 selection = .home
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     NotificationCenter.default.post(name: .homeSearchUser, object: sn)
+                }
+            }
+            // 返回导航的重放：历史层不依赖视图，动作在这里注入
+            NavigationHistory.shared.replay = { entry in
+                switch entry {
+                case .detail(let postId):
+                    // 还原到该推文详情：从详情缓存取，**零请求**。
+                    // 缓存未命中（超过容量被淘汰）则忽略，停在当前界面。
+                    selection = .home
+                    _ = DetailOverlayCenter.shared.restore(id: postId)
+                case .home(let state):
+                    // 还原主页状态：有快照走快照（零请求、列表原样），
+                    // 无快照（原先是主页时间线）则清空搜索态回到时间线。
+                    // 同时收起详情浮层——这条记录代表"回到主页"，
+                    // 不收的话用户会停在浮层里，以为返回没生效。
+                    // 用 dismissOverlay（不截断历史）：这条记录已由 back() 弹出，
+                    // 再截断会把更早的返回记录一起丢掉。
+                    DetailOverlayCenter.shared.dismissOverlay()
+                    selection = .home
+                    if let state {
+                        HomepageStore.shared.restoreSearchState(state)
+                    } else {
+                        HomepageStore.shared.clearSearch()
+                    }
                 }
             }
         }
@@ -130,6 +166,9 @@ struct ContentView: View {
 extension Notification.Name {
     /// 主页搜索框聚焦（菜单「搜索用户或推文」）
     static let homeFocusSearch = Notification.Name("menu.homeFocusSearch")
+    /// 主页搜索框**交出焦点**（打开推文详情前广播）：
+    /// 原生焦点环由 AppKit 单独绘制，会浮在详情浮层之上，必须先让它消失
+    static let homeResignSearchFocus = Notification.Name("home.resignSearchFocus")
     /// 详情卡头像点击 → 主页搜索该用户(payload: screenName)
     static let homeSearchUser = Notification.Name("home.searchUser")
 }

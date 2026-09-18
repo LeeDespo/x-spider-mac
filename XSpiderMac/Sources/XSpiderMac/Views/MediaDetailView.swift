@@ -5,18 +5,19 @@ import AVKit
 /// - 左：媒体卡（高清图/视频，自适应尺寸，左右滑手势切换多媒体）
 ///   媒体下方悬浮：下载当前媒体 / 下载本推文全部媒体（不遮挡内容）
 /// - 右上：推文卡（头像/昵称/正文/时间/互动行：点赞·转推·书签·分享）
-/// - 右下：评论卡（TweetDetail 会话时间线懒加载 + 评论输入框占位）
+/// - 右下：评论卡（TweetDetail 会话时间线懒加载，带层级 + 排序）
 /// 液态玻璃：跟随设置；不支持系统自动退化普通材质。
 struct MediaDetailView: View {
     @State private var store = DownloadStore.shared
     /// 点击头像 → 搜索该用户(HomeView 注入;nil = 不响应)
     var onSearchUser: ((String) -> Void)? = nil
-    /// 关闭弹窗(全窗 overlay 注入;nil 时回退 @Environment dismiss)
-    var onClose: (() -> Void)? = nil
+    /// 返回上一层（引用推文跳转 / 头像跳转的返回语义见 `DetailOverlayCenter.back`）
+    var onBack: (() -> Void)? = nil
     let post: TwitterPost
     @State private var mediaIndex: Int
     @State private var detail: TwitterPost?
-    @State private var replies: [TwitterPost] = []
+    @State private var replies: [ReplyNode] = []
+    @State private var replySort: ReplySort = .relevance
     @State private var loadingReplies = false
     @State private var liked = false
     @State private var retweeted = false
@@ -26,15 +27,27 @@ struct MediaDetailView: View {
     @State private var showCapsule = false
     @Environment(\.dismiss) private var dismiss
 
-    init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil, onClose: (() -> Void)? = nil) {
+    init(post: TwitterPost, initialMediaIndex: Int = 0, onSearchUser: ((String) -> Void)? = nil, onBack: (() -> Void)? = nil) {
         self.post = post
         _mediaIndex = State(initialValue: initialMediaIndex)
         self.onSearchUser = onSearchUser
-        self.onClose = onClose
+        self.onBack = onBack
     }
 
+    /// 返回：优先走详情栈（回到上一条推文详情），栈空则由 ContentView 关闭浮层。
+    private func back() {
+        if let onBack { onBack() } else { dismiss() }
+    }
+
+    /// 关闭整个浮层（点卡外空白 / ESC）：与「返回」不同——
+    /// 返回是逐层回退（引用链、头像跳转），关闭是直接离开详情。
     private func close() {
-        if let onClose { onClose() } else { dismiss() }
+        DetailOverlayCenter.shared.close()
+    }
+
+    /// 排序后的评论（层级展示用）。`relevance` 保持服务端顺序（见 `ReplySort`）。
+    private var sortedReplies: [ReplyNode] {
+        replySort.sorted(replies)
     }
 
     private var medias: [TwitterMedia] { (detail?.medias ?? post.medias) ?? [] }
@@ -68,10 +81,14 @@ struct MediaDetailView: View {
                 .ignoresSafeArea()
         )
         .contentShape(Rectangle())
+        // 点卡外空白 = 直接关闭（用户明确点了"外面"，语义是离开详情，
+        // 不是逐层返回——否则点空白要按引用链一路退回去，与直觉不符）
         .onTapGesture { close() }
         .background {
-            // 快捷键:ESC 关闭;←/→ 切换媒体
-            Button("") { close() }
+            // 快捷键:ESC 逐层返回(与返回按钮一致);←/→ 切换媒体。
+            // 注意：这里**不能**再放一个 ESC 关闭的按钮——两个 .escape 快捷键里
+            // 只有一个会生效，语义会随注册顺序漂移，表现为"ESC 有时返回、有时直接关"。
+            Button("") { back() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .opacity(0)
             Button("") {
@@ -95,21 +112,22 @@ struct MediaDetailView: View {
 
     // MARK: - 左：媒体卡
 
-    /// 关闭按钮：与点赞/书签/分享同一行，靠右（放在推文卡内，用户一进详情就能看到出口）
-    private var closeButton: some View {
+    /// 返回按钮：与点赞/书签/分享同一行，靠右。
+    /// 图案为返回箭头、用**强调色**（用户要求）——它与「关闭」语义不同：
+    /// 点引用推文进来后按它回到原推文，点头像搜用户后按它回到原详情。
+    private var backButton: some View {
         Button {
-            close()
+            back()
         } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
                 .frame(width: 36, height: 36)
                 .liquidGlass(interactive: true, cornerRadius: 18)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help(L("关闭"))
-        .keyboardShortcut(.escape, modifiers: []) // 保留 ESC 关闭
+        .help(NavigationHistory.shared.canGoBack ? L("返回上一个界面") : L("返回"))
     }
 
     private var mediaCard: some View {
@@ -299,8 +317,9 @@ struct MediaDetailView: View {
             // 引用推文：内嵌在正文下方（与时间线卡片一致）
             if let quoted = post.quotedPost?.value {
                 QuotedPostCard(post: quoted, onOpen: {
-                    // 用 detail 里的最新副本，保证引用内容与主推文同源
-                    DetailOverlayCenter.shared.open(quoted)
+                    // 在浮层**内部**跳转：`openFromDetail` 会把当前推文记入历史，
+                    // 因此在新详情里点「返回」会回到本条推文（用户要求）
+                    DetailOverlayCenter.shared.openFromDetail(quoted)
                 }, onAvatar: { onSearchUser?(quoted.user.screenName) })
             }
 
@@ -327,8 +346,8 @@ struct MediaDetailView: View {
                     Text(actionMessage).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                // 关闭放在最右：与互动按钮同排，位置固定且不会遮挡推文内容
-                closeButton
+                // 返回放在最右：与互动按钮同排，位置固定且不会遮挡推文内容
+                backButton
             }
             .padding(.top, 2)
         }
@@ -360,6 +379,18 @@ struct MediaDetailView: View {
                 Text(L("评论")).font(.headline)
                 Spacer()
                 if loadingReplies { ProgressView().controlSize(.small) }
+                // 排序：相关（服务端顺序）/ 喜欢 / 最近。
+                // 放在卡片头而不是藏进菜单——评论排序是高频动作。
+                Picker(L("排序"), selection: $replySort) {
+                    Text(L("相关")).tag(ReplySort.relevance)
+                    Text(L("喜欢")).tag(ReplySort.likes)
+                    Text(L("最近")).tag(ReplySort.recent)
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 84)
+                .disabled(replies.isEmpty)
+                .help(L("评论排序：相关为服务端推荐顺序"))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -370,29 +401,15 @@ struct MediaDetailView: View {
                 Text(repliesError!)
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else if replies.isEmpty && !loadingReplies {
+                Text(L("暂无评论"))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(replies) { reply in
-                            HStack(alignment: .top, spacing: 10) {
-                                CachedAvatarView(urlString: reply.user.avatar, size: 30)
-                                    .contentShape(Circle())
-                                    .onTapGesture { onSearchUser?(reply.user.screenName) }
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack {
-                                        Text(reply.user.name).font(.subheadline.weight(.semibold))
-                                        Text("@\(reply.user.screenName)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { onSearchUser?(reply.user.screenName) }
-                                    // 评论过长时折叠 + 可翻译
-                                    TranslatableText(text: reply.fullText ?? "",
-                                                     translationKey: reply.id,
-                                                     lang: reply.lang,
-                                                     collapsedLines: 4)
-                                }
-                            }
+                        ForEach(sortedReplies) { node in
+                            replyRow(node)
                         }
                     }
                     .padding(14)
@@ -405,10 +422,60 @@ struct MediaDetailView: View {
         .shadow(color: .black.opacity(0.28), radius: 24, x: 0, y: 10)
     }
 
+    /// 一条回复：按 depth 缩进 + 左侧连接线。
+    ///
+    /// 缩进上限 3 层（卡片只有 410pt 宽，无限缩进会把正文挤成一条缝）；
+    /// 更深的层不再缩进，改为在作者行前加「回复 @xxx」前缀表明从属关系。
+    /// 孤儿（父不在本页）同样用该前缀——它对用户来说与"父被折叠"是一回事。
+    @ViewBuilder
+    private func replyRow(_ node: ReplyNode) -> some View {
+        let indent = min(node.depth - 1, 3)
+        HStack(alignment: .top, spacing: 0) {
+            if indent > 0 {
+                // 连接线：标明从属关系（参考 X 网页端）
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(width: 1)
+                    .padding(.trailing, 9)
+            }
+            HStack(alignment: .top, spacing: 10) {
+                CachedAvatarView(urlString: node.post.user.avatar, size: 30)
+                    .contentShape(Circle())
+                    .onTapGesture { onSearchUser?(node.post.user.screenName) }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(node.post.user.name).font(.subheadline.weight(.semibold))
+                        Text("@\(node.post.user.screenName)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        // 缩进到上限（或父不在本页）后，靠文字表达层级：
+                        // 前缀用**被回复者**（node.parentScreenName），不是本条作者
+                        if (indent >= 3 || node.isPartialParent), let parent = node.parentScreenName {
+                            Text(L("回复 %@").replacingOccurrences(of: "%@", with: "@\(parent)"))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSearchUser?(node.post.user.screenName) }
+                    // 评论过长时折叠 + 可翻译
+                    TranslatableText(text: node.post.fullText ?? "",
+                                     translationKey: node.post.id,
+                                     lang: node.post.lang,
+                                     collapsedLines: 4)
+                }
+            }
+        }
+        .padding(.leading, CGFloat(indent) * 16)
+    }
+
     // MARK: - 动作
 
     private func toggleLike() {
         liked.toggle()
+        // 本地的点赞状态已变，缓存里的计数过时了：丢弃该条，
+        // 否则下次打开这条推文会看到旧的 liked/favoriteCount
+        TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
                 if liked { try await TwitterAPI.shared.favoriteTweet(id: post.id) }
@@ -419,6 +486,7 @@ struct MediaDetailView: View {
 
     private func toggleRetweet() {
         retweeted.toggle()
+        TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
                 if retweeted { try await TwitterAPI.shared.createRetweet(id: post.id) }
@@ -429,6 +497,7 @@ struct MediaDetailView: View {
 
     private func toggleBookmark() {
         bookmarked.toggle()
+        TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
                 if bookmarked { try await TwitterAPI.shared.createBookmark(id: post.id) }
@@ -447,17 +516,29 @@ struct MediaDetailView: View {
     private func loadReplies() async {
         loadingReplies = true
         defer { loadingReplies = false }
+
+        // 先查短期缓存：浮层内跳转（点引用推文、返回）会按推文 ID 重建视图，
+        // 重建即重跑本方法。回看刚看过的推文不该再打一次 TweetDetail —— 见 `TweetDetailCache`。
+        if let hit = TweetDetailCache.shared.get(post.id) {
+            detail = hit.focal
+            resyncMediaIndex(from: post.medias, to: hit.focal.medias)
+            liked = hit.focal.favorited ?? false
+            retweeted = hit.focal.retweeted ?? false
+            replies = hit.replies
+            return
+        }
+
         do {
-            let full = try await TwitterAPI.shared.getTweet(id: post.id)
+            // **一次** TweetDetail 拿到 focal + 评论树（分别取会把同一请求打两遍，白耗配额）
+            let (full, nodes) = try await TwitterAPI.shared.getTweetDetailTree(id: post.id)
             detail = full
             // 详情返回的媒体集合可能与列表里的不一致（数量/顺序），按媒体 id 重新定位当前索引，
             // 否则页码错乱或停在越界位置
             resyncMediaIndex(from: post.medias, to: full.medias)
             liked = full.favorited ?? false
             retweeted = full.retweeted ?? false
-            // replies = 会话时间线里非 focal 的推文
-            let all = try await TwitterAPI.shared.getTweetReplies(id: post.id)
-            replies = all.filter { $0.id != post.id }
+            replies = nodes
+            TweetDetailCache.shared.put(post.id, focal: full, replies: nodes)
         } catch {
             repliesError = L("评论加载失败")
         }
