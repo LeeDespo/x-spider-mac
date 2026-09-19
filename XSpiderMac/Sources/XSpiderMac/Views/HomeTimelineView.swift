@@ -195,8 +195,11 @@ struct HomeTimelineView: View {
                     // 分批渲染：只渲染已展开的部分
                     WaterfallLayout(columnCount: columns, spacing: 10) {
                         ForEach(Array(store.flatMedia.prefix(store.mediaRenderedCount).enumerated()), id: \.element.media.id) { index, item in
-                            WaterfallMediaCell(media: item.media) {
+                            WaterfallMediaCell(post: item.post, media: item.media) {
                                 DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+                            } onOpenViewer: {
+                                // 切换范围 = **整个瀑布流**（已渲染的部分），与详情页（仅本推文）区分
+                                openViewer(mediaId: item.media.id)
                             }
                             // 供 ScrollViewReader 定位（restoreAnchor 用它滚回上次位置）
                             .id(item.media.id)
@@ -226,6 +229,17 @@ struct HomeTimelineView: View {
 
     /// 每多少条插一个位置锚点（越小越精确、开销越大）
     private static let anchorStride = 20
+
+    /// 打开媒体查看窗口：切换范围 = 瀑布流**已渲染**的媒体。
+    /// 只取已渲染部分（而不是完整 flatMedia）：查看器里左右切换时不应跳到还没加载的条目。
+    private func openViewer(mediaId: String?) {
+        let items = Array(store.flatMedia.prefix(store.mediaRenderedCount))
+        let medias = items.map(\.media)
+        guard !medias.isEmpty else { return }
+        let start = medias.firstIndex { $0.id == mediaId } ?? 0
+        let post = items.indices.contains(start) ? items[start].post : nil
+        MediaViewerCenter.shared.open(medias: medias, index: start, post: post, origin: .waterfall)
+    }
 
     /// 位置锚点：滚到视口顶或更上时，把自己上报为"当前浏览位置"
     private func scrollAnchorProbe(id: String) -> some View {

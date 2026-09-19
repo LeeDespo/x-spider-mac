@@ -390,14 +390,15 @@ final class DownloadStore {
         return DateFormatter.dayOnly.date(from: s)
     }
 
-    /// 某推文媒体应保存的目标目录（主页"已下载"判定用）
-    func targetDir(for post: TwitterPost) -> String {
+    /// 某推文媒体应保存的目标目录（主页"已下载"判定用）。
+    /// `post` 为 nil 时回落到根目录——查看窗口等"拿不到 post"的场景不必各自判断。
+    func targetDir(for post: TwitterPost?) -> String {
         var dir = settings.download.saveDirBase
         if dir.isEmpty,
            let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first {
             dir = downloads.path
         }
-        if settings.accountSubfolderEnabled {
+        if let post, settings.accountSubfolderEnabled {
             let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
             dir = (dir as NSString).appendingPathComponent(folderName)
         }

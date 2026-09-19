@@ -195,6 +195,9 @@ struct MediaDetailView: View {
             // 无媒体时不渲染（否则出现"下载全部(0)"这种无意义操作）
             if showCapsule, !medias.isEmpty {
                 downloadCapsule
+                    // 离卡片下缘留出呼吸空间：此前胶囊紧贴底部边线，
+                    // 玻璃卡片的圆角与描边会切到它，看着"挤在边上"
+                    .padding(.bottom, 14)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -218,25 +221,65 @@ struct MediaDetailView: View {
         .buttonStyle(.plain)
     }
 
+    /// 当前媒体是否已下载（判定依据跟随设置：记录文件 / 文件名）
+    private var currentDownloaded: Bool {
+        guard let media = current else { return false }
+        return store.hasDownloaded(media: media, dir: store.targetDir(for: detail ?? post), post: detail ?? post)
+    }
+
+    /// 本条推文里已下载的媒体数（`m`）
+    private var downloadedCount: Int {
+        let p = detail ?? post
+        let dir = store.targetDir(for: p)
+        return medias.filter { store.hasDownloaded(media: $0, dir: dir, post: p) }.count
+    }
+
+    /// 下载胶囊：媒体正下方居中。
+    ///
+    /// 三个文案都随**已下载状态**变化（判定依据跟随设置，见 `DownloadStore.hasDownloaded`）：
+    /// - 当前媒体已下载 → 「当前已下载」（不再显示「下载当前」，避免误导）
+    /// - 还有未下载 → 「下载全部(n-m)」，n=推文媒体数，m=已下载数
+    /// - 全部已下载 → 「全部已下载」
     private var downloadCapsule: some View {
-        HStack(spacing: 14) {
+        // 读 judgementVersion 建立观察依赖：判定依据/保存路径变化后缓存会变，
+        // 但 SwiftUI 追踪不到 static 缓存 → 不读它按钮状态会停在旧结果
+        let _ = store.judgementVersion
+        let total = medias.count
+        let done = downloadedCount
+        let allDone = total > 0 && done >= total
+        return HStack(spacing: 12) {
             Button {
                 if let media = current { downloadCurrent(media) }
             } label: {
-                Label(L("下载当前"), systemImage: "arrow.down.circle")
+                Label(currentDownloaded ? L("当前已下载") : L("下载当前"),
+                      systemImage: currentDownloaded ? "checkmark.circle" : "arrow.down.circle")
                     .font(.callout)
             }
             .buttonStyle(.plain)
             .buttonBorderShape(.capsule)
+            .disabled(currentDownloaded)
 
             Button {
                 downloadAllInTweet()
             } label: {
-                Label(L("下载全部(\(medias.count))"), systemImage: "arrow.down.circle.fill")
+                Label(allDone ? L("全部已下载") : L("下载全部(\(total - done))"),
+                      systemImage: allDone ? "checkmark.circle.fill" : "arrow.down.circle.fill")
                     .font(.callout)
             }
             .buttonStyle(.plain)
             .buttonBorderShape(.capsule)
+            .disabled(allDone)
+
+            // 放大镜：开媒体查看窗口（与下载按钮同一行）
+            Button {
+                openViewer()
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .buttonBorderShape(.capsule)
+            .help(L("详细查看"))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -245,18 +288,29 @@ struct MediaDetailView: View {
         .onTapGesture {} // 点击胶囊不退出弹窗
     }
 
+    /// 打开媒体查看窗口：范围是**本条推文的全部媒体**
+    private func openViewer() {
+        guard !medias.isEmpty else { return }
+        MediaViewerCenter.shared.open(medias: medias, index: mediaIndex,
+                                      post: detail ?? post, origin: .detail)
+    }
+
     private func downloadCurrent(_ media: TwitterMedia) {
         Task {
             if let idx = medias.firstIndex(where: { $0.id == media.id }) {
+                _ = idx
                 _ = await store.createDownloadTask(post: detail ?? post, media: media)
             }
         }
     }
 
+    /// 下载本条推文里**尚未下载**的媒体（已下载的跳过，避免重复请求配额）
     private func downloadAllInTweet() {
         Task {
             let p = detail ?? post
-            await store.batchCreateDownloadTasks((p.medias ?? []).map { (p, $0) })
+            let dir = store.targetDir(for: p)
+            let pending = medias.filter { !store.hasDownloaded(media: $0, dir: dir, post: p) }
+            await store.batchCreateDownloadTasks(pending.map { (p, $0) })
         }
     }
 

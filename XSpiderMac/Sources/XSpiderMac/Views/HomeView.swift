@@ -13,6 +13,11 @@ struct HomeView: View {
     /// 已勾选待下载的媒体 (post.id, media.id)
     @State private var selectedMediaKeys: Set<String> = []
 
+    /// 时间范围：改动先存 pending，点「确定」才提交并刷新（避免拖日期就连发请求）
+    @State private var pendingDateStart: Date = Date(timeIntervalSince1970: 0)
+    @State private var pendingDateEnd: Date = Date()
+    @State private var hasPendingDateChange = false
+
     var body: some View {
         VStack(spacing: 0) {
             searchBar
@@ -26,7 +31,15 @@ struct HomeView: View {
                     loadingView
                 } else if let user = store.userInfo {
                     userInfoCard(user)
-                    downloadController
+                    filterBar
+                    // 切换用户/数据源后同步 pending 时间范围（否则沿用上一个用户的值，
+                    // 看起来「确定」按钮是启用的却提交了不相干的日期）
+                    .onChange(of: store.filter.dateRange?.start) { _, v in
+                        if let v { pendingDateStart = v; hasPendingDateChange = false }
+                    }
+                    .onChange(of: store.filter.dateRange?.end) { _, v in
+                        if let v { pendingDateEnd = v; hasPendingDateChange = false }
+                    }
                     // 「自动加载媒体」关闭时，只显示用户卡 + 下载配置 + 手动加载按钮
                     // （内容左上顶置布局，Spacer 占位，避免整页居中错乱）
                     if store.postList.isEmpty && !store.postListLoading && !SettingsStore.shared.settings.autoLoadMediaEnabled {
@@ -63,14 +76,32 @@ struct HomeView: View {
         .frame(minWidth: 600)
         .overlay(alignment: .bottom) {
             if selectiveMode {
-                // 选择模式操作条:撤销 + 全部下载(短条居中)
-                HStack(spacing: 14) {
+                // 选择模式操作条：撤销 / 全选 / 反选 / 全不选 / 下载所选
+                HStack(spacing: 12) {
+                    // 用占位符而非字符串插值：插值会让整串成为查表 key，永远命中不到翻译表
+                    Text(L("已选 %@ / %@")
+                        .replacingOccurrences(of: "%@", with: "\(selectedMediaKeys.count)")
+                        .replacingOccurrences(of: "%@", with: "\(store.flatMediaList.count)"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Button(L("撤销")) {
                         selectiveMode = false
                         selectedMediaKeys = []
                     }
                     .compatGlassButton()
-                    Button(L("全部下载")) { downloadSelected() }
+
+                    Button(L("全选")) { selectAll() }
+                        .compatGlassButton()
+                    Button(L("反选")) { invertSelection() }
+                        .compatGlassButton()
+                    Button(L("全不选")) {
+                        withAnimation(.easeOut(duration: 0.15)) { selectedMediaKeys = [] }
+                    }
+                    .compatGlassButton()
+
+                    // 「全选」+「下载所选」= 原来的「下载全部」
+                    Button(L("下载所选")) { downloadSelected() }
                         .compatGlassProminentButton()
                         .disabled(selectedMediaKeys.isEmpty)
                 }
@@ -97,6 +128,17 @@ struct HomeView: View {
         post.id + "/" + (media.id ?? media.url ?? UUID().uuidString)
     }
 
+    /// 打开媒体查看窗口：切换范围 = 传入列表的全部媒体（网格/瀑布流已加载的部分）。
+    /// `mediaId` 决定从哪一张开始看。
+    private func openViewer(mediaId: String?,
+                            in list: [(post: TwitterPost, media: TwitterMedia, index: Int)]) {
+        let medias = list.map(\.media)
+        guard !medias.isEmpty else { return }
+        let start = medias.firstIndex { $0.id == mediaId } ?? 0
+        let post = list.indices.contains(start) ? list[start].post : nil
+        MediaViewerCenter.shared.open(medias: medias, index: start, post: post, origin: .userGrid)
+    }
+
     /// 下载勾选的媒体
     private func downloadSelected() {
         let items = store.flatMediaList.filter { selectedMediaKeys.contains(selectionKey($0.post, $0.media)) }
@@ -106,6 +148,21 @@ struct HomeView: View {
             }
             selectiveMode = false
             selectedMediaKeys = []
+        }
+    }
+
+    /// 全选当前列表（受媒体类型筛选影响——列表本身就是筛选后的结果）
+    private func selectAll() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            selectedMediaKeys = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
+        }
+    }
+
+    /// 反选：已选的取消、未选的选中
+    private func invertSelection() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            let all = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
+            selectedMediaKeys = all.subtracting(selectedMediaKeys)
         }
     }
 
@@ -259,35 +316,73 @@ struct HomeView: View {
         .padding(.bottom, 8)
     }
 
-    // MARK: - 下载配置（上游 DownloadController：日期范围 + 媒体类型 + 数据源 + 开始下载）
+    // MARK: - 筛选栏（左：数据源分段 + 时间范围 + 确定；右：媒体类型 + 选择下载）
 
-    private var downloadController: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L("下载配置"))
-                .font(.headline)
+    /// 筛选栏取代了原先的「下载配置」卡片。
+    ///
+    /// 布局按需求：**左**为数据源分段控制器与时间范围（紧接账号卡片下方），
+    /// **右**为媒体类型筛选与「选择下载」——后两者只在数据源 = 媒体时出现
+    /// （推文时间线渲染推文卡，没有逐媒体勾选语义）。
+    ///
+    /// 时间范围不即时生效：改动只更新 pending 值，点「确定」才提交并刷新，
+    /// 避免用户每拖一次日期就触发一次请求（RequestGate 与 429 都很敏感）。
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 16) {
+                // —— 左：数据源 + 时间范围 + 确定 ——
+                Picker(L("数据源"), selection: Binding(
+                    get: { store.filter.source },
+                    set: { store.setFilter(store.filter.withSource($0)) }
+                )) {
+                    Text(L("推文")).tag(DownloadFilter.Source.tweets)
+                    Text(L("媒体")).tag(DownloadFilter.Source.medias)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 160)
 
-            HStack(spacing: 16) {
-                // 日期范围（上游 DatePicker.RangePicker）
-                DatePicker(
-                    L("从"),
-                    selection: Binding(
-                        get: { store.filter.dateRange?.start ?? Date(timeIntervalSince1970: 0) },
-                        set: { store.setFilter(store.filter.withDateStart($0)) }
-                    ),
-                    displayedComponents: .date
-                )
-                DatePicker(
-                    L("至"),
-                    selection: Binding(
-                        get: { store.filter.dateRange?.end ?? Date() },
-                        set: { store.setFilter(store.filter.withDateEnd($0)) }
-                    ),
-                    displayedComponents: .date
-                )
+                DatePicker("", selection: Binding(
+                    get: { pendingDateStart },
+                    set: { pendingDateStart = $0; hasPendingDateChange = true }
+                ), displayedComponents: .date)
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                Text("–").foregroundStyle(.secondary)
+                DatePicker("", selection: Binding(
+                    get: { pendingDateEnd },
+                    set: { pendingDateEnd = $0; hasPendingDateChange = true }
+                ), displayedComponents: .date)
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+
+                Button(L("确定")) { applyDateRange() }
+                    .compatGlassButton()
+                    .disabled(!hasPendingDateChange)
+                    .help(L("按所选时间范围重新加载"))
 
                 Spacer()
 
-                // 两段式：创建后变绿色「已创建」，再点恢复，再点才再次创建（防重复触发）
+                // —— 右：媒体类型 + 选择下载（仅媒体数据源）——
+                if store.filter.source == .medias {
+                    ForEach([MediaType.photo, .video, .gif], id: \.self) { type in
+                        Toggle(isOn: Binding(
+                            get: { store.filter.mediaTypes?.contains(type) ?? false },
+                            set: { store.setFilter(store.filter.togglingMediaType(type, on: $0)) }
+                        )) {
+                            Text(type.displayName)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+
+                    Button(L("选择下载")) {
+                        withAnimation(.spring(duration: 0.35, bounce: 0.15)) { selectiveMode = true }
+                    }
+                    .compatGlassButton()
+                }
+            }
+
+            // 全量下载（创建任务）：与筛选并列的独立动作，不占筛选行
+            HStack(spacing: 10) {
                 if creationTaskCreated {
                     Button {
                         withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = false }
@@ -299,66 +394,36 @@ struct HomeView: View {
                     }
                     .foregroundStyle(.green)
                     .compatGlassProminentButton()
-                    .transition(.scale(scale: 0.85).combined(with: .opacity))
                 } else {
                     Button(L("下载全部")) {
                         if let user = store.userInfo {
                             creationStore.createCreationTask(user: user, filter: store.filter)
-                            // 仅在真的入队时打勾(重复创建被拒则不打勾)
                             if creationStore.creationBlockedReason == nil {
                                 withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = true }
                             }
                         }
                     }
                     .compatGlassProminentButton()
-                    .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
                 if let blocked = creationStore.creationBlockedReason {
-                    Text(blocked)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .transition(.opacity)
+                    Text(blocked).font(.caption).foregroundStyle(.orange)
                 }
-
-                // 选择下载:仅媒体时间线数据源可用(推文时间线渲染推文卡,无逐媒体勾选语义)
-                Button(L("选择下载")) {
-                    withAnimation(.spring(duration: 0.35, bounce: 0.15)) { selectiveMode = true }
-                }
-                .compatGlassButton()
-                .disabled(store.filter.source != .medias)
-                .opacity(store.filter.source != .medias ? 0.4 : 1)
-            }
-
-            HStack(spacing: 16) {
-                // 媒体类型（上游 Checkbox ×3）
-                ForEach([MediaType.photo, .video, .gif], id: \.self) { type in
-                    Toggle(isOn: Binding(
-                        get: { store.filter.mediaTypes?.contains(type) ?? false },
-                        set: { store.setFilter(store.filter.togglingMediaType(type, on: $0)) }
-                    )) {
-                        Text(type.displayName)
-                    }
-                    .toggleStyle(.checkbox)
-                }
-
                 Spacer()
-
-                // 数据源（上游 Radio：medias / tweets）
-                Picker(L("数据源"), selection: Binding(
-                    get: { store.filter.source },
-                    set: { store.setFilter(store.filter.withSource($0)) }
-                )) {
-                    Text(L("媒体时间线")).tag(DownloadFilter.Source.medias)
-                    Text(L("推文时间线")).tag(DownloadFilter.Source.tweets)
-                }
-                .pickerStyle(.radioGroup)
-                .infoHint(L("媒体时间线：加载快，直达媒体内容。\n推文时间线：可检索到更久远的媒体，翻页更慢。"))
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .liquidGlass(cornerRadius: 16)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+    }
+
+    /// 提交时间范围并刷新列表。
+    /// 只改范围、立即重新加载首页数据（用户要求"点击确定后要根据时间范围刷新页面"）。
+    private func applyDateRange() {
+        store.setFilter(store.filter.withDateStart(pendingDateStart).withDateEnd(pendingDateEnd))
+        hasPendingDateChange = false
+        Task { await store.reloadWithCurrentFilter() }
     }
 
     /// 无限滚动底栏(媒体网格/推文列表共用)
@@ -439,6 +504,9 @@ struct HomeView: View {
                                           },
                                           onDoubleClick: {
                                               DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)
+                                          },
+                                          onOpenViewer: {
+                                              openViewer(mediaId: item.media.id, in: store.flatMediaList)
                                           })
                         }
                     }
@@ -547,6 +615,8 @@ struct MediaGridItem: View {
     var onToggleSelect: (() -> Void)? = nil
     /// 单击 → 推文详情弹窗（HomeView 层弹出;hover 按钮在上层不受影响）
     var onDoubleClick: (() -> Void)? = nil
+    /// 点击放大镜 → 打开媒体查看窗口（切换范围为当前网格已加载的全部媒体）
+    var onOpenViewer: (() -> Void)? = nil
     @State private var isHovering = false
     @State private var thumbnail: NSImage?
 
@@ -591,28 +661,12 @@ struct MediaGridItem: View {
                 .padding(6)
             }
 
-            // hover 操作：无遮罩，中央一排圆形图标按钮（已下载勾 / 下载 / 打开推文）
+            // hover 操作：下载/已下载 + 详细查看（共用于瀑布流，见 MediaCardActions）
             if isHovering {
-                HStack(spacing: 10) {
-                    // 读 judgementVersion 以建立观察依赖：判定依据/保存路径变化后
-                    // 这些 static 缓存会变，但 SwiftUI 追踪不到 → 按钮状态会停在旧结果
-                    let _ = DownloadStore.shared.judgementVersion
-                    if DownloadStore.shared.hasDownloaded(media: media,
-                                                           dir: DownloadStore.shared.targetDir(for: post),
-                                                           post: post) {
-                        iconBadge("checkmark", color: .green, help: L("该媒体已下载过"))
-                    } else {
-                        roundIconButton("arrow.down", help: L("下载")) {
-                            Task { await DownloadStore.shared.createDownloadTask(post: post, media: media) }
-                        }
-                    }
-                    if let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") {
-                        roundIconButton("link", help: L("打开推文")) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
+                MediaCardActions(post: post, media: media) {
+                    // 切换范围 = 当前列表（搜索用户网格里已加载的全部媒体）
+                    onOpenViewer?()
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
         .scaleEffect(selectionMode && !isSelected ? 0.86 : 1.0)
@@ -641,36 +695,6 @@ struct MediaGridItem: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-    }
-
-    /// 圆形玻璃图标按钮（36pt）
-    @ViewBuilder
-    private func roundIconButton(_ system: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: system)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(.black.opacity(0.45), in: Circle())
-                .overlay {
-                    Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
-    /// 已下载徽标（绿色圆 + 白勾，不可点）
-    private func iconBadge(_ system: String, color: Color, help: String) -> some View {
-        Image(systemName: system)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: 36, height: 36)
-            .background(color.opacity(0.85), in: Circle())
-            .overlay {
-                Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1)
-            }
-            .help(help)
     }
 
     /// 缩略图 URL：pbs.twimg.com 图片 URL 加 name=small（实际约 680px 宽）省流量；

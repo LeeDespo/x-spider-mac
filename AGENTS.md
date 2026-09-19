@@ -68,6 +68,15 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
     一律走 `ImageCache` 降采样。
 13. **强调色用在按钮背景上**，不是把图标/文字染成强调色
     （回看 `docs/DEVELOPMENT.md` §10.3）。行内文字型小操作仍可用强调色文字。
+14. **媒体卡的按钮一律走 `Views/MediaCardActions.swift`**，不要各写一份：
+    三处（详情/瀑布流/搜索网格）必须都按已下载状态切换按钮，
+    各写一份必然漂移——瀑布流曾因此完全没有下载按钮。
+15. **媒体查看窗口用 `NSWindow` 不是 `.sheet`**（`Support/MediaViewerCenter.swift`）：
+    用户在窗口里选一张媒体再看另一张，各处的切换**范围**不同
+    （详情=本推文 / 瀑布流=整个瀑布流），由 `Session.Origin` 决定，别混用。
+16. **搜索页数据源按用户记忆、默认推文**：`HomepageStore.rememberedSource(for:)`。
+    应用时机**必须在 `loadPostList` 之前**，否则先用默认源拉一页再切源重拉，
+    白白多一次请求（项目一直在对抗 429）。
 
 ## 构建与验证
 

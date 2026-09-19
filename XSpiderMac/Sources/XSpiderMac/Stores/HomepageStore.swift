@@ -10,7 +10,9 @@ final class HomepageStore {
     var keyword: String = ""
     var filter: DownloadFilter = DownloadFilter(
         mediaTypes: [.photo, .video, .gif],
-        source: .medias
+        // 默认「推文」数据源（用户要求）。每个用户的实际选择会覆盖它，
+        // 见 `rememberedSource(for:)`。
+        source: .tweets
     )
 
     var userInfo: TwitterUser?
@@ -118,8 +120,12 @@ final class HomepageStore {
             guard generation == userGeneration else { return } // 旧请求晚到，丢弃
             userInfoLoading = false
             userInfo = user
+            // 恢复该用户上次的数据源选择（默认「推文」）。
+            // 必须在 loadPostList 之前：否则会先用默认源拉一页、再切源重拉一遍，
+            // 白白多一次请求（项目一直在对抗 429）。
+            filter.source = Self.rememberedSource(for: user.screenName)
             AppStore.shared.addSearchHistory(sn, displayName: user.name, avatarURL: user.avatar)
-            // 「自动加载媒体」关闭时只显示用户卡 + 下载配置，省流量
+            // 「自动加载媒体」关闭时只显示用户卡 + 筛选栏，省流量
             if SettingsStore.shared.settings.autoLoadMediaEnabled {
                 await loadPostList(generation: generation)
             }
@@ -444,12 +450,57 @@ final class HomepageStore {
     func setFilter(_ filter: DownloadFilter) {
         let sourceChanged = filter.source != self.filter.source
         self.filter = filter
+        // 数据源选择按用户记忆（下次进同一用户还是上次的选项）
+        if sourceChanged {
+            Self.persistSource(filter.source, for: listOwnerScreenName ?? keyword)
+        }
         // 数据源切换后重载列表(媒体时间线/推文时间线内容不同)
         if sourceChanged, userInfo != nil {
             cancelFill()
             clearPostList()
             Task { await loadPostList() }
         }
+    }
+
+    /// 按所选时间范围/筛选条件重新加载列表。
+    /// 「确定」按钮用：内容按新范围整体替换，因此清空列表（含滚动几何与去重集）。
+    func reloadWithCurrentFilter() async {
+        guard userInfo != nil else { return }
+        cancelFill()
+        clearPostList()
+        // 内容整体替换：底部哨兵位置需重置，否则旧的"内容底部"值会立刻触发连翻
+        bottomSentinelY = .greatestFiniteMagnitude
+        await loadPostList()
+    }
+
+    // MARK: - 数据源记忆（按用户）
+    //
+    // 这几个方法**不碰 store 状态**，只读写 UserDefaults，因此标 `nonisolated`：
+    // 视图/测试都能直接调用，不必先跳 MainActor。
+
+    /// 记住某个用户的「推文 / 媒体」数据源选择。
+    /// 需求：下次进入这个用户时仍是上次的选项。**不跨用户**——按 screen_name 分别记。
+    nonisolated static func persistSource(_ source: DownloadFilter.Source, for screenName: String?) {
+        guard let screenName, !screenName.isEmpty else { return }
+        UserDefaults.standard.set(source.rawValue, forKey: sourceKey(for: screenName))
+    }
+
+    /// 取该用户上次的数据源选择；没记录过则默认**推文**
+    /// （用户明确要求默认值是"推文"，与媒体时间线更快的旧默认相反）。
+    nonisolated static func rememberedSource(for screenName: String?) -> DownloadFilter.Source {
+        guard let screenName, !screenName.isEmpty,
+              let raw = UserDefaults.standard.string(forKey: sourceKey(for: screenName)),
+              let s = DownloadFilter.Source(rawValue: raw) else { return .tweets }
+        return s
+    }
+
+    /// 清掉某用户的记忆（测试隔离用）
+    nonisolated static func clearRememberedSource(for screenName: String) {
+        UserDefaults.standard.removeObject(forKey: sourceKey(for: screenName))
+    }
+
+    nonisolated private static func sourceKey(for screenName: String) -> String {
+        "homepage.source.\(screenName.lowercased())"
     }
 
     // MARK: - 展示用的媒体平面列表（上游 PostListGridView mediaList 计算）

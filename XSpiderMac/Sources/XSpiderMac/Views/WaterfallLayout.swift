@@ -74,9 +74,12 @@ struct WaterfallLayout: Layout {
 /// 媒体瀑布流单元：按媒体自身宽高比显示，图片填满格子（宽度固定、高度随比例）。
 /// 高度由元数据算出，不依赖图片解码 —— 这是瀑布流测量的廉价性前提。
 struct WaterfallMediaCell: View {
+    let post: TwitterPost
     let media: TwitterMedia
     /// 容器给定宽度（由布局提供）
     var onTap: () -> Void
+    /// 点击放大镜 → 打开媒体查看窗口（切换范围 = 整个瀑布流）
+    var onOpenViewer: () -> Void
 
     @State private var image: NSImage?
     @State private var hovering = false
@@ -117,14 +120,12 @@ struct WaterfallMediaCell: View {
                     .padding(6)
                 }
 
-                // hover 淡显，提示可点击
+                // hover：与搜索用户网格**同一套按钮**（下载/已下载 + 详细查看）。
+                // 此前这里只是一个放大图标、没有下载按钮——两处行为不一致是漂移的结果，
+                // 现在共用 `MediaCardActions`。
                 if hovering {
                     Color.black.opacity(0.18)
-                        .overlay {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.9))
-                        }
+                    MediaCardActions(post: post, media: media, onOpenViewer: onOpenViewer)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))
