@@ -431,6 +431,120 @@ actor TwitterAPI {
         return (json, instructions)
     }
 
+    // MARK: - 搜索时间线（SearchTimeline：服务端按时间范围过滤）
+
+    /// 搜索端点对应的展示形态（对应网页的 `f=media` / `f=live`）。
+    enum SearchProduct: String, Sendable {
+        case media  = "Media"    // 网页 f=media
+        case latest = "Latest"   // 网页 f=live
+    }
+
+    /// 把 UI 的时间范围 + 数据源翻译成 X 搜索语法。
+    ///
+    /// **`until:` 是排他的**（X 语义：`until:2026-09-01` 不含 9 月 1 日当天）。
+    /// 用户界面的"至"是**含当日**的直觉，所以这里用 `inclusiveEnd`（当天 23:59:59）
+    /// 再 +1 天，得到次日日期——否则用户会发现"至"那天永远没有内容。
+    ///
+    /// **必须按本地日历取日期**：`DatePicker` 给的 `end` 是**本地**当天零点，
+    /// 若用 UTC 格式化，在东八区会得到一个"前一天"的日期字符串，
+    /// 导致范围整体偏移一天（实测：本地 2025-08-31 → UTC 写成 2025-08-30）。
+    ///
+    /// `filter:media` 对应媒体数据源：让服务端只返回带媒体的推文，
+    /// 比拉回来再本地筛更省配额。
+    static func searchRawQuery(screenName: String, range: DownloadFilter.DateRange,
+                               includeMediaOnly: Bool) -> String {
+        let since = Self.searchDateString(range.start)
+        // 「至」当天要包含 → until 取**次日**（X 的 until 排他）。
+        // 注意不能用 inclusiveEnd(+1)：inclusiveEnd 已经是"当天 23:59:59"，
+        // 再加一天会变成后天，把范围多算一天（实测踩过）。
+        let until = Self.searchDateString(Self.nextDay(range.end))
+        var q = "from:\(screenName) since:\(since) until:\(until)"
+        if includeMediaOnly { q += " filter:media" }
+        return q
+    }
+
+    /// 次日（按本地日历，处理跨月/跨年）
+    static func nextDay(_ date: Date) -> Date {
+        Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86400)
+    }
+
+    /// 日期 → `yyyy-MM-dd`（**本地时区**，与 DatePicker 的日历一致）
+    static func searchDateString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
+    /// SearchTimeline。**必须 POST + JSON body**——实测：
+    ///
+    /// | 请求方式 | 结果 |
+    /// |---|---|
+    /// | GET（带 query string） | **404** |
+    /// | POST 表单编码 | **400** |
+    /// | **POST + `application/json`** | **200** |
+    ///
+    /// 这是本次实现最容易踩的坑：**GET 会 404，且与 queryId 无关**——
+    /// 实测 openapi 记录的旧 queryId 与当前 bundle 的新 queryId，
+    /// 用 POST 都返回 200 与 42 条真实数据；只有随机乱写的才 404。
+    /// 我最初用 GET 试，误判成"queryId 失效"并去做了自愈，纯属徒劳。
+    /// 网页用的就是 POST。
+    func searchTimeline(screenName: String,
+                        range: DownloadFilter.DateRange,
+                        product: SearchProduct,
+                        count: Int = 20,
+                        cursor: String? = nil) async throws -> (posts: [TwitterPost], cursor: String?) {
+        try await ensureXClIdLoaded()
+        var variables: [String: Any] = [
+            "rawQuery": Self.searchRawQuery(screenName: screenName, range: range,
+                                            includeMediaOnly: product == .media),
+            "count": count,
+            "querySource": "typed_query",
+            "product": product.rawValue,
+        ]
+        if let cursor { variables["cursor"] = cursor }
+
+        // 首次用默认 queryId；404（可能因 X 改版失效）→ 自愈后重试一次
+        do {
+            return try await performSearch(variables: variables)
+        } catch TwitterAPIError.responseError(let status) where status == 404 {
+            AppLogger.warn("SearchTimeline 404,尝试更新 queryId", category: "NET", ["status": "\(status)"])
+            guard await SearchQueryIdProvider.shared.refresh(session: client) != nil else { throw TwitterAPIError.parseFailure }
+            return try await performSearch(variables: variables)
+        }
+    }
+
+    /// 实际发请求（POST + JSON）
+    private func performSearch(variables: [String: Any]) async throws
+        -> (posts: [TwitterPost], cursor: String?) {
+        let queryId = await SearchQueryIdProvider.shared.current()
+        let path = "/i/api/graphql/\(queryId)/SearchTimeline"
+        let url = URL(string: "https://\(host)\(path)")!
+        let body = try JSONSerialization.data(withJSONObject: [
+            "variables": variables,
+            "features": Self.searchTimelineFeatures,
+        ])
+        var headers = await commonHeaders(method: "POST", path: path)
+        headers["Content-Type"] = "application/json"
+
+        let resp = try await client.request(method: "POST", url: url, headers: headers, body: body)
+        try ensureResponse(resp)
+        guard let json = (try? resp.json()) as? [String: Any] else {
+            throw TwitterAPIError.parseFailure
+        }
+        let instructions = Self.path(json, ["data", "search_by_raw_query",
+                                           "search_timeline", "timeline", "instructions"]) as? [[String: Any]] ?? []
+        // 搜索结果的条目结构与 UserMedia 一致（TimelineAddEntries + TimelineTimelineModule），
+        // 因此直接复用同一套解析——不需要为搜索写第二份。
+        let posts = Self.extractPostsFromModuleInstructions(instructions)
+        if posts.isEmpty { return ([], nil) }
+        return (posts, Self.extractBottomCursor(instructions))
+    }
+
+    /// SearchTimeline 的 features（从当前网页 bundle 的 featureSwitches 还原）
+    static let searchTimelineFeatures = #"{"rweb_video_screen_enabled":true,"rweb_cashtags_enabled":true,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":false,"rweb_tipjar_consumption_enabled":false,"verified_phone_label_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_exclude_directive_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":false,"responsive_web_enhance_cards_enabled":false}"#
+
     // MARK: - 主页时间线
 
     /// 主页 For You(推荐)/Following(关注) 时间线

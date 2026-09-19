@@ -420,6 +420,15 @@ struct SettingsView: View {
                     InfoHint(text: L("关闭后，主页仅显示用户信息与下载配置，需要时点击「加载媒体」手动加载，可显著节省流量。"))
                 }
             }
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.fastSearchLoadingEnabled },
+                set: { settingsStore.settings.app.fastSearchLoading = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("加快搜索页加载"))
+                    InfoHint(text: L("设置时间范围后，用 X 的搜索接口按时间筛选（服务端完成），加载更快：\n· 每页可返回约 42 条媒体（时间线只有 10 条）\n· 账号有停更空窗期时也不会卡住\n\n搜索浏览可能有极个别遗漏，但「下载」始终由内置爬虫逐页抓取，会把这些遗漏补上。\n关闭则改用时间线逐页加载 + 本地筛选，速度较慢但不依赖搜索接口。"))
+                }
+            }
         } header: {
             Label(L("主页"), systemImage: "house")
         }

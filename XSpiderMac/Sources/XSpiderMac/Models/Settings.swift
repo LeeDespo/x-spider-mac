@@ -213,6 +213,10 @@ struct AppSettings: Codable, Sendable {
     var translateTargetLanguage: String?
     /// 自动翻译（仅翻译语言与目标语言不同的推文）
     var autoTranslate: Bool?
+    /// 加快搜索页加载：设置时间范围后改用 X 的**搜索端点**（服务端按时间过滤），
+    /// 而不是"拉时间线 + 本地剪裁"。默认 **开**（nil 视为开）。
+    /// 关闭则回退到时间线方案（内有空窗期兜底，见 §14.3）。
+    var fastSearchLoading: Bool?
 }
 
 struct Settings: Codable, Sendable {
@@ -235,6 +239,8 @@ struct Settings: Codable, Sendable {
     /// 有效的隐私开关（默认关）
     var autoClearDownloadHistoryEnabled: Bool { app.autoClearDownloadHistory ?? false }
     var autoClearSearchHistoryEnabled: Bool { app.autoClearSearchHistory ?? false }
+    /// 加快搜索页加载（默认**开**；nil = 开）
+    var fastSearchLoadingEnabled: Bool { app.fastSearchLoading ?? true }
     /// 下载引擎（默认 aria2）
     var engine: DownloadEngine { download.engine ?? .aria2 }
     /// 并发下载数（默认 5，1–20 钳制）

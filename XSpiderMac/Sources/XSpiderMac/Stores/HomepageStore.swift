@@ -298,7 +298,9 @@ final class HomepageStore {
             seenPostIds = Set(posts.map(\.id))
             let visible = Self.applyDisplayFilter(posts, filter: filter)
             postList = visible
-            consecutiveFilteredEmptyPages = (!posts.isEmpty && visible.isEmpty) ? 1 : 0
+            // 时间轴基准：服务端原始页里最旧一条（空窗期靠它跨过，见 hasReachedRangeStart）
+            oldestSeenAt = posts.last?.createdAt
+            lastSentCursor = nil
             rebuildFlatMediaList()
             postListCursor = cursor
             postListError = nil
@@ -329,8 +331,30 @@ final class HomepageStore {
     }
 
     /// 按数据源取一页:上游网格只用 UserMedia(source 仅影响下载任务),但 mac 版 UI 承诺了
-    /// 「推文时间线」切换语义,这里按 filter.source 路由(对应上游 runCreationTask 的 getListFn)
+    /// 「推文时间线」切换语义,这里按 filter.source 路由(对应上游 runCreationTask 的 getListFn)。
+    ///
+    /// **设了时间范围且「加快搜索页加载」开启时走搜索端点**（见 §14）：
+    /// 时间由**服务端**过滤，既没有空窗期问题，一页给的条数也多得多
+    /// （实测媒体 42 条/页 vs 时间线 10 条/页）。
+    /// 关闭开关、或没设时间范围时，回退到时间线 + 本地过滤（老方案，内有空窗期兜底）。
     private func fetchPage(userId: String, cursor: String?) async throws -> (posts: [TwitterPost], cursor: String?) {
+        if let range = filter.dateRange, useSearchEndpoint {
+            let sn = userInfo?.screenName ?? ""
+            guard !sn.isEmpty else { return try await fetchTimelinePage(userId: userId, cursor: cursor) }
+            let product: TwitterAPI.SearchProduct = filter.source == .medias ? .media : .latest
+            return try await TwitterAPI.shared.searchTimeline(screenName: sn, range: range,
+                                                             product: product, cursor: cursor)
+        }
+        return try await fetchTimelinePage(userId: userId, cursor: cursor)
+    }
+
+    /// 是否走搜索端点：设置开关 + 已设时间范围 + 有 screen_name（搜索语法按用户名）
+    private var useSearchEndpoint: Bool {
+        SettingsStore.shared.settings.fastSearchLoadingEnabled
+    }
+
+    /// 时间线路径（老方案）：拉全量，由本地按日期/类型裁剪
+    private func fetchTimelinePage(userId: String, cursor: String?) async throws -> (posts: [TwitterPost], cursor: String?) {
         if filter.source == .tweets {
             // 展示用不过滤无媒体推文(requireMedia:false);下载过滤在创建任务里做
             // 展示路径：保留转推（卡片顶部显示「某某 转推」）；
@@ -374,9 +398,10 @@ final class HomepageStore {
         while postListCursor != nil, !Task.isCancelled {
             // 上游 shouldContinueRequest：内容已足够则停，等用户滚动再次触底
             if !needsMoreContent { return }
-            // 展示筛选下连续多页落空：停下并让视图提示"仍在查找"，
-            // 不再继续翻到服务端尽头（窄日期范围会翻很多空页 → 429 风暴）
-            if consecutiveFilteredEmptyPages >= Self.maxConsecutiveFilteredEmptyPages { return }
+            // **时间轴已走出范围起点** → 停。
+            // 与爬虫的 `now > since` 同义：`oldestSeenAt` 是已见到的**最旧**一条的日期，
+            // 它早于 since 说明范围已被完整翻过（空窗期天然被跨过，不误判）。
+            if hasReachedRangeStart { return }
             let ok = await loadMorePostList()
             // 请求失败(网络/限流/取消)：停止本轮，底部按状态显示重试或错误
             if !ok { return }
@@ -391,11 +416,14 @@ final class HomepageStore {
         }
     }
 
-    /// 用户点「继续查找」：把连续空页计数归零，允许再翻若干页。
-    /// 窄范围下用户可能确实想要更早的内容，得给一个继续的口子。
-    func continueSearchingAfterEmptyPages() {
-        consecutiveFilteredEmptyPages = 0
-        triggerFill()
+    /// 是否已翻过时间范围的起点。
+    ///
+    /// 用**时间轴推进**而不是"连续空页计数"：空窗期（账号停更一两个月）
+    /// 只是时间轴上的一段空隙，不是"没有内容了"。
+    /// 旧实现按空页计数会把空窗期误判为到底（用户实测反馈的问题）。
+    var hasReachedRangeStart: Bool {
+        guard let since = filter.dateRange?.start, let oldest = oldestSeenAt else { return false }
+        return oldest < since
     }
 
     /// 上游 loadMorePostList:guard 未初始化/加载中/无 cursor;成功后 concat + cursor 原样更新。
@@ -412,7 +440,20 @@ final class HomepageStore {
 
         do {
             let r = try await fetchPage(userId: userId, cursor: postListCursor)
-            // 上游: (postList.list || []).concat(twitterPosts) + cursor 原样更新;
+
+            // 游标不再推进 → 判到底退出。
+            // 与爬虫同款防护（`guardAgainstRepeatedCursor`）：X 偶发回吐相同 cursor，
+            // 此时后续页必然重复，不检测会原地空转刷爆配额（AGENTS.md 大坑 3）。
+            if let sent = lastSentCursor, let got = r.cursor, sent == got {
+                AppLogger.warn("游标未推进,判定到底", category: "HOME", [
+                    "screenName": userInfo?.screenName ?? "?",
+                ])
+                postListCursor = nil
+                return true
+            }
+            lastSentCursor = postListCursor
+
+            // 上游: postList.list.concat(twitterPosts) + cursor 原样更新;
             // 附加跨页去重(上游无,但 X 会话模块可能在相邻页重复出现同一推文)。
             //
             // **去重必须先于筛选**：先记 id 再过滤，否则被筛掉的推文没进 seenPostIds，
@@ -420,14 +461,15 @@ final class HomepageStore {
             let deduped = r.posts.filter { seenPostIds.insert($0.id).inserted }
             let fresh = Self.applyDisplayFilter(deduped, filter: filter)
 
-            // 记录"服务端给了内容、但被日期/类型筛掉"的页，用于连续空页提示与停止判断。
-            // 判定要基于**服务端原始条数**：服务端返回 0 条才是真到底（rar.cursor 为 nil）。
-            if !deduped.isEmpty && fresh.isEmpty {
-                consecutiveFilteredEmptyPages += 1
-            } else {
-                consecutiveFilteredEmptyPages = 0
+            // **时间轴推进**：用**服务端原始页**里最旧一条的日期（不是筛选后的），
+            // 判断是否已翻过时间范围的起点。
+            //
+            // 这里刻意**不用"连续空页计数"**：空窗期只是时间轴上的一段空隙，
+            // 不等于到达起点——用计数会让"账号停更一两个月"被误判成"没有内容了"
+            // （用户实测反馈的问题）。爬虫一直用 `now > since`，语义相同，此处对齐。
+            if let oldest = r.posts.last?.createdAt {
+                oldestSeenAt = oldest
             }
-
             postList += fresh
             rebuildFlatMediaList()
             postListCursor = r.cursor
@@ -473,24 +515,25 @@ final class HomepageStore {
         postListError = nil
         seenPostIds = []
         flatMediaList = []
-        consecutiveFilteredEmptyPages = 0
+        oldestSeenAt = nil
+        lastSentCursor = nil
     }
 
     // MARK: - 展示筛选（日期范围 + 媒体类型）
 
-    /// 连续多少页"服务端有内容但被筛掉"就停止自动翻页。
+    /// 已见到的**最旧**一条的日期（取**服务端原始页**，不受筛选影响）。
     ///
-    /// 窄日期范围下会连续翻到空页；不设上限会一直翻到服务端尽头（429 风暴，
-    /// 见 AGENTS.md 大坑 3）。此值对外暴露，供视图判断显示"仍在查找"提示。
-    static let maxConsecutiveFilteredEmptyPages = 5
+    /// 用途：判断是否已翻过时间范围的起点（见 `hasReachedRangeStart`）。
+    /// 必须取原始页：若取筛选后的，空窗期里它不推进，就退化成"空页即停止"的老问题。
+    private var oldestSeenAt: Date?
 
-    /// 因筛选而连续落空的页数（视图据此显示提示、填充循环据此停止）
-    private(set) var consecutiveFilteredEmptyPages = 0
+    /// 上一次发给服务端的游标（用于检测"游标未推进"，与爬虫同款）
+    private var lastSentCursor: String?
 
-    /// 是否启用了展示筛选（日期或媒体类型），用于决定要不要显示"仍在查找"提示
+    /// 是否启用了展示筛选（日期或媒体类型），用于决定要不要显示提示
     var hasActiveDisplayFilter: Bool {
         if filter.dateRange != nil { return true }
-        if let types = filter.mediaTypes, types.count < 3 { return true }
+        if let types = filter.mediaTypes, types.count < MediaType.allCases.count { return true }
         return false
     }
 
@@ -507,7 +550,9 @@ final class HomepageStore {
         if let range = filter.dateRange {
             result = result.filter { post in
                 guard let createdAt = post.createdAt else { return true }
-                return createdAt <= range.end && createdAt >= range.start
+                // 用 inclusiveEnd：「至」当天要**整天**包含在内
+                // （DatePicker 给的 end 是当天零点，直接用会把那天排除）
+                return createdAt <= range.inclusiveEnd && createdAt >= range.start
             }
         }
         if let types = filter.mediaTypes, types.count < MediaType.allCases.count {

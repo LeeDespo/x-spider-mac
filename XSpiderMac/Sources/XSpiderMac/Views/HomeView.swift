@@ -457,19 +457,6 @@ struct HomeView: View {
                 // 不用 .task(id:) —— 其 id 会随翻页自身变化而取消重启任务(曾导致每页自杀)。
                 BottomSentinel(store: store)
                     .frame(height: 40)
-                // 展示筛选（日期/媒体类型）会让部分页整体落空。连续多页落空时填充循环
-                // 会停下（防 429 风暴），这里必须给出可见说明，否则用户以为"卡住了"。
-                if store.consecutiveFilteredEmptyPages >= HomepageStore.maxConsecutiveFilteredEmptyPages {
-                    VStack(spacing: 6) {
-                        Text(L("当前范围内暂未找到内容"))
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button(L("继续查找")) { store.continueSearchingAfterEmptyPages() }
-                            .compatGlassButton()
-                            .controlSize(.small)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))
                     .font(.caption)

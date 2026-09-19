@@ -734,3 +734,95 @@ if !task.includedKeys.isEmpty {                                    // 只勾了�
 `postListCursor == nil`（服务端到底）时分母才是真实总数，显示 `n/m`；
 否则只显示「已选 n」。全选态显示「已全选」/「已全选（共 N）」。
 
+---
+
+## 14. 搜索页加载：搜索端点 + 空窗期（2026-09-19）
+
+### 14.1 背景：空窗期会把"加载"误判成"没有内容"
+
+用户实测反馈：账号有**一两个月没发媒体**时，设了时间范围就加载不出内容；
+中间有内容时才能正常往前加载。**根因是 §13.4 那条"连续 5 页被筛掉就停"**——
+它把"时间轴上的空窗期"误判成"到达范围起点"。
+
+实测数据（App 日志 `~/Library/Logs/XSpiderMac/xspider.log`）：
+
+| 数据源 | 每页条数（实测众数） | 翻 5 页覆盖 |
+|---|---|---|
+| **媒体**（UserMedia） | **10** | **50 条** |
+| 推文（UserTweets） | 20 | 100 条 |
+
+媒体只有 10 条/页，5 页 = 50 条原始条目——一个不常发媒体的账号，
+这就是**一两个月**。用户"感觉推文源容忍更大"也被证实：纯粹因为推文页条数是 2 倍。
+
+**另一个证据**：日志里"连续多页"停止**一次都没记录**（`grep -c` = 0），
+因为停止发生在 `runFillLoop` 入口的**静默 return**——所以 UI 上表现为
+"加载中/无内容反复跳"，而非明确报错。
+
+### 14.2 主方案：「加快搜索页加载」走 X 搜索端点（默认开）
+
+设置项在**设置 → 主页**（`AppSettings.fastSearchLoading`，nil = **开**），带信息说明按钮。
+
+开启且**设了时间范围**时，浏览改走 `SearchTimeline`：
+时间范围由**服务端**过滤 ⇒ **不存在空窗期**，且一页返回的条数多得多。
+
+**网页 URL 与端点的对应**（用户给的线索）：
+
+```
+https://x.com/search?q=from:USER since:A until:B&f=media  →  SearchTimeline, product="Media"
+https://x.com/search?q=from:USER since:A until:B&f=live   →  SearchTimeline, product="Latest"
+```
+
+实测（`Da_aa_dad_`，2025-01-01~2026-09-01）：`product=Media` **40~42 条/页**，
+`product=Latest` 20 条，均带 bottom cursor，且返回内容**全部落在范围内**。
+
+#### 三个必须记住的实现要点
+
+1. **必须 POST + JSON body**。实测：
+   GET（query string）→ **404**；POST 表单编码 → **400**；
+   **POST + `application/json` → 200**。
+   ⚠️ **404 与 queryId 无关**——实测 openapi 记录的旧 queryId 与当前 bundle 的新值，
+   用 POST **都返回 200 与 42 条真实数据**，只有随机乱写的才 404。
+   我最初用 GET 试，误判成"queryId 失效"并去写自愈，纯属徒劳
+   （自愈保留，但它的价值是"X 真改版时能跟上"，不是日常必需品）。
+2. **queryId 可自愈**（防御性）：`SearchQueryIdProvider` 内置默认值
+   （`fetch/openapi.yaml` 记录的 `Yw6L66Pw54NHKuq4Dp7b4Q`，实测有效），
+   仅当确实拿到 404 才抓搜索页 HTML → `main.<hash>.js` → 正则提取 → 重试一次。
+   抓 bundle 走 `abs.twimg.com` CDN，**匿名、不耗 X 配额**（实测 ≈2s）。
+3. **提取正则必须锚定 `operationName:"SearchTimeline"`**：bundle 里还有
+   `BookmarkSearchTimeline` / `ListSearchTimeline` /
+   `GlobalCommunitiesPostSearchTimeline`，且**它们排在前面**，
+   只按名字搜会取到别的 queryId。
+
+解析**复用**现有 `extractPostsFromModuleInstructions`：搜索结果的条目结构
+（`TimelineAddEntries` + `TimelineTimelineModule`）与 UserMedia 一致，
+不需要第二套解析。
+
+### 14.3 兜底：开关关闭时走时间线，终止判据改为**时间轴推进**
+
+开关关闭（或未设时间范围）时走原时间线路径。**该路径的终止判据已修正**：
+
+```
+跟踪 oldestSeenAt = 服务端原始页里最旧一条的 createdAt
+终止 = cursor 为 nil（真到底） ∨ oldestSeenAt < since（已翻过范围起点）
+```
+
+与爬虫的 `now > since` **同义**。关键点：
+
+- **`oldestSeenAt` 必须取服务端原始页**，不能用筛选后的——
+  否则空窗期里它不推进，又退化成"空页即停止"；
+- **删除了 `maxConsecutiveFilteredEmptyPages`**（我上轮引入的错误抽象）：
+  空窗期只是时间轴上的一段空隙，不等于到达起点；
+- 顺带补上展示路径缺失的**游标不推进检测**（与爬虫同款）——
+  X 偶发回吐相同 cursor，不检测会原地空转刷配额。
+
+### 14.4 两个日期边界 bug（顺手修掉，两处都存在）
+
+1. **「至」当天被整天排除**：`DatePicker` 给的 `end` 是**当天零点**，
+   直接用 `createdAt <= end` 会把「至」那天全部滤掉，而用户视角应包含全天。
+   `DateRange.inclusiveEnd`（当天 23:59:59）统一供展示过滤与爬虫使用。
+2. **搜索日期必须用本地时区**：`DatePicker` 给的是**本地**零点，
+   若用 UTC 格式化，在东八区会写成"前一天"，导致范围整体偏移一天。
+
+另外 `until:` 取**次日**（X 语义排他）——注意**不能**用 `inclusiveEnd` 再 +1 天，
+那会变成后天、多算一天（实测踩过）。
+

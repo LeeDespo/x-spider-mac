@@ -107,7 +107,9 @@ final class CreationTaskStore {
         // 上游: let now = dayjs() —— 首页之前取当前时间
         var now = Date()
         let since = filter.dateRange?.start ?? Date(timeIntervalSince1970: 0)
-        let until = filter.dateRange?.end ?? now
+        // 用 inclusiveEnd：「至」当天要整天含在内（DatePicker 的 end 是零点），
+        // 与展示路径（applyDisplayFilter）保持同一边界语义
+        let until = filter.dateRange?.inclusiveEnd ?? now
 
         // 上游: let nextCursor = undefined（首轮跑，服务端返回 null 即到底）。
         // Swift 无 undefined，用 hasFetched 区分"尚未请求"与"服务端已给 null"。

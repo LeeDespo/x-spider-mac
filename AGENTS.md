@@ -90,9 +90,20 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
     那样用户不知道自己选了什么。全选态靠**排除法**交给爬虫跳过（`excludedKeys`）。
 21. **展示筛选（日期/类型）与爬虫必须同语义**：无 `createdAt` 放行、
     纯文字推文不受类型筛选影响。**去重必须先于筛选**（先 `seenPostIds` 再过滤）。
-22. **加客户端筛选就要加停止条件**：窄日期范围会连续翻空页，
-    连续 `maxConsecutiveFilteredEmptyPages` 页就停并提示，
-    否则重演 429 风暴。判定"到底"只看**服务端原始条数**。
+22. **加客户端筛选就要加停止条件**：判定"到底"只看**服务端原始条数**，
+    而**客户端筛选的终止判据必须是"时间轴推进"**（`oldestSeenAt < since`，
+    与爬虫 `now > since` 同义），**不要用"连续空页计数"**——
+    账号停更一两个月的空窗期会被误判成"没有内容"（用户实测反馈）。
+    计数要取服务端原始页，取筛选后的同样不推进。
+23. **搜索端点（SearchTimeline）必须 POST + JSON body**：GET 一律 404，
+    而**这个 404 与 queryId 无关**——实测新旧两个 queryId 用 POST **都返回 200**，
+    只有随机乱写的才 404。我曾用 GET 试并误判成"queryId 失效"，白做了自愈。
+    `SearchQueryIdProvider` 保留自愈（防 X 真改版），但提取正则**必须锚定
+    `operationName:"SearchTimeline"`**，否则命中 Bookmark/List 等排在前的变体。
+24. **日期边界**：`DatePicker` 的 `end` 是**当天零点**，
+    比较必须用 `DateRange.inclusiveEnd`（否则「至」当天被整天排除）；
+    拼给 X 的日期串用**本地时区**格式化；`until:` 取**次日**（排他），
+    不能再叠加 `inclusiveEnd` 的 +1 天。
 
 ## 构建与验证
 
