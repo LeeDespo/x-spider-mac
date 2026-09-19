@@ -5,13 +5,16 @@ import SwiftUI
 struct HomeView: View {
     @State private var store = HomepageStore.shared
     @State private var appStore = AppStore.shared
-    @State private var downloadStore = DownloadStore.shared
     @State private var creationStore = CreationTaskStore.shared
-    @State private var creationTaskCreated = false
     /// 选择性下载模式（媒体卡缩小变暗表示"后退",点击选中恢复）
     @State private var selectiveMode = false
-    /// 已勾选待下载的媒体 (post.id, media.id)
-    @State private var selectedMediaKeys: Set<String> = []
+    /// 媒体选择（勾选 = 要下载）。
+    ///
+    /// 用 `MediaSelection` 而非裸 `Set`：**全选必须是"全部"**，而"全部"里的
+    /// 未加载部分只能靠爬虫补齐，所以全选态用**排除法**表示
+    /// （见 `MediaSelection` 的文档）。用裸集合的话"全选"只能表示"已加载的那些"，
+    /// 用户就不清楚自己到底选了什么——这正是本次要修的问题。
+    @State private var selection = MediaSelection()
 
     /// 时间范围：改动先存 pending，点「确定」才提交并刷新（避免拖日期就连发请求）
     @State private var pendingDateStart: Date = Date(timeIntervalSince1970: 0)
@@ -78,32 +81,31 @@ struct HomeView: View {
             if selectiveMode {
                 // 选择模式操作条：撤销 / 全选 / 反选 / 全不选 / 下载所选
                 HStack(spacing: 12) {
-                    // 用占位符而非字符串插值：插值会让整串成为查表 key，永远命中不到翻译表
-                    Text(L("已选 %@ / %@")
-                        .replacingOccurrences(of: "%@", with: "\(selectedMediaKeys.count)")
-                        .replacingOccurrences(of: "%@", with: "\(store.flatMediaList.count)"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    selectionCountText
 
                     Button(L("撤销")) {
                         selectiveMode = false
-                        selectedMediaKeys = []
+                        selection.reset()
                     }
                     .compatGlassButton()
 
-                    Button(L("全选")) { selectAll() }
-                        .compatGlassButton()
-                    Button(L("反选")) { invertSelection() }
-                        .compatGlassButton()
+                    Button(L("全选")) {
+                        withAnimation(.easeOut(duration: 0.15)) { selection.selectAll() }
+                    }
+                    .compatGlassButton()
+                    Button(L("反选")) {
+                        withAnimation(.easeOut(duration: 0.15)) { selection.invert() }
+                    }
+                    .compatGlassButton()
                     Button(L("全不选")) {
-                        withAnimation(.easeOut(duration: 0.15)) { selectedMediaKeys = [] }
+                        withAnimation(.easeOut(duration: 0.15)) { selection.selectNone() }
                     }
                     .compatGlassButton()
 
-                    // 「全选」+「下载所选」= 原来的「下载全部」
+                    // 「全选」+「下载所选」= 原来的「下载全部」（含未加载部分，走爬虫）
                     Button(L("下载所选")) { downloadSelected() }
                         .compatGlassProminentButton()
-                        .disabled(selectedMediaKeys.isEmpty)
+                        .disabled(isSelectionEmpty)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
@@ -118,14 +120,45 @@ struct HomeView: View {
             // 切换数据源自动退出选择模式(推文时间线不支持逐媒体选择)
             if selectiveMode {
                 selectiveMode = false
-                selectedMediaKeys.removeAll()
+                selection.reset()
             }
         }
     }
 
-    /// 选择模式键
-    private func selectionKey(_ post: TwitterPost, _ media: TwitterMedia) -> String {
-        post.id + "/" + (media.id ?? media.url ?? UUID().uuidString)
+    /// 已选数量文案。
+    ///
+    /// 需求：**不知道总数时不要显示「已选 n/m」**。
+    /// 列表还没加载完（服务端 cursor 非 nil）时分母未知，只显示「已选 n」；
+    /// 到底了才显示完整的 `n/m`，那时 m 才是真实总数。
+    @ViewBuilder
+    private var selectionCountText: some View {
+        let total = store.postListCursor == nil ? store.flatMediaList.count : nil
+        if selection.isAllSelected {
+            // 全选态：除排除项外全部。未加载完时总数含未加载部分，无法给出准确数字
+            if let total {
+                Text(L("已全选（共 %@）").replacingOccurrences(of: "%@", with: "\(total)"))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(L("已全选"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if let count = selection.selectedCount(knownTotal: total) {
+            if let total {
+                Text(L("已选 %@ / %@")
+                    .replacingOccurrences(of: "%@", with: "\(count)")
+                    .replacingOccurrences(of: "%@", with: "\(total)"))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                // 分母未知：不显示 n/m
+                Text(L("已选 %@").replacingOccurrences(of: "%@", with: "\(count)"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 是否一个都没选（下载所选按钮的禁用条件）
+    private var isSelectionEmpty: Bool {
+        selection.selectedCount(knownTotal: store.flatMediaList.count) == 0
     }
 
     /// 打开媒体查看窗口：切换范围 = 传入列表的全部媒体（网格/瀑布流已加载的部分）。
@@ -139,30 +172,25 @@ struct HomeView: View {
         MediaViewerCenter.shared.open(medias: medias, index: start, post: post, origin: .userGrid)
     }
 
-    /// 下载勾选的媒体
+    /// 下载所选的媒体。
+    ///
+    /// **两种情形分开处理**（这是"全选即全部"的落地点）：
+    ///
+    /// 1. **全选态（`exclude`）**：语义是"除排除项外全部"，含**未加载部分**——
+    ///    前端没有那些媒体，只能交给**爬虫**（`CreationTaskStore`）去翻页补齐，
+    ///    并把排除项交给它跳过。若在这里只用已加载列表建任务，
+    ///    全选就退化成了"全选已加载的"，正是要修的问题。
+    /// 2. **逐项勾选态（`include`）**：用户明确点了几个，直接用眼前这些建任务
+    ///    （零请求）。这些项可能还没加载出来（比如他先搜了再滚），所以仍走爬虫，
+    ///    但爬虫会在收齐后就停（见 `remainingIncluded`）。
     private func downloadSelected() {
-        let items = store.flatMediaList.filter { selectedMediaKeys.contains(selectionKey($0.post, $0.media)) }
+        guard let user = store.userInfo else { return }
         Task {
-            for item in items {
-                _ = await downloadStore.createDownloadTask(post: item.post, media: item.media)
-            }
+            // 两种情形都交给爬虫：唯一区别是爬虫拿到的选择集不同。
+            // 这样"跳过已下载"的判定（DownloadStore.isDuplicate）两条路径完全一致。
+            creationStore.createCreationTask(user: user, filter: store.filter, selection: selection)
             selectiveMode = false
-            selectedMediaKeys = []
-        }
-    }
-
-    /// 全选当前列表（受媒体类型筛选影响——列表本身就是筛选后的结果）
-    private func selectAll() {
-        withAnimation(.easeOut(duration: 0.15)) {
-            selectedMediaKeys = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
-        }
-    }
-
-    /// 反选：已选的取消、未选的选中
-    private func invertSelection() {
-        withAnimation(.easeOut(duration: 0.15)) {
-            let all = Set(store.flatMediaList.map { selectionKey($0.post, $0.media) })
-            selectedMediaKeys = all.subtracting(selectedMediaKeys)
+            selection.reset()
         }
     }
 
@@ -381,34 +409,11 @@ struct HomeView: View {
                 }
             }
 
-            // 全量下载（创建任务）：与筛选并列的独立动作，不占筛选行
-            HStack(spacing: 10) {
-                if creationTaskCreated {
-                    Button {
-                        withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = false }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                            Text(L("已创建任务"))
-                        }
-                    }
-                    .foregroundStyle(.green)
-                    .compatGlassProminentButton()
-                } else {
-                    Button(L("下载全部")) {
-                        if let user = store.userInfo {
-                            creationStore.createCreationTask(user: user, filter: store.filter)
-                            if creationStore.creationBlockedReason == nil {
-                                withAnimation(.spring(duration: 0.3, bounce: 0.25)) { creationTaskCreated = true }
-                            }
-                        }
-                    }
-                    .compatGlassProminentButton()
-                }
-                if let blocked = creationStore.creationBlockedReason {
-                    Text(blocked).font(.caption).foregroundStyle(.orange)
-                }
-                Spacer()
+            // 全量下载入口已移除：它由「选择下载 → 全选 → 下载所选」承担
+            // （用户明确要求"全选"要表示全部，而不是"已加载的那些"）。
+            // 爬虫仍为那条路径服务，见 CreationTaskStore。
+            if let blocked = creationStore.creationBlockedReason {
+                Text(blocked).font(.caption).foregroundStyle(.orange)
             }
         }
         .padding(.horizontal, 16)
@@ -452,6 +457,19 @@ struct HomeView: View {
                 // 不用 .task(id:) —— 其 id 会随翻页自身变化而取消重启任务(曾导致每页自杀)。
                 BottomSentinel(store: store)
                     .frame(height: 40)
+                // 展示筛选（日期/媒体类型）会让部分页整体落空。连续多页落空时填充循环
+                // 会停下（防 429 风暴），这里必须给出可见说明，否则用户以为"卡住了"。
+                if store.consecutiveFilteredEmptyPages >= HomepageStore.maxConsecutiveFilteredEmptyPages {
+                    VStack(spacing: 6) {
+                        Text(L("当前范围内暂未找到内容"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button(L("继续查找")) { store.continueSearchingAfterEmptyPages() }
+                            .compatGlassButton()
+                            .controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
             } else if !store.postList.isEmpty {
                 Text(L("已加载全部"))
                     .font(.caption)
@@ -496,11 +514,11 @@ struct HomeView: View {
                         ForEach(store.flatMediaList, id: \.media.id) { item in
                             MediaGridItem(post: item.post, media: item.media, index: item.index,
                                           selectionMode: selectiveMode,
-                                          isSelected: selectedMediaKeys.contains(selectionKey(item.post, item.media)),
+                                          isSelected: selection.isSelected(MediaSelectionKey.make(post: item.post, media: item.media)),
                                           onToggleSelect: {
-                                              let k = selectionKey(item.post, item.media)
-                                              if selectedMediaKeys.contains(k) { selectedMediaKeys.remove(k) }
-                                              else { selectedMediaKeys.insert(k) }
+                                              withAnimation(.easeOut(duration: 0.12)) {
+                                                  selection.toggle(MediaSelectionKey.make(post: item.post, media: item.media))
+                                              }
                                           },
                                           onDoubleClick: {
                                               DetailOverlayCenter.shared.open(item.post, mediaIndex: item.index - 1)

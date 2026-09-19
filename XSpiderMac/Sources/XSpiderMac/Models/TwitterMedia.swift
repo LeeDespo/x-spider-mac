@@ -46,7 +46,7 @@ struct TwitterMedia: Codable, Sendable {
     }
 }
 
-enum MediaType: String, Codable, Sendable {
+enum MediaType: String, Codable, Sendable, CaseIterable {
     case photo = "photo"
     case video = "video"
     case gif = "animated_gif"

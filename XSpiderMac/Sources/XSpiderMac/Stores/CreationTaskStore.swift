@@ -13,8 +13,17 @@ final class CreationTaskStore {
     /// 重复创建拒绝提示(nil = 允许创建)
     var creationBlockedReason: String?
 
-    func createCreationTask(user: TwitterUser, filter: DownloadFilter) {
-        // 防重复创建:同用户 + 同过滤条件(数据源/类型/日期)的任务已在排队或执行中 → 拒绝
+    /// 连续多少页"过滤后为空"就停止爬取。
+    ///
+    /// 客户端日期过滤会让窄范围的用户连续翻很多空页；不设上限会一直翻到
+    /// 服务端尽头，正是 AGENTS.md 大坑 3 说的 429 风暴。
+    /// 取 5：足够跳过零星的活动稀疏页，又不至于空转太久。
+    static let maxConsecutiveEmptyPages = 5
+
+    func createCreationTask(user: TwitterUser, filter: DownloadFilter,
+                            selection: MediaSelection = MediaSelection()) {
+        // 防重复创建:同用户 + 同过滤条件(数据源/类型/日期) + 同选择集 → 拒绝。
+        // 选择集也要比：同一用户同时间范围，「全选」与「只选 3 个」是两个不同任务。
         let duplicate = creationTasks.contains { existing in
             (existing.status == .waiting || existing.status == .active)
                 && existing.user.id == user.id
@@ -22,6 +31,8 @@ final class CreationTaskStore {
                 && existing.filter.mediaTypes == filter.mediaTypes
                 && existing.filter.dateRange?.start == filter.dateRange?.start
                 && existing.filter.dateRange?.end == filter.dateRange?.end
+                && existing.excludedKeys == selection.excludedKeys
+                && existing.includedKeys == selection.includedKeys
         }
         if duplicate {
             creationBlockedReason = L("该用户已有相同条件的任务在队列中")
@@ -37,7 +48,9 @@ final class CreationTaskStore {
             filter: filter,
             status: .waiting,
             completeCount: 0,
-            skipCount: 0
+            skipCount: 0,
+            excludedKeys: selection.excludedKeys,
+            includedKeys: selection.includedKeys
         )
         creationTasks.append(task)
         scheduleNext()
@@ -102,6 +115,12 @@ final class CreationTaskStore {
         var hasFetched = false
         var guardAgainstRepeatedCursor: String?
 
+        // include 态（用户只勾了几个）：勾选的项都收齐了就收工，不必翻到服务端尽头。
+        // 这是"选择下载"相对旧「下载全部」的实质好处——只为自己要的东西付费翻页。
+        var remainingIncluded = task.includedKeys
+        // 客户端日期过滤导致某页"过滤后为空"时，连续多少页没命中就停（防 429 风暴）
+        var consecutiveEmptyPages = 0
+
         while !hasFetched || (nextCursor != nil && now > since) {
             if Task.isCancelled { return }
 
@@ -153,10 +172,20 @@ final class CreationTaskStore {
 
                 // 上游: 无符合日期条件的推文 → 记录进度后 continue（cursor 已推进）
                 if filteredPosts.isEmpty {
+                    // 客户端日期过滤会让某页整体落空：这里计数并在连续多页落空时停止，
+                    // 否则窄范围下会一直翻到服务端尽头（429 风暴，见 AGENTS.md 大坑 3）
+                    consecutiveEmptyPages += 1
+                    if consecutiveEmptyPages >= Self.maxConsecutiveEmptyPages {
+                        AppLogger.info("连续多页无符合日期内容,停止爬取", category: "DL", [
+                            "userId": userId, "pages": "\(consecutiveEmptyPages)",
+                        ])
+                        break
+                    }
                     updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
                     try await Self.pageThrottle()
                     continue
                 }
+                consecutiveEmptyPages = 0
 
                 // 上游: 逐帖筛媒体类型 → prepareDownloadTask → sameFileSkip 存在性检查
                 var paramsList: [(post: TwitterPost, media: TwitterMedia)] = []
@@ -166,8 +195,35 @@ final class CreationTaskStore {
                     for media in medias where (filter.mediaTypes?.contains(media.type) ?? false) {
                         // 同一次爬取内不重复入队（会话模块可能与主条目重复）
                         if let url = downloadURL(for: media), !seenDownloadURLs.insert(url).inserted { continue }
+                        let key = MediaSelectionKey.make(post: post, media: media)
+                        // 全选态下用户取消的项：跳过（「全选后取消几个」的要求）
+                        if task.excludedKeys.contains(key) {
+                            skipCount += 1
+                            continue
+                        }
+                        // include 态（用户只勾了几个）：只处理勾选的，
+                        // 同时收窄爬取终点——勾选的项都拿到了就没必要继续翻页
+                        if !task.includedKeys.isEmpty {
+                            guard task.includedKeys.contains(key) else { continue }
+                            remainingIncluded.remove(key)
+                        }
                         paramsList.append((post, media))
                     }
+                }
+
+                // include 态：勾选的项全部到手 → 收工（不必翻到底）
+                if !task.includedKeys.isEmpty, remainingIncluded.isEmpty {
+                    // 本页仍要把已收齐的这批交出去，再退出循环
+                    if !paramsList.isEmpty {
+                        let beforeCount = DownloadStore.shared.tasks.count
+                        await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
+                        let addedCount = DownloadStore.shared.tasks.count - beforeCount
+                        completeCount += addedCount
+                        skipCount += paramsList.count - addedCount
+                        updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
+                    }
+                    AppLogger.info("所选媒体已全部找到,提前结束爬取", category: "DL", ["userId": userId])
+                    break
                 }
 
                 // 上游: 无待下载媒体 → 记录进度后 continue（cursor 已推进）

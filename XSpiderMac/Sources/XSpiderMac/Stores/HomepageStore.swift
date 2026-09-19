@@ -292,8 +292,13 @@ final class HomepageStore {
                 AppLogger.debug("丢弃过期的媒体响应", category: "HOME", ["userId": userId])
                 return
             }
-            postList = posts
+            // 展示筛选：日期范围 + 媒体类型（与爬虫同一语义，见 applyDisplayFilter）。
+            // seenPostIds 记的是**服务端原始**推文，避免被筛掉的条目在相邻页重复出现
+            // 时又当成新条目走一遍筛选。
             seenPostIds = Set(posts.map(\.id))
+            let visible = Self.applyDisplayFilter(posts, filter: filter)
+            postList = visible
+            consecutiveFilteredEmptyPages = (!posts.isEmpty && visible.isEmpty) ? 1 : 0
             rebuildFlatMediaList()
             postListCursor = cursor
             postListError = nil
@@ -302,8 +307,9 @@ final class HomepageStore {
             AppLogger.info("媒体时间线已加载", category: "HOME", [
                 "source": filter.source.rawValue,
                 "screenName": userInfo?.screenName ?? "?",
-                "posts": "\(posts.count)",
-                "medias": "\(posts.reduce(0) { $0 + ($1.medias?.count ?? 0) })",
+                "posts": "\(visible.count)",
+                "filteredOut": "\(posts.count - visible.count)",
+                "medias": "\(visible.reduce(0) { $0 + ($1.medias?.count ?? 0) })",
                 "hasMore": cursor != nil ? "1" : "0",
             ])
             // 首载完成后立即评估是否需补满视口（上游挂载即 onScroll）
@@ -368,6 +374,9 @@ final class HomepageStore {
         while postListCursor != nil, !Task.isCancelled {
             // 上游 shouldContinueRequest：内容已足够则停，等用户滚动再次触底
             if !needsMoreContent { return }
+            // 展示筛选下连续多页落空：停下并让视图提示"仍在查找"，
+            // 不再继续翻到服务端尽头（窄日期范围会翻很多空页 → 429 风暴）
+            if consecutiveFilteredEmptyPages >= Self.maxConsecutiveFilteredEmptyPages { return }
             let ok = await loadMorePostList()
             // 请求失败(网络/限流/取消)：停止本轮，底部按状态显示重试或错误
             if !ok { return }
@@ -380,6 +389,13 @@ final class HomepageStore {
                 }
             }
         }
+    }
+
+    /// 用户点「继续查找」：把连续空页计数归零，允许再翻若干页。
+    /// 窄范围下用户可能确实想要更早的内容，得给一个继续的口子。
+    func continueSearchingAfterEmptyPages() {
+        consecutiveFilteredEmptyPages = 0
+        triggerFill()
     }
 
     /// 上游 loadMorePostList:guard 未初始化/加载中/无 cursor;成功后 concat + cursor 原样更新。
@@ -397,8 +413,21 @@ final class HomepageStore {
         do {
             let r = try await fetchPage(userId: userId, cursor: postListCursor)
             // 上游: (postList.list || []).concat(twitterPosts) + cursor 原样更新;
-            // 附加跨页去重(上游无,但 X 会话模块可能在相邻页重复出现同一推文)
-            let fresh = r.posts.filter { seenPostIds.insert($0.id).inserted }
+            // 附加跨页去重(上游无,但 X 会话模块可能在相邻页重复出现同一推文)。
+            //
+            // **去重必须先于筛选**：先记 id 再过滤，否则被筛掉的推文没进 seenPostIds，
+            // 它在相邻页重复出现时会被当成新条目重新走一遍筛选（甚至漏进列表）。
+            let deduped = r.posts.filter { seenPostIds.insert($0.id).inserted }
+            let fresh = Self.applyDisplayFilter(deduped, filter: filter)
+
+            // 记录"服务端给了内容、但被日期/类型筛掉"的页，用于连续空页提示与停止判断。
+            // 判定要基于**服务端原始条数**：服务端返回 0 条才是真到底（rar.cursor 为 nil）。
+            if !deduped.isEmpty && fresh.isEmpty {
+                consecutiveFilteredEmptyPages += 1
+            } else {
+                consecutiveFilteredEmptyPages = 0
+            }
+
             postList += fresh
             rebuildFlatMediaList()
             postListCursor = r.cursor
@@ -407,6 +436,7 @@ final class HomepageStore {
                 "source": filter.source.rawValue,
                 "screenName": userInfo?.screenName ?? "?",
                 "posts": "\(fresh.count)",
+                "filteredOut": "\(deduped.count - fresh.count)",
                 "nextHasMore": r.cursor != nil ? "1" : "0",
             ])
             return true
@@ -443,12 +473,61 @@ final class HomepageStore {
         postListError = nil
         seenPostIds = []
         flatMediaList = []
+        consecutiveFilteredEmptyPages = 0
+    }
+
+    // MARK: - 展示筛选（日期范围 + 媒体类型）
+
+    /// 连续多少页"服务端有内容但被筛掉"就停止自动翻页。
+    ///
+    /// 窄日期范围下会连续翻到空页；不设上限会一直翻到服务端尽头（429 风暴，
+    /// 见 AGENTS.md 大坑 3）。此值对外暴露，供视图判断显示"仍在查找"提示。
+    static let maxConsecutiveFilteredEmptyPages = 5
+
+    /// 因筛选而连续落空的页数（视图据此显示提示、填充循环据此停止）
+    private(set) var consecutiveFilteredEmptyPages = 0
+
+    /// 是否启用了展示筛选（日期或媒体类型），用于决定要不要显示"仍在查找"提示
+    var hasActiveDisplayFilter: Bool {
+        if filter.dateRange != nil { return true }
+        if let types = filter.mediaTypes, types.count < 3 { return true }
+        return false
+    }
+
+    /// 展示筛选：日期范围 + 媒体类型。
+    ///
+    /// **与爬虫保持同一语义**（`CreationTaskStore`）：
+    /// - 日期：`since <= createdAt <= until`；**无 `createdAt` 放行**
+    ///   （缺字段不等于不在范围内，吞掉会让列表莫名缺条目）；
+    /// - 媒体类型：只影响**有媒体的推文**是否留下。推文时间线里纯文字推文
+    ///   没有媒体可筛，保持留下（否则勾掉"视频"会让纯文字推文一起消失）。
+    nonisolated static func applyDisplayFilter(_ posts: [TwitterPost],
+                                               filter: DownloadFilter) -> [TwitterPost] {
+        var result = posts
+        if let range = filter.dateRange {
+            result = result.filter { post in
+                guard let createdAt = post.createdAt else { return true }
+                return createdAt <= range.end && createdAt >= range.start
+            }
+        }
+        if let types = filter.mediaTypes, types.count < MediaType.allCases.count {
+            result = result.filter { post in
+                guard let medias = post.medias, !medias.isEmpty else { return true }
+                // 至少有一张所选类型的媒体才留下
+                return medias.contains { types.contains($0.type) }
+            }
+        }
+        return result
     }
 
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）
 
     func setFilter(_ filter: DownloadFilter) {
-        let sourceChanged = filter.source != self.filter.source
+        let previous = self.filter
+        let sourceChanged = filter.source != previous.source
+        let typesChanged = filter.mediaTypes != previous.mediaTypes
+        let dateChanged = filter.dateRange?.start != previous.dateRange?.start
+            || filter.dateRange?.end != previous.dateRange?.end
         self.filter = filter
         // 数据源选择按用户记忆（下次进同一用户还是上次的选项）
         if sourceChanged {
@@ -459,6 +538,18 @@ final class HomepageStore {
             cancelFill()
             clearPostList()
             Task { await loadPostList() }
+            return
+        }
+        // 媒体类型只影响**已加载内容**的呈现，不需要重新请求（省配额）：
+        // 网格按类型过滤、推文按"是否还有所选类型的媒体"过滤。
+        if typesChanged {
+            postList = Self.applyDisplayFilter(postList, filter: filter)
+            rebuildFlatMediaList()
+        }
+        // 日期范围改变必须重新拉取：它是**服务端分页 + 客户端过滤**的组合，
+        // 已加载的页是旧范围的数据，光在本地过滤无法补出范围外的页。
+        if dateChanged, userInfo != nil {
+            Task { await reloadWithCurrentFilter() }
         }
     }
 
@@ -510,9 +601,13 @@ final class HomepageStore {
     private(set) var flatMediaList: [(post: TwitterPost, media: TwitterMedia, index: Int)] = []
 
     private func rebuildFlatMediaList() {
+        let types = filter.mediaTypes
         flatMediaList = postList.flatMap { post in
-            (post.medias ?? []).enumerated().map { (index, media) in
-                (post, media, index + 1)
+            (post.medias ?? []).enumerated().compactMap { (index, media) in
+                // 媒体类型筛选也作用于**网格显示**（不只是推文去留）：
+                // 否则勾掉"视频"，推文因"还有图片"留下，但网格里仍出现视频卡。
+                if let types, !types.contains(media.type) { return nil }
+                return (post, media, index + 1)
             }
         }
     }

@@ -85,6 +85,14 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
 19. **媒体区的手势提示别用 `.help`**：整片区域挂工具提示几乎一碰就弹，
     且同视图内移动不消失。用 `idleHoverHint`（`onContinuousHover` 闲置判定，
     一动就取消）。
+20. **「全选」必须表示全部**，所以选择集用 `MediaSelection` 的 include/exclude
+    两种模式（`Models/`），**不要**退化成"把已加载的灌进一个 Set"——
+    那样用户不知道自己选了什么。全选态靠**排除法**交给爬虫跳过（`excludedKeys`）。
+21. **展示筛选（日期/类型）与爬虫必须同语义**：无 `createdAt` 放行、
+    纯文字推文不受类型筛选影响。**去重必须先于筛选**（先 `seenPostIds` 再过滤）。
+22. **加客户端筛选就要加停止条件**：窄日期范围会连续翻空页，
+    连续 `maxConsecutiveFilteredEmptyPages` 页就停并提示，
+    否则重演 429 风暴。判定"到底"只看**服务端原始条数**。
 
 ## 构建与验证
 

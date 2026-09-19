@@ -241,11 +241,41 @@ final class DownloadStore {
         return task
     }
 
-    func batchCreateDownloadTasks(_ paramsList: [(post: TwitterPost, media: TwitterMedia)]) async {
+    /// 批量建任务。`yielding` 每批之间让出并短暂停顿。
+    ///
+    /// 为什么要分批：全选一次可能灌入上千个任务，每个都要解析模板、查判定、
+    /// 逐个 `start(task)` 起 aria2 请求。瞬时灌入会让主线程连续卡顿（界面僵住），
+    /// 也让 aria2 的连接数瞬间打满。分批后每批之间让出主线程、并按需停顿。
+    ///
+    /// - Parameter yielding: 传 true 时启用节流（爬虫路径用它；小批量调用不必）。
+    func batchCreateDownloadTasks(_ paramsList: [(post: TwitterPost, media: TwitterMedia)],
+                                  yielding: Bool = true) async {
+        // 小批量不值得节流（一次点击下载几张，停顿反而变慢）
+        guard yielding, paramsList.count > Self.batchThrottleThreshold else {
+            for params in paramsList {
+                _ = await createDownloadTask(post: params.post, media: params.media, silent: true)
+            }
+            return
+        }
+        var processed = 0
         for params in paramsList {
+            if Task.isCancelled { return }
             _ = await createDownloadTask(post: params.post, media: params.media, silent: true)
+            processed += 1
+            if processed % Self.batchSize == 0 {
+                // 让出主线程：否则大批量会让界面在这些等待点之间完全无响应
+                await Task.yield()
+                try? await Task.sleep(nanoseconds: Self.batchPauseNanos)
+            }
         }
     }
+
+    /// 超过这个数量才启用分批节流（低于它不值得停顿）
+    static let batchThrottleThreshold = 50
+    /// 每批大小
+    static let batchSize = 25
+    /// 批间停顿（50ms：够让 UI 喘口气，又不明显拖慢总时长）
+    static let batchPauseNanos: UInt64 = 50_000_000
 
     // MARK: - 跳过相同文件判定
 
