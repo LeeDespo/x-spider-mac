@@ -103,7 +103,7 @@ struct WaterfallMediaCell: View {
                         }
                 }
 
-                // 视频/GIF 角标
+                // 视频/GIF 时长角标（右下）
                 if media.type == .video || media.type == .gif {
                     VStack {
                         Spacer()
@@ -119,6 +119,16 @@ struct WaterfallMediaCell: View {
                     }
                     .padding(6)
                 }
+
+                // 类型标签（右上，视频/GIF；图片不显示）——静态封面看不出是不是视频
+                VStack {
+                    HStack {
+                        Spacer()
+                        MediaTypeBadge(type: media.type)
+                    }
+                    Spacer()
+                }
+                .padding(6)
 
                 // hover：与搜索用户网格**同一套按钮**（下载/已下载 + 详细查看）。
                 // 此前这里只是一个放大图标、没有下载按钮——两处行为不一致是漂移的结果，

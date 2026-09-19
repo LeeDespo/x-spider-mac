@@ -10,21 +10,29 @@ struct SettingsView: View {
     @State private var showSyncListManager = false
 
     var body: some View {
+        // **排序原则**（需求：常用的摆前面）：按"普通用户的使用频率"从高到低，
+        // 而不是按代码模块顺序。查看频率低的（日志、数据清理）沉到最底。
+        //
+        //   1-4  日常必看：主页 / 下载 / 引擎 / 外观
+        //   5-8  按需调整：界面外观 / 翻译 / 代理 / 限流
+        //   9-11 维护类：状态检测 / 缓存 / 同步
+        //   12-15 低频：隐私 / 电源 / 数据清理 / 日志
         Form {
-            engineSection
-            downloadSection
             homeSection
-            translationSection
-            rateLimitSection
-            proxySection
-            uiSection
+            downloadSection
+            engineSection
             appearanceSection
+            uiSection
+            translationSection
+            proxySection
+            rateLimitSection
+            statusProbeSection
+            cacheSection
+            syncSection
             privacySection
             powerSection
-            logSection
-            syncSection
-            cacheSection
             dataSection
+            logSection
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -35,6 +43,7 @@ struct SettingsView: View {
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 72)
         }
+        .task { statusStore.restartActiveProbeIfNeeded() }
     }
 
     // MARK: - 下载设置
@@ -65,6 +74,17 @@ struct SettingsView: View {
                 HStack(spacing: 6) {
                     Text(L("按账号创建子文件夹"))
                     InfoHint(text: L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中。"))
+                }
+            }
+
+            // 下载提示框（右下浮条）显示开关
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.showDownloadTipEnabled },
+                set: { settingsStore.settings.app.showDownloadTip = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("显示下载提示框"))
+                    InfoHint(text: L("右下角悬浮的下载进度提示框。关闭后仍在「下载管理」查看进度，只是不在主界面浮出，避免遮挡内容。"))
                 }
             }
 
@@ -493,6 +513,49 @@ struct SettingsView: View {
             }
         } header: {
             Label(L("代理"), systemImage: "globe")
+        }
+    }
+
+    // MARK: - 状态检测
+
+    /// 状态检测区：主动检测开关 + 间隔。
+    ///
+    /// 与侧边栏底部状态栏配合：那里显示**被动**采集的结论，
+    /// 这里决定要不要**额外主动**去探（会消耗 X 请求配额）。
+    private var statusProbeSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.activeStatusProbeEnabled },
+                set: { settingsStore.settings.app.activeStatusProbe = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("主动检测连接状态"))
+                    InfoHint(text: L("开启：按下方间隔主动探测与 X 的连通性，状态变化能更快反映到边栏（例如断网后不必等下次操作）。代价是会按间隔消耗少量 X 请求配额。\n\n关闭：只在真实操作遇阻时被动更新状态（不发任何额外请求），更省配额但状态更新滞后。\n\n两种方式都会遵守限流：处于 429 时不会硬探。"))
+                }
+            }
+            if settingsStore.settings.activeStatusProbeEnabled {
+                NumberStepperField(
+                    title: L("检测间隔（秒）"),
+                    value: Binding(
+                        get: { settingsStore.settings.activeStatusProbeIntervalSeconds },
+                        set: { settingsStore.settings.app.activeStatusProbeInterval = max(5, $0) }
+                    ),
+                    range: 5...3600
+                )
+                .infoHint(L("两次主动检测之间的间隔，最低 5 秒。\n间隔过短会被 X 视为异常流量，反而更容易触发限流，建议 30 秒以上。"))
+                if let last = statusStore.lastActiveProbeAt {
+                    HStack {
+                        Text(L("上次检测"))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(last.formatted(date: .omitted, time: .standard))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Label(L("状态检测"), systemImage: "heart.text.square")
         }
     }
 

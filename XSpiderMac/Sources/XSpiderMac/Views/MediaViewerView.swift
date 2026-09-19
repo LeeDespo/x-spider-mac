@@ -7,18 +7,23 @@ import AVKit
 ///
 /// 媒体占据中央区域，**全部控件都在底部独立一条**（不浮在媒体上）。
 /// 视频**不用 AVPlayerView 自带的控制条**（`.floating` 会浮在画面上遮挡内容，
-/// 且此前被上层的手势层挡住导致点不动）——播放/进度/倍速全部做进底栏。
-/// 切换按钮分列左右两侧空白区，也不压住画面。
-/// 工具栏**只用图标**（配 `.help` 提示），不放文字。
+/// 且此前被上层的手势层挡住导致点不动）——播放/进度/倍速/字幕/全屏全在底栏。
+/// 切换按钮分列左右两侧空白区。工具栏**只用图标**（配 `.help` 提示），不放文字。
 ///
-/// ## 手势
+/// ## 手势（图片与视频**共用**）
 ///
-/// - 图片：双指捏合缩放（`MagnificationGesture`）、拖动平移、双击还原/放大；
-/// - 两者：双指左右滑切换媒体；←/→ 切换，空格播放暂停，⌘+ / ⌘- / ⌘0 缩放。
+/// - 双指左右滑切换媒体（两种媒体都有，见 `ScrollWheelCatcher`）；
+/// - 图片另有：双指捏合缩放、拖动平移、双击还原/放大；
+/// - 键盘：←/→ 切换，空格播放暂停，⌘+ / ⌘- / ⌘0 缩放。
+///
+/// 手势提示**常驻在标题旁**（由 `MediaViewerWindowController` 注入窗口标题的
+/// accessory view），不再做成悬停提示——悬停弹出会遮挡画面。
 struct MediaViewerView: View {
     let center: MediaViewerCenter
     @State private var store = DownloadStore.shared
     @State private var playback = VideoPlaybackModel()
+    /// 可选字幕轨（nil = 还没读到；空数组 = 该视频没有字幕）
+    @State private var subtitleOptions: [SubtitleOption] = []
 
     /// 图片显示状态（切换媒体时重置）
     @State private var scale: CGFloat = 1
@@ -48,6 +53,15 @@ struct MediaViewerView: View {
                             // 点画面播放/暂停：用 tap 手势而不是盖一层 Color.clear
                             // （后者会吃掉播放器与上层按钮的点击，是"按钮点不动"的根因）
                             .onTapGesture { playback.togglePlay() }
+                            // 视频也支持双指捏合缩放（需求：把图片的手势也给视频）
+                            .gesture(
+                                MagnificationGesture()
+                                    .onChanged { value in
+                                        scale = min(max(0.5, lastScale * value), 4)
+                                    }
+                                    .onEnded { _ in lastScale = scale }
+                            )
+                            .scaleEffect(scale)
                     } else {
                         imageStage(media)
                     }
@@ -80,8 +94,12 @@ struct MediaViewerView: View {
         .task(id: media?.id) {
             resetImageTransform()
             await loadPlaybackIfNeeded()
+            await loadSubtitleOptions()
         }
-        .onDisappear { playback.teardown() }
+        .onDisappear {
+            // 离开查看窗口：暂停播放（详情页若在播，由详情页自己恢复）
+            playback.teardown()
+        }
     }
 
     // MARK: - 图片
@@ -104,10 +122,6 @@ struct MediaViewerView: View {
                     else { scale = 3; lastScale = 3 }
                 }
             }
-            // 手势提示改为"鼠标停住才出现、一动就消失"的闲置提示。
-            // 不用 .help：那是 AppKit 工具提示，挂在大面积区域上时几乎一碰就弹、
-            // 且在同一视图内移动不会消失（用户反馈"太容易触发、消失太慢"）。
-            .idleHoverHint(L("双指捏合缩放 · 拖动平移 · 双击放大"))
     }
 
     /// 复位缩放/旋转/平移
@@ -128,7 +142,18 @@ struct MediaViewerView: View {
             playback.teardown()
             return
         }
-        playback.load(url: url)
+        // 继承详情页的播放进度：同一条媒体在详情页播到哪，这里就从哪继续（需求）。
+        // 键必须与详情页写入时一致——两处都用**视频 URL**（详情页只有 AVPlayer，
+        // 拿 media.id 得额外传递；URL 两边都有，是唯一自然可对齐的键）。
+        let resumeAt = MediaViewerCenter.shared.resumeTime(forMediaId: url.absoluteString)
+        playback.load(url: url, resumeAt: resumeAt)
+    }
+
+    /// 读取可选字幕轨
+    private func loadSubtitleOptions() async {
+        subtitleOptions = []
+        guard isVideo, let item = playback.player?.currentItem else { return }
+        subtitleOptions = await SubtitleSupport.availableOptions(for: item)
     }
 
     // MARK: - 工具条（纯图标；视频的播放控制全在这里）
@@ -154,11 +179,18 @@ struct MediaViewerView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 
-                iconButton("goforward", help: L("加速")) { playback.cycleRate() }
+                // 倍速：图标换成 `speedometer`（原 `goforward` 与「复位」的
+                // `arrow.counterclockwise` 都是圆弧箭头，肉眼难分——用户反馈）
+                iconButton("speedometer", help: L("加速")) { playback.cycleRate() }
                 Text(String(format: "%.1fx", playback.rate))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .leading)
+
+                // 字幕：有可选轨才显示（接入系统字幕功能，见 SubtitleSupport）
+                if !subtitleOptions.isEmpty {
+                    subtitleMenu
+                }
             } else {
                 iconButton("minus.magnifyingglass", help: L("缩小")) {
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -211,11 +243,45 @@ struct MediaViewerView: View {
                 }
             }
 
+            // 全屏：窗口进/出系统全屏
+            iconButton(center.isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                       help: center.isFullScreen ? L("退出全屏") : L("全屏")) {
+                MediaViewerWindowController.shared.toggleFullScreen()
+            }
+
             iconButton("xmark", help: L("关闭")) { center.close() }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.bar)
+    }
+
+    /// 字幕选择菜单：列出所有可轨 + 「关闭字幕」
+    private var subtitleMenu: some View {
+        Menu {
+            Button(L("关闭字幕")) { playback.selectSubtitle(nil) }
+            Divider()
+            ForEach(subtitleOptions) { opt in
+                Button {
+                    playback.selectSubtitle(opt)
+                } label: {
+                    // 勾出当前选中项
+                    if playback.selectedSubtitle?.id == opt.id {
+                        Label(opt.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(opt.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: playback.selectedSubtitle == nil
+                  ? "captions.bubble" : "captions.bubble.fill")
+                .font(.system(size: 15, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L("字幕：选择语言或关闭"))
     }
 
     private func step(_ delta: Int) {
@@ -318,16 +384,24 @@ final class VideoPlaybackModel {
     var scrubTarget: Double = 0
     /// 是否正在拖动进度条（拖动期间时间观察者不覆盖滑块位置）
     private(set) var isScrubbing = false
+    /// 当前选中的字幕轨（nil = 关闭字幕）
+    private(set) var selectedSubtitle: SubtitleOption?
 
     private var timeObserver: Any?
 
-    func load(url: URL) {
+    /// - Parameter resumeAt: 起始播放位置（秒）。用于从详情页继承进度（需求）。
+    func load(url: URL, resumeAt: Double = 0) {
         teardown()
         let p = AVPlayer(url: url)
         p.rate = rate
         player = p
-        currentTime = 0
+        currentTime = resumeAt
         duration = 0
+
+        if resumeAt > 0 {
+            p.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600),
+                   toleranceBefore: .zero, toleranceAfter: .zero)
+        }
 
         // 时长异步读取（同步访问 AVAsset.duration 已废弃）
         if let item = p.currentItem {
@@ -347,6 +421,11 @@ final class VideoPlaybackModel {
                 guard let self, !self.isScrubbing else { return }
                 let s = time.seconds
                 self.currentTime = (s.isFinite && s >= 0) ? s : 0
+                // 记住进度：详情页与查看窗口之间切换时可继承（需求）
+                if let url = (self.player?.currentItem?.asset as? AVURLAsset)?.url {
+                    MediaViewerCenter.shared.rememberProgress(mediaId: url.absoluteString,
+                                                              seconds: self.currentTime)
+                }
             }
         }
         play()
@@ -362,6 +441,7 @@ final class VideoPlaybackModel {
         isPlaying = false
         currentTime = 0
         duration = 0
+        selectedSubtitle = nil
     }
 
     func togglePlay() {
@@ -380,6 +460,14 @@ final class VideoPlaybackModel {
         player?.seek(to: .zero)
         currentTime = 0
         play()
+    }
+
+    /// 切字幕轨。`nil` = 关闭字幕。
+    func selectSubtitle(_ option: SubtitleOption?) {
+        guard let item = player?.currentItem,
+              let group = SubtitleSupport.legibleGroup(for: item) else { return }
+        item.select(option?.option, in: group)
+        selectedSubtitle = option
     }
 
     /// 0.5 → 1 → 1.5 → 2 → 0.5 循环
@@ -470,84 +558,11 @@ struct ZoomableImage: View {
     }
 }
 
-// MARK: - 闲置悬停提示
-
-/// 「鼠标停住才出现」的提示：`delay` 秒内没有鼠标移动才显示；
-/// **一动就立刻消失**（短淡出），移出视图也立刻消失。
-///
-/// 为什么不用 `.help`：那是 AppKit 工具提示，挂在整片媒体区上时
-/// 几乎一碰就弹，且在同一视图内移动不会消失——
-/// 用户反馈"太容易触发、消失时间与动画都太长"。
-/// 这里用 `onContinuousHover`（只在鼠标**移动**时回调）实现闲置判定：
-/// 有回调 = 在动 → 隐藏并重排计时；静默达到 delay = 停住了 → 显示。
-private struct IdleHoverHintModifier: ViewModifier {
-    let text: String
-    var delay: TimeInterval = 1.0
-
-    @State private var visible = false
-    @State private var pending: Task<Void, Never>?
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .bottom) {
-                if visible {
-                    Text(text)
-                        .font(.caption)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.black.opacity(0.55), in: Capsule())
-                        .padding(.bottom, 14)
-                        // 出现稍慢、消失很快（用户要求缩短消失时间与动画）
-                        .transition(.opacity.animation(.easeOut(duration: 0.1)))
-                        .allowsHitTesting(false)   // 提示绝不能挡住媒体或按钮
-                }
-            }
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    // 任何移动都视为"还在操作"：立即隐藏并重新计时
-                    scheduleHint()
-                case .ended:
-                    cancelHint()
-                }
-            }
-            .onDisappear { cancelHint() }
-    }
-
-    private func scheduleHint() {
-        pending?.cancel()
-        if visible {
-            withAnimation(.easeOut(duration: 0.1)) { visible = false }
-        }
-        pending = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeIn(duration: 0.15)) { visible = true }
-        }
-    }
-
-    private func cancelHint() {
-        pending?.cancel()
-        pending = nil
-        if visible {
-            withAnimation(.easeOut(duration: 0.1)) { visible = false }
-        }
-    }
-}
-
-extension View {
-    /// 鼠标停住才显示的手势提示（见 `IdleHoverHintModifier`）
-    func idleHoverHint(_ text: String, delay: TimeInterval = 1.0) -> some View {
-        modifier(IdleHoverHintModifier(text: text, delay: delay))
-    }
-}
-
 // MARK: - 视频舞台
 
 /// AVPlayerView 包装。
 ///
-/// **`controlsStyle = .none`**：自带的 `.floating` 控制条会浮在画面上遮挡内容，
+/// **`controlsStyle = .none`**：自带的控制条会浮在画面上遮挡内容，
 /// 需求是把播放控制全做进底栏（见 `MediaViewerView.toolbar`）。
 /// 早先还叠了一层 `Color.clear` 做点击播放，它把播放器控制条的点击全吃掉了
 /// ——"按钮无法点击"就是这么来的，现已移除。

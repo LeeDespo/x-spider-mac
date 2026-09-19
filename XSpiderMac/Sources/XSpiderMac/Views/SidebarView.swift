@@ -40,7 +40,10 @@ struct SidebarView: View {
             CookieLoginSheet()
         }
         .sheet(isPresented: $showFollowingList) {
-            FollowingListSheet()
+            // 非选择模式点击用户 → 回主页搜索该用户（与详情卡头像同一路径）
+            FollowingListSheet { screenName in
+                DetailOverlayCenter.shared.onSearchUser?(screenName)
+            }
         }
 
     }
@@ -49,7 +52,10 @@ struct SidebarView: View {
 
     /// 两行状态：上行 X GraphQL API（翻页、爬虫），下行媒体 CDN（图片视频下载）。
     /// 二者是不同域、不同配额，分开显示才能一眼看出是哪一侧出了问题。
-    /// 状态全部**被动**采集（由真实请求遇阻推导），只有点重试才主动探测。
+    ///
+    /// **精简为标签**（需求）：边栏一行放不下完整文案（会被截断），
+    /// 因此只显示「正常 / 异常 / 限流」三档简称，**详细原因与倒计时进悬停提示**。
+    /// 状态灯配色不变（绿 / 黄 / 红），鼠标移上去即出详情。
     private var accountStatusBar: some View {
         VStack(spacing: 0) {
             Divider()
@@ -59,38 +65,53 @@ struct SidebarView: View {
                 statusRow(
                     label: L("X API"),
                     lamp: lampColor(for: statusStore.severity),
-                    text: { statusStore.statusText },
-                    help: statusStore.helpText,
+                    short: statusStore.shortLabel,
+                    help: fullStatusHelp(),
                     isDim: statusStore.severity == .ok,
-                    deadline: statusStore.breakerOpen ? statusStore.rateLimitDeadline : nil,
                     probing: statusStore.probing,
                     retry: { Task { await statusStore.probeAndRecover() } }
                 )
                 statusRow(
                     label: L("媒体 CDN"),
                     lamp: statusStore.cdnThrottled ? .red : (statusStore.cdnStatusText == nil ? .green : .orange),
-                    text: { statusStore.cdnStatusText ?? L("下载正常") },
-                    help: statusStore.cdnHelpText,
+                    short: statusStore.cdnShortLabel,
+                    help: fullCDNHelp(),
                     isDim: statusStore.cdnStatusText == nil,
-                    deadline: statusStore.cdnRateLimitedUntil,
                     probing: statusStore.probingCDN,
                     retry: { Task { await statusStore.probeCDN() } }
                 )
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
+            // 状态到期复位（简称不显示倒计时，但灯要按时变回绿）
+            expiryWatcher
         }
         .background(.thinMaterial)
     }
 
-    /// 单行状态：灯 + 标签 + 文案 + 重试
+    /// X API 的完整说明（悬停显示）：简称 + 具体状态 + 原始说明。
+    /// 把 `statusText` 拼进来，保证倒计时等动态信息在悬停里也能看到。
+    private func fullStatusHelp() -> String {
+        statusStore.shortLabel + " · " + statusStore.statusText + "\n\n" + statusStore.helpText
+    }
+
+    private func fullCDNHelp() -> String {
+        let detail = statusStore.cdnStatusText ?? L("下载正常")
+        return statusStore.cdnShortLabel + " · " + detail + "\n\n" + statusStore.cdnHelpText
+    }
+
+    /// 单行状态：灯 + 名称 + **简称** + 重试。
+    ///
+    /// 简称只占几个字（正常/异常/限流），完整原因在 `.help` 悬停里看——
+    /// 边栏宽度不足以放下完整文案。
+    /// 限流倒计时仍每秒刷新，但刷新的是**悬停内容**（简称本身不变，不重绘）。
     private func statusRow(
         label: String,
         lamp: Color,
-        text: @escaping () -> String,
+        short: String,
         help: String,
         isDim: Bool,
-        deadline: Date?,
         probing: Bool,
         retry: @escaping () -> Void
     ) -> some View {
@@ -103,13 +124,12 @@ struct SidebarView: View {
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .leading)
 
-            statusText(text, deadline: deadline)
-                .font(.caption2)
+            Text(short)
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(isDim ? .secondary : .primary)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                // 悬停显示详情（含实时倒计时）
                 .help(help)
 
             Spacer(minLength: 2)
@@ -129,18 +149,19 @@ struct SidebarView: View {
         }
     }
 
-    /// 状态文案。有截止时间时用 TimelineView 每秒重算一次（**只驱动这一个文本**，
-    /// 不重绘整棵侧边栏——文案里的倒计时由 store 按当前时间生成）；
-    /// 无截止时间则普通 Text，零额外开销。
+    /// 到期后把状态落回正常。
+    ///
+    /// 简称不显示倒计时，但**状态本身仍需到期复位**（否则灯会一直红着）。
+    /// 用 `.task(id:)` 挂在侧边栏上按截止时间等一次——一次性回调，不是轮询。
     @ViewBuilder
-    private func statusText(_ text: @escaping () -> String, deadline: Date?) -> some View {
-        if let deadline {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text(text())
-            }
-            // 到期后把状态真正落回正常（一次性回调，不是轮询）
-            .task(id: deadline) {
-                let wait = deadline.timeIntervalSinceNow
+    private var expiryWatcher: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .task(id: statusStore.rateLimitDeadline ?? statusStore.cdnRateLimitedUntil) {
+                // 取两个截止时间里最早的一个来安排唤醒
+                let deadlines = [statusStore.rateLimitDeadline, statusStore.cdnRateLimitedUntil].compactMap { $0 }
+                guard let earliest = deadlines.min() else { return }
+                let wait = earliest.timeIntervalSinceNow
                 guard wait > 0 else {
                     statusStore.refreshExpiry()
                     statusStore.refreshCDNExpiry()
@@ -151,9 +172,6 @@ struct SidebarView: View {
                 statusStore.refreshExpiry()
                 statusStore.refreshCDNExpiry()
             }
-        } else {
-            Text(text())
-        }
     }
 
     private func lampColor(for severity: AccountStatusStore.Severity) -> Color {

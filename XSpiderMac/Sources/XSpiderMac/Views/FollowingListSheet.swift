@@ -3,9 +3,13 @@ import SwiftUI
 /// 关注清单管理弹窗(账户卡弹窗 → 关注清单):
 /// 搜索(昵称/用户名) + 头像矩形网格 + 选中蓝框 + 左侧全选/反选 + 右侧下载(完成后关app)/加入同步清单/退出
 struct FollowingListSheet: View {
+    /// 非选择模式下点击用户 → 跳到该用户的搜索页（由 SidebarView 注入）
+    var onSearchUser: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var users: [TwitterUser] = []
     @State private var selected: Set<String> = []   // screenName
+    /// 选择模式：批量操作（全选/反选/下载/加入同步）只在此模式下出现
+    @State private var selectionMode = false
     @State private var searchText = ""
     @State private var loading = false
     @State private var loadingMore = false
@@ -66,38 +70,61 @@ struct FollowingListSheet: View {
 
             Divider()
 
-            // 底部操作条:左(全选/反选) 右(下载/同步清单/退出)
+            // 底部操作条。
+            //
+            // **批量操作藏在「选择」按钮之后**（需求）：
+            // 全选 / 反选 / 下载全部媒体 / 加入同步清单 只在选择模式出现，
+            // 避免普通浏览时被一排危险批量按钮干扰（误点会触发整账号下载）。
             HStack(spacing: 10) {
-                Button { selected = Set(filtered.map(\.screenName)) } label: {
-                    Label(L("全选"), systemImage: "checkmark.circle")
+                if selectionMode {
+                    Button { selected = Set(filtered.map(\.screenName)) } label: {
+                        Label(L("全选"), systemImage: "checkmark.circle")
+                    }
+                    .compatGlassButton()
+                    Button {
+                        let all = Set(filtered.map(\.screenName))
+                        selected = all.subtracting(selected)
+                    } label: {
+                        Label(L("反选"), systemImage: "circle.lefthalf.filled")
+                    }
+                    .compatGlassButton()
+                    Spacer()
+                    Text(L("已选") + " \(selected.count)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        showShutdownConfirm = true
+                    } label: {
+                        Label(L("下载全部媒体"), systemImage: "arrow.down.circle.fill")
+                    }
+                    .compatGlassButton()
+                    .disabled(selected.isEmpty)
+                    Button {
+                        addToSyncList()
+                    } label: {
+                        Label(addedToSync ? L("已加入同步清单") : L("加入同步清单"),
+                              systemImage: addedToSync ? "checkmark" : "plus.circle")
+                    }
+                    .compatGlassButton()
+                    .disabled(selected.isEmpty || addedToSync)
+                    // 取消：退出选择模式（需求）
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            selectionMode = false
+                            selected = []
+                        }
+                    } label: {
+                        Label(L("取消"), systemImage: "xmark.circle")
+                    }
+                    .compatGlassButton()
+                } else {
+                    Spacer()
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) { selectionMode = true }
+                    } label: {
+                        Label(L("选择"), systemImage: "checkmark.circle")
+                    }
+                    .compatGlassButton()
                 }
-                .compatGlassButton()
-                Button {
-                    let all = Set(filtered.map(\.screenName))
-                    selected = selected.isSubset(of: all)
-                        ? all.subtracting(selected)
-                        : all.symmetricDifference(selected)
-                } label: {
-                    Label(L("反选"), systemImage: "circle.lefthalf.filled")
-                }
-                .compatGlassButton()
-                Spacer()
-                Text(L("已选") + " \(selected.count)")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button {
-                    showShutdownConfirm = true
-                } label: {
-                    Label(L("下载全部媒体"), systemImage: "arrow.down.circle.fill")
-                }
-                .compatGlassButton()
-                .disabled(selected.isEmpty)
-                Button {
-                    addToSyncList()
-                } label: {
-                    Label(addedToSync ? L("已加入同步清单") : L("加入同步清单"), systemImage: addedToSync ? "checkmark" : "plus.circle")
-                }
-                .compatGlassButton()
-                .disabled(selected.isEmpty || addedToSync)
                 Button(role: .destructive) {
                     dismiss()
                 } label: {
@@ -125,25 +152,58 @@ struct FollowingListSheet: View {
 
     // MARK: - 网格单元
 
+    /// 网格单元。
+    ///
+    /// 两种模式（需求）：
+    /// - **普通模式**：点头像/名字 = 跳到该用户的搜索页（`onSearchUser`）；
+    /// - **选择模式**：点击 = 勾选/取消勾选，头像描边 + 角标表示选中。
+    ///
+    /// 名字按**昵称 / 用户名两行居中**（需求）：挤成一行 `名字-@用户名` 时
+    /// 长昵称会被截断，两行各自居中更易读。
     private func followCell(_ user: TwitterUser) -> some View {
         let isSelected = selected.contains(user.screenName)
         return Button {
-            if isSelected { selected.remove(user.screenName) } else { selected.insert(user.screenName) }
+            if selectionMode {
+                if isSelected { selected.remove(user.screenName) } else { selected.insert(user.screenName) }
+            } else {
+                // 非选择模式：跳转到该用户的搜索页
+                onSearchUser?(user.screenName)
+                dismiss()
+            }
         } label: {
             VStack(spacing: 6) {
                 CachedAvatarView(urlString: user.avatar, size: 64)
                     .overlay {
                         Circle().strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 3)
                     }
-                Text("\(user.name)-@\(user.screenName)")
-                    .font(.caption2)
+                    .overlay(alignment: .bottomTrailing) {
+                        // 选择模式：已选角标（普通模式不显示，避免视觉噪声）
+                        if selectionMode, isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.white, Color.accentColor)
+                                .background(Circle().fill(.white).padding(2))
+                        }
+                    }
+                // 两行居中：昵称一行、@用户名一行
+                Text(user.name)
+                    .font(.caption2.weight(.medium))
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity)
+                Text("@\(user.screenName)")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity)
             }
+            .multilineTextAlignment(.center)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .help(selectionMode ? L("点击选择") : L("点击进入该用户的搜索页"))
     }
 
     // MARK: - 数据

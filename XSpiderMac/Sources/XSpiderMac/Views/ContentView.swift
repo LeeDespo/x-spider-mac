@@ -32,13 +32,18 @@ struct ContentView: View {
             // 浮条挂在 NavigationSplitView 层级：切页时 detail 内容重建，
             // 但浮条身份保持稳定，不会每次切页都重播出现动画
             // 同步页隐藏浮条（动画淡出,不移除视图——离开同步页后满足条件即动画回来）
-            FloatingDownloadBar()
-                .opacity(selection == .sync ? 0 : 1)
-                .allowsHitTesting(selection != .sync)
-                .animation(.spring(duration: 0.35), value: selection == .sync)
-                .padding(20)
+            // 设置里可整体关闭（需求：下载区提示框显示开关）
+            if settingsStore.settings.showDownloadTipEnabled {
+                FloatingDownloadBar()
+                    .opacity(selection == .sync ? 0 : 1)
+                    .allowsHitTesting(selection != .sync)
+                    .animation(.spring(duration: 0.35), value: selection == .sync)
+                    .padding(20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .animation(.spring(duration: 0.35), value: selection)
+        .animation(.easeOut(duration: 0.2), value: settingsStore.settings.showDownloadTipEnabled)
         .overlay {
             // 推文详情全窗浮层:盖住边栏+内容;点击任何非卡区退出;ESC 返回
             if let post = DetailOverlayCenter.shared.post {

@@ -52,8 +52,13 @@ final class ImageCache {
         return UserDefaults.standard.object(forKey: category.settingKey) as? Bool ?? true
     }
 
-    /// 缓存上限字节（50–500MB）
-    private var limitBytes: Int64 { Int64(SettingsStore.shared.settings.cacheLimitMB) * 1_048_576 }
+    /// 缓存上限字节。
+    ///
+    /// **单位必须与 UI 显示一致**：设置项写的是 "200 MB"，用户用 `ByteCountFormatter`
+    /// 的 `.file` 风格（**十进制**，1 MB = 1_000_000 字节）看实际占用。
+    /// 此前这里乘 `1_048_576`（MiB），于是"设 200MB 却显示 209.7MB"——
+    /// 用户以为上限没生效（实测反馈）。现在统一为十进制，两处口径一致。
+    private var limitBytes: Int64 { Int64(SettingsStore.shared.settings.cacheLimitMB) * 1_000_000 }
 
     // MARK: - 读取（先内存 → 磁盘 → 网络；重活全在后台）
 

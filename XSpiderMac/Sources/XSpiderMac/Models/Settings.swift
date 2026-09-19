@@ -217,6 +217,12 @@ struct AppSettings: Codable, Sendable {
     /// 而不是"拉时间线 + 本地剪裁"。默认 **开**（nil 视为开）。
     /// 关闭则回退到时间线方案（内有空窗期兜底，见 §14.3）。
     var fastSearchLoading: Bool?
+    /// 主动状态检测（默认**开**，nil 视为开）：按间隔探测与 X 的连通性。
+    var activeStatusProbe: Bool?
+    /// 主动检测间隔秒数（默认 30，最低 5）
+    var activeStatusProbeInterval: Int?
+    /// 下载提示框（右下浮条）是否显示（默认**开**，nil 视为开）
+    var showDownloadTip: Bool?
 }
 
 struct Settings: Codable, Sendable {
@@ -241,6 +247,12 @@ struct Settings: Codable, Sendable {
     var autoClearSearchHistoryEnabled: Bool { app.autoClearSearchHistory ?? false }
     /// 加快搜索页加载（默认**开**；nil = 开）
     var fastSearchLoadingEnabled: Bool { app.fastSearchLoading ?? true }
+    /// 主动状态检测（默认**开**；nil = 开）
+    var activeStatusProbeEnabled: Bool { app.activeStatusProbe ?? true }
+    /// 主动检测间隔秒（默认 30，**最低 5**——更短会被 X 视为异常流量，反而加剧限流）
+    var activeStatusProbeIntervalSeconds: Int { max(5, app.activeStatusProbeInterval ?? 30) }
+    /// 下载提示框显示（默认**开**；nil = 开）
+    var showDownloadTipEnabled: Bool { app.showDownloadTip ?? true }
     /// 下载引擎（默认 aria2）
     var engine: DownloadEngine { download.engine ?? .aria2 }
     /// 并发下载数（默认 5，1–20 钳制）

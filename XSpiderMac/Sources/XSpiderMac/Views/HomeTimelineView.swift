@@ -386,19 +386,6 @@ struct TimelinePostCard: View {
                                  lang: post.lang, collapsedLines: 6)
             }
 
-            // 引用推文：缩小内嵌在正文下方。点击打开**被引用推文**的详情，
-            // 与点击卡片其余部分（打开主推文）区分——内层手势优先，无需额外处理。
-            // 走 openFromDetail：若详情浮层已打开，点它会记入历史，可逐层返回。
-            if let quoted = post.quotedPost?.value {
-                QuotedPostCard(post: quoted, onOpen: {
-                    if DetailOverlayCenter.shared.post != nil {
-                        DetailOverlayCenter.shared.openFromDetail(quoted)
-                    } else {
-                        DetailOverlayCenter.shared.open(quoted)
-                    }
-                }, onAvatar: onAvatar)
-            }
-
             if let tags = post.tags, !tags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -422,8 +409,25 @@ struct TimelinePostCard: View {
                             .frame(maxWidth: .infinity)
                             .aspectRatio(1, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
+                            // 类型标签：小图上用紧凑尺寸
+                            .mediaTypeBadge(media.type, compact: true, padding: 5)
                     }
                 }
+            }
+
+            // 引用推文：放在**媒体下方**（需求）。
+            // 引用卡本身也是一条完整推文（含自己的媒体），
+            // 夹在正文与媒体之间会把主推文的媒体挤到下面、视觉上割裂。
+            // 点击打开**被引用推文**的详情，与点击卡片其余部分（打开主推文）区分。
+            // 走 openFromDetail：若详情浮层已打开，点它会记入历史，可逐层返回。
+            if let quoted = post.quotedPost?.value {
+                QuotedPostCard(post: quoted, onOpen: {
+                    if DetailOverlayCenter.shared.post != nil {
+                        DetailOverlayCenter.shared.openFromDetail(quoted)
+                    } else {
+                        DetailOverlayCenter.shared.open(quoted)
+                    }
+                }, onAvatar: onAvatar)
             }
 
             // 互动计数行

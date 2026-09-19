@@ -197,7 +197,71 @@ final class AccountStatusStore {
         changedAt = Date()
     }
 
-    // MARK: - 手动探测（唯一的主动行为，仅由用户点击触发）
+    // MARK: - 主动检测（可开关，默认开启，间隔默认 30 秒）
+
+    /// 主动检测的循环任务（开启时存在，关闭时取消）
+    private var probeLoop: Task<Void, Never>?
+    /// 上次主动检测时间（设置界面展示"最近检测"用）
+    private(set) var lastActiveProbeAt: Date?
+
+    /// 启动/停止主动检测。由设置变化驱动（`SettingsStore` 在开关或间隔改变时调用）。
+    ///
+    /// ## 与「被动检测」的关系
+    ///
+    /// 被动检测一直是**唯一自动采集口**（`NetworkClient` 上报），
+    /// 这条主动检测只是**额外**按间隔探一次连通性：
+    /// - 好处：状态更快反映现实（断网后不必等下次操作才发现）；
+    /// - 代价：**会消耗 X 的请求配额**（探测走 `getAccountInfo`，是真实请求）。
+    ///   因此做成可关闭，且间隔有下限（默认 30s，最低 5s）——
+    ///   间隔太短会被 X 视为异常流量，反而加剧限流。
+    func restartActiveProbeIfNeeded() {
+        probeLoop?.cancel()
+        probeLoop = nil
+
+        let settings = SettingsStore.shared.settings
+        // 开关默认**打开**（nil = 开）
+        guard settings.activeStatusProbeEnabled else { return }
+        let interval = max(5, settings.activeStatusProbeIntervalSeconds)
+
+        probeLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.runActiveProbe()
+            }
+        }
+        AppLogger.info("主动状态检测已启动", category: "NET", ["intervalSec": "\(interval)"])
+    }
+
+    /// 探一次连通性。**不做熔断复位**——那是用户点「重试」的语义（见 `probeAndRecover`）。
+    /// 这里只是"看看现在通不通"，结果由真实请求的被动上报写入。
+    private func runActiveProbe() async {
+        lastActiveProbeAt = Date()
+        guard !probing else { return }
+        probing = true
+        defer { probing = false }
+        do {
+            _ = try await TwitterAPI.shared.probeConnection()
+            // 探测成功且当前是"网络类异常"时才复位：限流态不该被探测悄悄清掉
+            // （限流是 X 明确告知的，应等它的 until 到期或用户点重试）
+            switch effectiveHealth {
+            case .offline, .timedOut:
+                reset()
+            default:
+                break
+            }
+        } catch {
+            // 失败状态由 NetworkClient 的被动上报写入，这里不重复写
+        }
+    }
+
+    /// 停止主动检测（应用退出/关闭开关时）
+    func stopActiveProbe() {
+        probeLoop?.cancel()
+        probeLoop = nil
+    }
+
+    // MARK: - 手动探测（由用户点击触发）
 
     /// 用户点「重试」：立刻结束熔断，并真的连一次 X 判断当前状态。
     ///
@@ -438,4 +502,31 @@ final class AccountStatusStore {
     }
 
     enum Severity { case ok, critical, warning }
+
+    // MARK: - 精简标签（侧边栏用）
+
+    /// 状态**简称**：侧边栏只显示这几个字，详细原因放 `helpText` 悬停查看。
+    ///
+    /// 需求：边栏位置窄，直接显示完整状态文案（如"429 限流，熔断倒计时 37 秒"）
+    /// 会被截断、看不全。因此标签化：只有「正常 / 异常 / 限流」三档，
+    /// 具体原因（超时、登录失效、服务端 5xx…）都进悬停说明。
+    ///
+    /// 三档与灯色一一对应：
+    /// - 绿灯「正常」
+    /// - 黄灯「异常」（超时 / 离线 / 登录失效 / 服务端错误）
+    /// - 红灯「限流」（X 明确返回 429，最需要用户注意——它会暂停后续工作）
+    var shortLabel: String {
+        switch severity {
+        case .ok: return L("正常")
+        case .warning: return L("异常")
+        case .critical: return L("限流")
+        }
+    }
+
+    /// CDN 的简称（与 X API 分开，两者配额独立）
+    var cdnShortLabel: String {
+        if cdnThrottled { return L("限流") }
+        if cdnLastFailure != nil { return L("异常") }
+        return L("正常")
+    }
 }

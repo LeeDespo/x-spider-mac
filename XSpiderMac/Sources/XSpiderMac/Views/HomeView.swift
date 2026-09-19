@@ -84,7 +84,10 @@ struct HomeView: View {
                     selectionCountText
 
                     Button(L("撤销")) {
-                        selectiveMode = false
+                        // 带动画退出（需求：退出选择模式要有动画）
+                        withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                            selectiveMode = false
+                        }
                         selection.reset()
                     }
                     .compatGlassButton()
@@ -189,7 +192,10 @@ struct HomeView: View {
             // 两种情形都交给爬虫：唯一区别是爬虫拿到的选择集不同。
             // 这样"跳过已下载"的判定（DownloadStore.isDuplicate）两条路径完全一致。
             creationStore.createCreationTask(user: user, filter: store.filter, selection: selection)
-            selectiveMode = false
+            // 带动画退出选择模式（需求：退出要有动画的出现）
+            withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                selectiveMode = false
+            }
             selection.reset()
         }
     }
@@ -691,6 +697,8 @@ struct MediaGridItem: View {
             if selectionMode { onToggleSelect?() }
             else { onDoubleClick?() }
         }
+        // 类型标签（视频/GIF；图片不显示）——静态封面看不出是不是视频
+        .mediaTypeBadge(media.type)
         .overlay(alignment: .topTrailing) {
             if selectionMode && isSelected {
                 Image(systemName: "checkmark.circle.fill")

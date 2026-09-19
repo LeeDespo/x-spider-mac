@@ -782,11 +782,28 @@ struct MediaContentView: View {
     @State private var image: NSImage?
     @State private var player: AVPlayer?
 
+    /// 查看窗口打开时，详情页的预览位不再播放（避免两处同时出声）
+    private var viewerOpen: Bool { MediaViewerCenter.shared.session != nil }
+
     var body: some View {
         Group {
-            if media.type == .video || media.type == .gif, let videoUrl = bestVideoURL(media) {
+            if media.type == .video || media.type == .gif,
+               let videoUrl = MediaViewerView.bestVideoURL(media) {
                 VideoPlayerContainer(url: videoUrl, player: $player)
                     .aspectRatio(videoAspect, contentMode: .fit)
+                    // 点预览位播放/暂停：不带系统播放条后，这是唯一的播放控制入口
+                    .contentShape(Rectangle())
+                    .onTapGesture { togglePlayback() }
+                    .overlay(alignment: .center) {
+                        // 暂停时给一个播放角标，否则用户不知道能点
+                        if !viewerOpen, let player, player.rate == 0 {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .shadow(radius: 4)
+                                .allowsHitTesting(false)
+                        }
+                    }
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -796,6 +813,32 @@ struct MediaContentView: View {
             }
         }
         .task { await loadHD() }
+        // 查看窗口打开时：记住当前位置并暂停预览（查看窗口据此续播）
+        .onChange(of: viewerOpen) { _, open in
+            if open { rememberProgressAndPause() }
+        }
+        .onDisappear { rememberProgressAndPause() }
+    }
+
+    /// 暂停/继续预览，并记住位置供查看窗口继承
+    private func togglePlayback() {
+        guard let player else { return }
+        if player.rate == 0 {
+            player.play()
+        } else {
+            player.pause()
+            rememberProgressAndPause(keepPlaying: true)
+        }
+    }
+
+    /// 把当前播放位置交给 `MediaViewerCenter`（查看窗口据此续播），并暂停
+    private func rememberProgressAndPause(keepPlaying: Bool = false) {
+        guard let player, let url = (player.currentItem?.asset as? AVURLAsset)?.url else { return }
+        let seconds = player.currentTime().seconds
+        if seconds.isFinite, seconds > 0 {
+            MediaViewerCenter.shared.rememberProgress(mediaId: url.absoluteString, seconds: seconds)
+        }
+        if !keepPlaying { player.pause() }
     }
 
     private func loadHD() async {
@@ -809,13 +852,6 @@ struct MediaContentView: View {
         image = await ImageCache.shared.image(for: s, category: .mediaThumbnails, maxPixelSize: 1600)
     }
 
-    private func bestVideoURL(_ media: TwitterMedia) -> URL? {
-        media.videoInfo?.variants?
-            .filter { $0.contentType?.contains("mp4") == true && $0.url != nil }
-            .max { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
-            .flatMap { URL(string: $0.url!) }
-    }
-
     private var videoAspect: CGFloat {
         let ar = media.videoInfo?.aspectRatio ?? [16, 9]
         guard ar.count == 2, ar[1] != 0 else { return 16 / 9 }
@@ -823,14 +859,22 @@ struct MediaContentView: View {
     }
 }
 
-/// AppKit AVPlayerView 包装(规避 SwiftUI VideoPlayer 的 sheet 崩溃)
+/// AppKit AVPlayerView 包装(规避 SwiftUI VideoPlayer 的 sheet 崩溃)。
+///
+/// **`controlsStyle = .none`**：不接系统播放条。
+/// 详情卡是个紧凑的预览位（宽约 400pt），系统播放条会占掉一行高度、
+/// 还带一个「提取视频页面文字」按钮（该按钮依赖 X 的页面上下文，在这里不可用——
+/// 用户反馈过）。播放控制在**查看窗口**里（工具条 + 字幕 + 全屏）。
+///
+/// 点击画面仍可播放/暂停（由上层 `MediaContentView` 的 tap 手势处理）。
 struct VideoPlayerContainer: NSViewRepresentable {
     let url: URL
     @Binding var player: AVPlayer?
 
     func makeNSView(context: Context) -> AVPlayerView {
         let v = AVPlayerView()
-        v.controlsStyle = .inline
+        v.controlsStyle = .none
+        v.videoGravity = .resizeAspect
         let p = AVPlayer(url: url)
         v.player = p
         player = p
@@ -838,7 +882,12 @@ struct VideoPlayerContainer: NSViewRepresentable {
         return v
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {}
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        // 查看窗口打开时暂停详情页的播放（需求：避免两处同时出声）
+        if MediaViewerCenter.shared.session != nil {
+            if nsView.player?.rate != 0 { nsView.player?.pause() }
+        }
+    }
 
     static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
         nsView.player?.pause()

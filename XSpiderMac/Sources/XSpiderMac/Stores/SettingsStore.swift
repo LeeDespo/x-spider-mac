@@ -6,7 +6,14 @@ final class SettingsStore {
     static let shared = SettingsStore()
 
     var settings: Settings = Settings() {
-        didSet { save() }
+        didSet {
+            save()
+            // 主动检测的开关/间隔变化要立即生效（不必重启）
+            if oldValue.app.activeStatusProbe != settings.app.activeStatusProbe
+                || oldValue.app.activeStatusProbeInterval != settings.app.activeStatusProbeInterval {
+                AccountStatusStore.shared.restartActiveProbeIfNeeded()
+            }
+        }
     }
 
     /// 需要重启才能完全生效的修改提示（设置页弹窗）
