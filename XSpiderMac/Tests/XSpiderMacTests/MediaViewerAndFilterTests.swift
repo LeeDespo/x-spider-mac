@@ -166,6 +166,90 @@ final class MediaViewerCenterTests: XCTestCase {
         XCTAssertNil(center.session)
         XCTAssertEqual(center.positionText, "")
     }
+
+    /// 评论媒体：切换范围**只限于该条评论的媒体**。
+    ///
+    /// 需求原文：「切换媒体就只能切换评论区的（先切换评论内的，没有在切换评论区的）」。
+    /// 评论里点开查看窗口时列表只装那条评论的媒体——
+    /// 只有 1 张时前后切换无效（不能跳到主推文或别的评论）。
+    @MainActor
+    func testReplyScopeOnlyStepsWithinThatReply() {
+        let center = MediaViewerCenter.shared
+        center.open(medias: [media("r1")], index: 0, post: nil, origin: .reply)
+        XCTAssertEqual(center.session?.medias.count, 1)
+        center.step(1)
+        XCTAssertEqual(center.session?.index, 0, "单张评论媒体不能切到别处")
+        center.step(-1)
+        XCTAssertEqual(center.session?.index, 0)
+
+        // 评论带多张时，只在这几张内切换
+        center.open(medias: [media("r1"), media("r2"), media("r3")],
+                    index: 0, post: nil, origin: .reply)
+        center.step(1)
+        XCTAssertEqual(center.session?.index, 1)
+        center.step(1)
+        XCTAssertEqual(center.session?.index, 2)
+        center.step(1)
+        XCTAssertEqual(center.session?.index, 2, "到评论内最后一张即止，不越界到其他评论")
+        XCTAssertEqual(center.session?.medias.count, 3,
+                       "范围里不应混入主推文或其他评论的媒体")
+    }
+}
+
+/// 视频播放状态（底栏控件的数据源）
+final class VideoPlaybackModelTests: XCTestCase {
+
+    /// 时间格式化：底栏显示 "m:ss / m:ss"
+    func testTimeTextFormatting() {
+        XCTAssertEqual(MediaViewerView.timeText(0), "0:00")
+        XCTAssertEqual(MediaViewerView.timeText(59), "0:59")
+        XCTAssertEqual(MediaViewerView.timeText(60), "1:00")
+        XCTAssertEqual(MediaViewerView.timeText(61), "1:01")
+        XCTAssertEqual(MediaViewerView.timeText(3725), "62:05")
+    }
+
+    /// 异常输入不能让底栏显示 "nan:nan" 或负数
+    func testTimeTextHandlesInvalidValues() {
+        XCTAssertEqual(MediaViewerView.timeText(.nan), "0:00")
+        XCTAssertEqual(MediaViewerView.timeText(.infinity), "0:00")
+        XCTAssertEqual(MediaViewerView.timeText(-5), "0:00")
+    }
+
+    /// 倍速循环 0.5 → 1 → 1.5 → 2 → 0.5
+    @MainActor
+    func testRateCycles() {
+        let m = VideoPlaybackModel()
+        m.rate = 1.0
+        m.cycleRate(); XCTAssertEqual(m.rate, 1.5)
+        m.cycleRate(); XCTAssertEqual(m.rate, 2.0)
+        m.cycleRate(); XCTAssertEqual(m.rate, 0.5)
+        m.cycleRate(); XCTAssertEqual(m.rate, 1.0)
+    }
+
+    /// 无播放器时操作不应崩溃（视频还没加载完就点了按钮）
+    @MainActor
+    func testOperationsWithoutPlayerAreSafe() {
+        let m = VideoPlaybackModel()
+        m.togglePlay()
+        m.play()
+        m.restart()
+        m.beginScrub()
+        m.endScrub()
+        m.teardown()
+        XCTAssertFalse(m.isPlaying)
+        XCTAssertEqual(m.currentTime, 0)
+    }
+
+    /// 拖动进度条期间不应被播放进度覆盖（否则滑块跟手打架）
+    @MainActor
+    func testScrubStateTracksEditing() {
+        let m = VideoPlaybackModel()
+        XCTAssertFalse(m.isScrubbing)
+        m.beginScrub()
+        XCTAssertTrue(m.isScrubbing, "拖动开始时进入 scrubbing：时间观察者据此跳过更新")
+        m.endScrub()
+        XCTAssertFalse(m.isScrubbing)
+    }
 }
 
 /// 查看窗口的 URL 选择。

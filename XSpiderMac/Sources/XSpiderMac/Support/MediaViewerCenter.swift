@@ -40,6 +40,7 @@ final class MediaViewerCenter {
         case detail      // 推文详情（切换范围 = 本条推文）
         case waterfall   // 主页媒体瀑布流（切换范围 = 瀑布流已加载的媒体）
         case userGrid    // 搜索用户的媒体网格
+        case reply       // 评论里的媒体（切换范围 = **该条评论自己的媒体**）
     }
 
     /// 打开查看窗口。同一时间只保留一个（再次打开即换内容）。

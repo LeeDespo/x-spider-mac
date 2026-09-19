@@ -519,11 +519,9 @@ struct MediaDetailView: View {
                                      lang: node.post.lang,
                                      collapsedLines: 4)
 
-                    // 评论自带的媒体缩略图。
-                    // 此前**完全没有渲染**——带图评论（如 @leoakok 那张照片）只显示文字，
-                    // 用户会以为图片丢了。
+                    // 评论自带的媒体缩略图（与媒体卡同一套 hover 按钮）
                     if let medias = node.post.medias, !medias.isEmpty {
-                        replyMediaRow(medias)
+                        ReplyMediaThumbRow(post: node.post, medias: medias)
                     }
 
                     // 计数行：点赞数 + 评论数（用户要求）。
@@ -542,57 +540,101 @@ struct MediaDetailView: View {
         .padding(.leading, CGFloat(indent) * 16)
     }
 
-    /// 评论里的媒体缩略图行。
-    ///
-    /// **单张保持宽高比**（与 X 一致）：像 @leoakok 那张 947×2048 的竖长图，
-    /// 方形裁切只剩中间一条，看不出是什么。
-    /// **多张用小方格**（最多 4 张），尺寸必须收着算：
-    /// 卡片宽 410，减去内边距与缩进（最深 48）、头像（30+10）后约 294pt，
-    /// 4×64 + 3×4 = 268 才放得下；用 84 会溢出被裁。
-    ///
-    /// 解码一律走 `ImageCache` + 目标尺寸降采样：评论一次可显示几十条，
-    /// 按原图解码（可能 2048px）会拖慢滚动。
-    @ViewBuilder
-    private func replyMediaRow(_ medias: [TwitterMedia]) -> some View {
-        if medias.count == 1, let only = medias.first {
-            ReplyMediaThumb(media: only, decodePixelSize: 320)
-                .aspectRatio(only.aspectRatioValue, contentMode: .fit)
-                .frame(maxWidth: 168, maxHeight: 168, alignment: .leading)
-        } else {
-            HStack(spacing: 4) {
-                ForEach(Array(medias.prefix(4).enumerated()), id: \.offset) { index, media in
-                    ReplyMediaThumb(media: media, decodePixelSize: 180)
-                        .frame(width: 64, height: 64)
-                        .overlay(alignment: .bottomTrailing) {
-                            // 视频/GIF 角标：静态缩略图看不出是视频
-                            if media.type == .video || media.type == .gif {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(3)
-                                    .background(.black.opacity(0.55), in: Circle())
-                                    .padding(3)
+    /// 评论里的媒体缩略图行：与媒体卡**同一套 hover 按钮**（下载/已下载 + 详细查看）。
+///
+/// 布局与尺寸（与媒体卡一致的做法）：
+/// - **单张保持宽高比**：像 @leoakok 那张 947×2048 的竖长图，方形裁切只剩中间一条；
+/// - **多张用小方格 64pt**，尺寸要收着算：卡片宽 410，减内边距、缩进（最深 48）、
+///   头像（30+10）后约 294pt，`4×64 + 3×4 = 268` 才放得下（用 84 会溢出被裁）；
+/// - 按钮直径 26pt：64pt 的格子里放得下两个，不挡住缩略图主体。
+///
+/// **按钮挂在每一张缩略图上**（不是整行一组）：下载必须作用于确定的那张媒体，
+/// 整行共用一组按钮会导致"多图时不知道在下载哪一张"。
+///
+/// **查看范围 = 本条评论自己的媒体**（需求：切换媒体只切评论内的；
+/// 那条评论没有更多媒体时停在原地，不会跳到别的评论或主推文），
+/// 起始位置为被点的那一张。
+///
+/// 解码一律走 `ImageCache` + 目标尺寸降采样：评论一次可显示几十条，
+/// 按原图解码（可能 2048px）会拖慢滚动。
+struct ReplyMediaThumbRow: View {
+    let post: TwitterPost
+    let medias: [TwitterMedia]
+
+    var body: some View {
+        Group {
+            if medias.count == 1, let only = medias.first {
+                ReplyMediaThumbCell(post: post, media: only, decodePixelSize: 320,
+                                    allMedias: medias, index: 0)
+                    .aspectRatio(only.aspectRatioValue, contentMode: .fit)
+                    .frame(maxWidth: 168, maxHeight: 168, alignment: .leading)
+            } else {
+                HStack(spacing: 4) {
+                    ForEach(Array(medias.prefix(4).enumerated()), id: \.offset) { index, media in
+                        ReplyMediaThumbCell(post: post, media: media, decodePixelSize: 180,
+                                            allMedias: medias, index: index)
+                            .frame(width: 64, height: 64)
+                            .overlay(alignment: .bottomTrailing) {
+                                // 视频/GIF 角标：静态缩略图看不出是视频
+                                if media.type == .video || media.type == .gif {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(3)
+                                        .background(.black.opacity(0.55), in: Circle())
+                                        .padding(3)
+                                }
                             }
-                        }
-                        // 第 4 张且有更多时，角标出剩余数量
-                        .overlay(alignment: .topTrailing) {
-                            if index == 3, medias.count > 4 {
-                                Text("+\(medias.count - 4)")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(.black.opacity(0.6), in: Capsule())
-                                    .padding(2)
+                            .overlay(alignment: .topTrailing) {
+                                // 第 4 张且有更多时，角标出剩余数量
+                                if index == 3, medias.count > 4 {
+                                    Text("+\(medias.count - 4)")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(.black.opacity(0.6), in: Capsule())
+                                        .padding(2)
+                                }
                             }
-                        }
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
             }
         }
     }
+}
 
-    // MARK: - 动作
+/// 单张评论缩略图 + 自己的 hover 按钮。
+///
+/// 角标（视频/剩余数量）由外层叠加，避免这里同时管装饰与交互。
+private struct ReplyMediaThumbCell: View {
+    let post: TwitterPost
+    let media: TwitterMedia
+    let decodePixelSize: Int
+    /// 该评论的全部媒体（查看窗口的切换范围）
+    let allMedias: [TwitterMedia]
+    let index: Int
+
+    @State private var hovering = false
+
+    var body: some View {
+        ReplyMediaThumb(media: media, decodePixelSize: decodePixelSize)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .overlay(alignment: .center) {
+                if hovering {
+                    MediaCardActions(post: post, media: media, buttonSize: 26) {
+                        // 范围 = 本评论的媒体，从被点的这张开始
+                        MediaViewerCenter.shared.open(medias: allMedias, index: index,
+                                                      post: post, origin: .reply)
+                    }
+                }
+            }
+    }
+}
+
+// MARK: - 动作
 
     private func toggleLike() {
         liked.toggle()

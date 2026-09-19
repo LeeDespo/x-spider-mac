@@ -77,6 +77,14 @@ X 的 GraphQL 端点对 queryId / features / variables 的格式极其敏感，�
 16. **搜索页数据源按用户记忆、默认推文**：`HomepageStore.rememberedSource(for:)`。
     应用时机**必须在 `loadPostList` 之前**，否则先用默认源拉一页再切源重拉，
     白白多一次请求（项目一直在对抗 429）。
+17. **别在 AppKit 控件上盖透明手势层**：`Color.clear { onTapGesture }` 会吃掉
+    下层 `AVPlayerView` 控制条的全部点击（"播放按钮点不动"的根因）。
+    手势直接挂在控件上。
+18. **视频控件全放底栏**（`AVPlayerView.controlsStyle = .none`）：
+    `.floating` 会浮在画面上遮挡内容。
+19. **媒体区的手势提示别用 `.help`**：整片区域挂工具提示几乎一碰就弹，
+    且同视图内移动不消失。用 `idleHoverHint`（`onContinuousHover` 闲置判定，
+    一动就取消）。
 
 ## 构建与验证
 

@@ -5,30 +5,27 @@ import AVKit
 ///
 /// ## 布局原则（需求：按钮不要遮挡媒体）
 ///
-/// 媒体占据中央区域，**工具条在底部独立一条**（不浮在图上）。
+/// 媒体占据中央区域，**全部控件都在底部独立一条**（不浮在媒体上）。
+/// 视频**不用 AVPlayerView 自带的控制条**（`.floating` 会浮在画面上遮挡内容，
+/// 且此前被上层的手势层挡住导致点不动）——播放/进度/倍速全部做进底栏。
 /// 切换按钮分列左右两侧空白区，也不压住画面。
 /// 工具栏**只用图标**（配 `.help` 提示），不放文字。
 ///
 /// ## 手势
 ///
-/// - 图片：双指捏合缩放（`MagnificationGesture`）、拖动平移、双指左右滑切换；
-/// - 视频：左右滑切换、空格播放/暂停；
-/// - 两者：←/→ 切换，`⌘+`/`⌘-` 缩放，`⌘0` 复位（键盘快捷键见 body 的隐藏按钮）。
+/// - 图片：双指捏合缩放（`MagnificationGesture`）、拖动平移、双击还原/放大；
+/// - 两者：双指左右滑切换媒体；←/→ 切换，空格播放暂停，⌘+ / ⌘- / ⌘0 缩放。
 struct MediaViewerView: View {
     let center: MediaViewerCenter
     @State private var store = DownloadStore.shared
+    @State private var playback = VideoPlaybackModel()
 
-    /// 图片显示状态（每个媒体独立会被重置：切换时清空）
+    /// 图片显示状态（切换媒体时重置）
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
     @State private var rotation: Angle = .zero
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
-
-    /// 视频播放器
-    @State private var player: AVPlayer?
-    @State private var isPlaying = false
-    @State private var rate: Float = 1.0
 
     private var session: MediaViewerCenter.Session? { center.session }
     private var media: TwitterMedia? {
@@ -42,12 +39,15 @@ struct MediaViewerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 媒体区：zIndex 无关，工具条在下方独立一条，保证不遮挡
+            // 媒体区：控件全在下方工具条，画面无任何覆盖物
             ZStack {
                 Color.black
                 if let media {
                     if isVideo {
-                        videoStage(media)
+                        VideoStage(player: playback.player)
+                            // 点画面播放/暂停：用 tap 手势而不是盖一层 Color.clear
+                            // （后者会吃掉播放器与上层按钮的点击，是"按钮点不动"的根因）
+                            .onTapGesture { playback.togglePlay() }
                     } else {
                         imageStage(media)
                     }
@@ -55,7 +55,7 @@ struct MediaViewerView: View {
                     ProgressView()
                 }
 
-                // 左右切换按钮：贴在两侧，半透明圆钮（不压画面中央）
+                // 左右切换按钮：贴在两侧，半透明圆钮（压在画面边缘的空白处，不挡内容中心）
                 if let s = session, s.medias.count > 1 {
                     HStack {
                         switchButton("chevron.left", enabled: s.index > 0) { step(-1) }
@@ -79,9 +79,9 @@ struct MediaViewerView: View {
         .background { keyboardShortcuts }
         .task(id: media?.id) {
             resetImageTransform()
-            await loadPlayerIfNeeded()
+            await loadPlaybackIfNeeded()
         }
-        .onDisappear { player?.pause() }
+        .onDisappear { playback.teardown() }
     }
 
     // MARK: - 图片
@@ -99,13 +99,15 @@ struct MediaViewerView: View {
                     .onEnded { _ in lastScale = scale }
             )
             .onTapGesture(count: 2) {
-                // 双击：在「适应窗口」与「放大 3 倍」之间切换
                 withAnimation(.spring(duration: 0.25)) {
                     if scale > 1.01 { resetImageTransform() }
                     else { scale = 3; lastScale = 3 }
                 }
             }
-            .help(L("双指捏合缩放，拖动平移，双击放大/复位"))
+            // 手势提示改为"鼠标停住才出现、一动就消失"的闲置提示。
+            // 不用 .help：那是 AppKit 工具提示，挂在大面积区域上时几乎一碰就弹、
+            // 且在同一视图内移动不会消失（用户反馈"太容易触发、消失太慢"）。
+            .idleHoverHint(L("双指捏合缩放 · 拖动平移 · 双击放大"))
     }
 
     /// 复位缩放/旋转/平移
@@ -121,50 +123,42 @@ struct MediaViewerView: View {
 
     // MARK: - 视频
 
-    private func videoStage(_ media: TwitterMedia) -> some View {
-        VideoStage(player: player)
-            .overlay(alignment: .bottom) {
-                // 点击视频本身播放/暂停
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { togglePlay() }
-            }
-    }
-
-    private func togglePlay() {
-        guard let player else { return }
-        if isPlaying { player.pause() } else { player.play() }
-        isPlaying.toggle()
-    }
-
-    private func loadPlayerIfNeeded() async {
-        guard let media, isVideo else {
-            player?.pause()
-            player = nil
+    private func loadPlaybackIfNeeded() async {
+        guard let media, isVideo, let url = Self.bestVideoURL(media) else {
+            playback.teardown()
             return
         }
-        guard let url = Self.bestVideoURL(media) else { return }
-        let p = AVPlayer(url: url)
-        p.rate = rate
-        p.play()
-        player = p
-        isPlaying = true
+        playback.load(url: url)
     }
 
-    // MARK: - 工具条（纯图标，不遮挡媒体）
+    // MARK: - 工具条（纯图标；视频的播放控制全在这里）
 
     private var toolbar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             if isVideo {
-                iconButton("arrow.counterclockwise", help: L("回到开头")) {
-                    player?.seek(to: .zero)
-                    player?.play()
-                    isPlaying = true
+                iconButton("arrow.counterclockwise", help: L("回到开头")) { playback.restart() }
+                iconButton(playback.isPlaying ? "pause.fill" : "play.fill",
+                           help: playback.isPlaying ? L("暂停") : L("播放")) { playback.togglePlay() }
+
+                // 进度条：可拖动定位。拖动期间暂停时间更新，避免与播放位置打架
+                Slider(value: Binding(
+                    get: { playback.isScrubbing ? playback.scrubTarget : playback.currentTime },
+                    set: { playback.scrubTarget = $0 }
+                ), in: 0...max(playback.duration, 0.01)) { editing in
+                    if editing { playback.beginScrub() } else { playback.endScrub() }
                 }
-                iconButton(isPlaying ? "pause.fill" : "play.fill",
-                           help: isPlaying ? L("暂停") : L("播放")) { togglePlay() }
-                iconButton("goforward", help: L("加速")) { cycleRate() }
-                rateText
+                .controlSize(.small)
+                .frame(minWidth: 120)
+
+                Text("\(Self.timeText(playback.currentTime)) / \(Self.timeText(playback.duration))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                iconButton("goforward", help: L("加速")) { playback.cycleRate() }
+                Text(String(format: "%.1fx", playback.rate))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .leading)
             } else {
                 iconButton("minus.magnifyingglass", help: L("缩小")) {
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -183,7 +177,10 @@ struct MediaViewerView: View {
                 iconButton("rotate.left", help: L("向左旋转 90°")) {
                     withAnimation(.easeOut(duration: 0.2)) { rotation -= .degrees(90) }
                 }
-                zoomText
+                Text(String(format: "%.0f%%", scale * 100))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 46, alignment: .leading)
             }
 
             Spacer()
@@ -219,28 +216,6 @@ struct MediaViewerView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.bar)
-    }
-
-    private var zoomText: some View {
-        Text(String(format: "%.0f%%", scale * 100))
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .frame(width: 46, alignment: .leading)
-    }
-
-    private var rateText: some View {
-        Text(String(format: "%.1fx", rate))
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .frame(width: 46, alignment: .leading)
-    }
-
-    /// 0.5 → 1 → 1.5 → 2 → 0.5 循环
-    private func cycleRate() {
-        let options: [Float] = [0.5, 1.0, 1.5, 2.0]
-        let idx = options.firstIndex(of: rate) ?? 1
-        rate = options[(idx + 1) % options.count]
-        player?.rate = rate
     }
 
     private func step(_ delta: Int) {
@@ -282,7 +257,7 @@ struct MediaViewerView: View {
         Group {
             Button("") { step(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("") { step(1) }.keyboardShortcut(.rightArrow, modifiers: [])
-            Button("") { if isVideo { togglePlay() } }.keyboardShortcut(.space, modifiers: [])
+            Button("") { if isVideo { playback.togglePlay() } }.keyboardShortcut(.space, modifiers: [])
             Button("") { scale = min(12, scale + 0.25); lastScale = scale }
                 .keyboardShortcut("+", modifiers: .command)
             Button("") { scale = max(0.2, scale - 0.25); lastScale = scale }
@@ -293,7 +268,7 @@ struct MediaViewerView: View {
         .frame(width: 0, height: 0)
     }
 
-    // MARK: - URL
+    // MARK: - URL / 格式化
 
     /// 大图 URL：优先 `name=large`（比 orig 稳，orig 偶发 404）
     static func largeURL(for media: TwitterMedia) -> String? {
@@ -313,6 +288,121 @@ struct MediaViewerView: View {
             .filter { $0.contentType?.contains("mp4") == true && $0.url != nil }
             .max { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
             .flatMap { URL(string: $0.url!) }
+    }
+
+    /// 秒 → "m:ss"
+    static func timeText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded(.down))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+// MARK: - 视频播放状态
+
+/// 视频播放状态与进度观察。
+///
+/// 单独成 `@MainActor @Observable` 类（而不是散在视图的 `@State`）的原因：
+/// `addPeriodicTimeObserver` 的闭包是 `@Sendable`，在 Swift 6 严格并发下
+/// 无法直接写入视图的 `@State`（会报跨隔离域写入）。状态收进 MainActor 类后，
+/// 闭包里只用 `MainActor.assumeIsolated`（回调已保证在主队列）。
+@MainActor
+@Observable
+final class VideoPlaybackModel {
+    private(set) var player: AVPlayer?
+    private(set) var isPlaying = false
+    private(set) var currentTime: Double = 0
+    private(set) var duration: Double = 0
+    var rate: Float = 1.0
+    /// 拖动进度条时的目标位置（拖动期间不跟播放进度，否则滑块会跟手打架）
+    var scrubTarget: Double = 0
+    /// 是否正在拖动进度条（拖动期间时间观察者不覆盖滑块位置）
+    private(set) var isScrubbing = false
+
+    private var timeObserver: Any?
+
+    func load(url: URL) {
+        teardown()
+        let p = AVPlayer(url: url)
+        p.rate = rate
+        player = p
+        currentTime = 0
+        duration = 0
+
+        // 时长异步读取（同步访问 AVAsset.duration 已废弃）
+        if let item = p.currentItem {
+            Task { [weak self] in
+                let d = try? await item.asset.load(.duration)
+                let seconds = d?.seconds ?? 0
+                self?.duration = (seconds.isFinite && seconds > 0) ? seconds : 0
+            }
+        }
+
+        timeObserver = p.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            // 回调已在主队列：直接断言隔离域，避免每 0.25s 起一个 Task
+            MainActor.assumeIsolated {
+                guard let self, !self.isScrubbing else { return }
+                let s = time.seconds
+                self.currentTime = (s.isFinite && s >= 0) ? s : 0
+            }
+        }
+        play()
+    }
+
+    func teardown() {
+        if let timeObserver, let player {
+            player.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
+        player?.pause()
+        player = nil
+        isPlaying = false
+        currentTime = 0
+        duration = 0
+    }
+
+    func togglePlay() {
+        guard let player else { return }
+        if isPlaying { player.pause() } else { player.play() }
+        isPlaying.toggle()
+    }
+
+    func play() {
+        player?.rate = rate
+        player?.play()
+        isPlaying = true
+    }
+
+    func restart() {
+        player?.seek(to: .zero)
+        currentTime = 0
+        play()
+    }
+
+    /// 0.5 → 1 → 1.5 → 2 → 0.5 循环
+    func cycleRate() {
+        let options: [Float] = [0.5, 1.0, 1.5, 2.0]
+        let idx = options.firstIndex(of: rate) ?? 1
+        rate = options[(idx + 1) % options.count]
+        player?.rate = rate
+    }
+
+    func beginScrub() {
+        isScrubbing = true
+        scrubTarget = currentTime
+        player?.pause()
+    }
+
+    func endScrub() {
+        isScrubbing = false
+        let target = min(max(0, scrubTarget), max(duration, 0))
+        player?.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                     toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTime = target
+        play()
     }
 }
 
@@ -351,7 +441,6 @@ struct ZoomableImage: View {
                             }
                             .onEnded { _ in lastOffset = offset }
                     )
-                    .onTapGesture(count: 2) {}
             } else if failed {
                 VStack(spacing: 8) {
                     Image(systemName: "photo.badge.exclamationmark")
@@ -381,15 +470,93 @@ struct ZoomableImage: View {
     }
 }
 
+// MARK: - 闲置悬停提示
+
+/// 「鼠标停住才出现」的提示：`delay` 秒内没有鼠标移动才显示；
+/// **一动就立刻消失**（短淡出），移出视图也立刻消失。
+///
+/// 为什么不用 `.help`：那是 AppKit 工具提示，挂在整片媒体区上时
+/// 几乎一碰就弹，且在同一视图内移动不会消失——
+/// 用户反馈"太容易触发、消失时间与动画都太长"。
+/// 这里用 `onContinuousHover`（只在鼠标**移动**时回调）实现闲置判定：
+/// 有回调 = 在动 → 隐藏并重排计时；静默达到 delay = 停住了 → 显示。
+private struct IdleHoverHintModifier: ViewModifier {
+    let text: String
+    var delay: TimeInterval = 1.0
+
+    @State private var visible = false
+    @State private var pending: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if visible {
+                    Text(text)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .padding(.bottom, 14)
+                        // 出现稍慢、消失很快（用户要求缩短消失时间与动画）
+                        .transition(.opacity.animation(.easeOut(duration: 0.1)))
+                        .allowsHitTesting(false)   // 提示绝不能挡住媒体或按钮
+                }
+            }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    // 任何移动都视为"还在操作"：立即隐藏并重新计时
+                    scheduleHint()
+                case .ended:
+                    cancelHint()
+                }
+            }
+            .onDisappear { cancelHint() }
+    }
+
+    private func scheduleHint() {
+        pending?.cancel()
+        if visible {
+            withAnimation(.easeOut(duration: 0.1)) { visible = false }
+        }
+        pending = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.15)) { visible = true }
+        }
+    }
+
+    private func cancelHint() {
+        pending?.cancel()
+        pending = nil
+        if visible {
+            withAnimation(.easeOut(duration: 0.1)) { visible = false }
+        }
+    }
+}
+
+extension View {
+    /// 鼠标停住才显示的手势提示（见 `IdleHoverHintModifier`）
+    func idleHoverHint(_ text: String, delay: TimeInterval = 1.0) -> some View {
+        modifier(IdleHoverHintModifier(text: text, delay: delay))
+    }
+}
+
 // MARK: - 视频舞台
 
-/// AVPlayerView 包装：查看窗口里用 AppKit 播放器（SwiftUI VideoPlayer 在独立窗口同样有崩溃史）。
+/// AVPlayerView 包装。
+///
+/// **`controlsStyle = .none`**：自带的 `.floating` 控制条会浮在画面上遮挡内容，
+/// 需求是把播放控制全做进底栏（见 `MediaViewerView.toolbar`）。
+/// 早先还叠了一层 `Color.clear` 做点击播放，它把播放器控制条的点击全吃掉了
+/// ——"按钮无法点击"就是这么来的，现已移除。
 struct VideoStage: NSViewRepresentable {
     let player: AVPlayer?
 
     func makeNSView(context: Context) -> AVPlayerView {
         let v = AVPlayerView()
-        v.controlsStyle = .floating   // 悬浮控制条：不占固定高度，也不遮挡画面主体
+        v.controlsStyle = .none
         v.videoGravity = .resizeAspect
         v.player = player
         return v
