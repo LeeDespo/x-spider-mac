@@ -70,8 +70,15 @@ final class AutoTranslateWhitelistTests: XCTestCase {
     }
 
     /// 语言码带地区变体时按主语言匹配（X 可能给 "zh-Hans" 这类）
+    ///
+    /// 注意：目标语言若恰好也是 zh，会被"目标语言本身不翻译"那条挡掉，
+    /// 所以这里显式把目标设为**别的**语言，才能单独验证地区变体匹配。
     @MainActor
     func testRegionVariantMatchesMainLanguage() {
+        let saved = SettingsStore.shared.settings.app.translateTargetLanguage
+        SettingsStore.shared.settings.app.translateTargetLanguage = "ja"
+        defer { SettingsStore.shared.settings.app.translateTargetLanguage = saved }
+
         setAutoTranslate(true)
         setLanguages(["zh"])
         XCTAssertTrue(TranslationStore.shouldAutoTranslate(lang: "zh-Hans"))
@@ -97,6 +104,122 @@ final class AutoTranslateWhitelistTests: XCTestCase {
                        "目标语言本身无需翻译")
         XCTAssertTrue(TranslationStore.shouldAutoTranslate(lang: "ko"))
         SettingsStore.shared.settings.app.translateTargetLanguage = nil
+    }
+}
+
+/// 目标语言解析：**"跟随系统"必须解析成用户真实语言**。
+///
+/// 回归用户实测的三个症状（同一根因）：
+/// 1. 目标语言设"跟随系统"时，加日语/英语会变成"日→英"；
+/// 2. 事先下载过的英语包显示"无法下载"；
+/// 3. 下载中一直显示"可下载"。
+///
+/// 根因：`Locale.current` 受 **app bundle 的本地化声明**影响。本 app 只用
+/// `L10n` 自己实现三语（不走 bundle），bundle 里只声明 en，于是系统把
+/// `Locale.current` 降级成 **en**——实测 `Locale.current.identifier == "en_US"`
+/// 而 `Locale.preferredLanguages == ["zh-Hans"]`。
+final class TranslationTargetLanguageTests: XCTestCase {
+
+    @MainActor
+    private func withTarget(_ raw: String?, _ body: () -> Void) {
+        let saved = SettingsStore.shared.settings.app.translateTargetLanguage
+        SettingsStore.shared.settings.app.translateTargetLanguage = raw
+        body()
+        SettingsStore.shared.settings.app.translateTargetLanguage = saved
+    }
+
+    /// **核心回归**：跟随系统时用 `Locale.preferredLanguages`，不是 `Locale.current`
+    @MainActor
+    func testFollowSystemUsesPreferredLanguageNotCurrent() {
+        withTarget(nil) {
+            let resolved = SettingsStore.shared.settings.translateTargetLanguage
+            let main = resolved.languageCode?.identifier ?? ""
+            let preferredMain = Locale.preferredLanguages.first?
+                .split(separator: "-").first.map(String.init) ?? ""
+
+            XCTAssertFalse(main.isEmpty)
+            XCTAssertEqual(main, preferredMain,
+                           "跟随系统必须等于系统偏好语言；用 Locale.current 会被 bundle 降级成 en")
+        }
+    }
+
+    /// `systemPreferredLanguage` 本身不受 bundle 影响
+    func testSystemPreferredLanguageIsNotBundleDegraded() {
+        let resolved = Settings.systemPreferredLanguage.languageCode?.identifier ?? ""
+        let preferred = Locale.preferredLanguages.first?
+            .split(separator: "-").first.map(String.init) ?? ""
+        XCTAssertEqual(resolved, preferred)
+
+        // 记录这条事实：bundle 只声明了 en，所以 Locale.current 不可用
+        XCTAssertEqual(Bundle.main.localizations, ["en"],
+                       "bundle 只有 en 本地化（L10n 是自实现的）——这正是 Locale.current 被降级的原因")
+    }
+
+    /// 显式设置时优先用设置值
+    @MainActor
+    func testExplicitTargetWins() {
+        withTarget("ja") {
+            let resolved = SettingsStore.shared.settings.translateTargetLanguage
+            XCTAssertEqual(resolved.languageCode?.identifier, "ja")
+        }
+    }
+
+    /// **回归症状 2**：与目标语言相同时应是"无需语言包"而非"不支持"
+    ///
+    /// 系统对 "zh → zh" 这类同语言对返回 `unsupported`，但用户视角是"不需要"。
+    @MainActor
+    func testSameAsTargetIsNotNeededNotUnsupported() async {
+        let store = TranslationPackStore.shared
+        SettingsStore.shared.settings.app.translateTargetLanguage = "zh-Hans"
+        defer {
+            SettingsStore.shared.settings.app.translateTargetLanguage = nil
+            store.remove("zh")
+        }
+
+        await store.refreshStatus(for: "zh", force: true)
+        XCTAssertEqual(store.statuses["zh"], .notNeeded,
+                       "与目标语言相同应显示「无需语言包」，而不是系统的 unsupported")
+        XCTAssertTrue(store.statuses["zh"]?.isInstalled == true,
+                      "「无需语言包」在 UI 上应视为已就绪（不再提示下载）")
+    }
+
+    /// 不同语言 → 走系统查询（不该被误判成 notNeeded）
+    @MainActor
+    func testDifferentLanguageQueriesSystem() async {
+        let store = TranslationPackStore.shared
+        SettingsStore.shared.settings.app.translateTargetLanguage = "zh-Hans"
+        defer { SettingsStore.shared.settings.app.translateTargetLanguage = nil }
+
+        await store.refreshStatus(for: "ja", force: true)
+        XCTAssertNotEqual(store.statuses["ja"], .notNeeded,
+                          "与目标不同的语言应走系统查询")
+    }
+
+    /// **回归症状 3**：请求下载后立刻进入"下载中"，且
+    /// `prepareTranslation` 返回后**仍保持下载中**（它不代表下载完成）
+    @MainActor
+    func testRequestDownloadMarksDownloadingImmediatelyAndKeepsIt() async {
+        let store = TranslationPackStore.shared
+        store.requestDownload(languageCode: "ko")
+        XCTAssertTrue(store.downloading.contains("ko"),
+                      "点下下载就该显示「下载中」，不必等会话建立")
+
+        await store.markDownloadRequested(languageCode: "ko", error: nil)
+        XCTAssertTrue(store.downloading.contains("ko"),
+                      "prepareTranslation 返回 ≠ 下载完成，不能过早清掉「下载中」")
+    }
+
+    /// 下载失败时才移出"下载中"（否则会一直转圈）
+    @MainActor
+    func testFailedDownloadClearsDownloading() async {
+        let store = TranslationPackStore.shared
+        store.requestDownload(languageCode: "fr")
+        XCTAssertTrue(store.downloading.contains("fr"))
+        await store.markDownloadRequested(languageCode: "fr",
+                                          error: NSError(domain: "t", code: 1))
+        XCTAssertFalse(store.downloading.contains("fr"),
+                       "失败必须停止转圈并给出错误")
+        XCTAssertNotNil(store.lastError)
     }
 }
 

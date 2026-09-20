@@ -339,11 +339,44 @@ struct Settings: Codable, Sendable {
     // MARK: - 翻译（nil 安全）
 
     /// 目标语言：空/未设 = 跟随系统语言
+    /// 翻译目标语言。
+    ///
+    /// 显式设置时用它；未设置（"跟随系统"）时取**系统偏好语言**，
+    /// 见 `systemPreferredLanguage` 的说明——**不能**用 `Locale.current`。
     var translateTargetLanguage: Locale.Language {
         if let raw = app.translateTargetLanguage, !raw.isEmpty {
             return Locale.Language(identifier: raw)
         }
+        return Self.systemPreferredLanguage
+    }
+
+    /// 系统**偏好**语言（用户真实意图）。
+    ///
+    /// ⚠️ **不要用 `Locale.current`**：它受 **app bundle 的本地化声明**影响。
+    /// 本 app 只用 `L10n` 自己实现三语（不走 bundle），bundle 里只声明了 en，
+    /// 于是系统把 `Locale.current` 降级成开发语言——**实测**：
+    /// ```
+    /// Locale.current.identifier  == "en_US"        ← 被降级成英语
+    /// Locale.preferredLanguages  == ["zh-Hans"]    ← 用户真实语言
+    /// Bundle.main.localizations  == ["en"]         ← 原因
+    /// ```
+    /// 用它当翻译目标会导致"设了跟随系统，却从日语翻到英语"（用户实测反馈）。
+    ///
+    /// `Locale.preferredLanguages` 读的是系统语言偏好列表，不受 bundle 影响。
+    static var systemPreferredLanguage: Locale.Language {
+        if let first = Locale.preferredLanguages.first, !first.isEmpty {
+            return Locale.Language(identifier: first)
+        }
         return Locale.current.language
+    }
+
+    /// 展示语言名用的 Locale。
+    ///
+    /// 与 `systemPreferredLanguage` 同理：`Locale.current` 被 bundle 降级成 en，
+    /// 用它 `localizedString(forLanguageCode:)` 会把"日本語"显示成 "Japanese"。
+    /// 这里用系统偏好语言构造，保证语言名与用户界面语言一致。
+    static var displayLocale: Locale {
+        Locale(identifier: Locale.preferredLanguages.first ?? Locale.current.identifier)
     }
 
     /// 目标语言的存储原值（设置页 Picker 绑定用，空字符串表示跟随系统）

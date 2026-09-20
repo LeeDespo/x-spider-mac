@@ -98,7 +98,10 @@ struct TranslationLanguageListSheet: View {
     /// 单行：语言名 + 包状态 + 下载/删除
     private func row(_ code: String) -> some View {
         let status = packStore.statuses[code] ?? .unknown
-        let isDownloading = packStore.downloadingLanguage == code
+        // 下载中：从**用户点下去那一刻**就开始显示，直到状态变已安装（或超时）。
+        // 注意 prepareTranslation 返回 ≠ 下载完成——系统不暴露进度，
+        // 只能靠 store 轮询状态判定，见 TranslationPackStore 注释。
+        let isDownloading = packStore.downloading.contains(code)
         return HStack(spacing: 10) {
             Text(displayName(for: code))
                 .font(.callout)
@@ -111,14 +114,15 @@ struct TranslationLanguageListSheet: View {
             // 语言包状态标签
             if isDownloading {
                 ProgressView().controlSize(.small)
-                Text(L("下载中…")).font(.caption).foregroundStyle(.secondary)
+                Text(L("下载中…"))
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(status.label)
                     .font(.caption)
                     .foregroundStyle(status.isInstalled ? .green : .secondary)
             }
 
-            // 下载按钮：仅"可下载"时可用
+            // 下载按钮：仅"可下载"且不在下载中时可用
             Button {
                 packStore.requestDownload(languageCode: code)
             } label: {
@@ -143,12 +147,15 @@ struct TranslationLanguageListSheet: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-        .task { await packStore.refreshStatus(for: code) }
+        .task(id: packStore.downloading.contains(code)) {
+            // 进入/离开下载中时都重查一次：状态变化要立刻反映到标签
+            await packStore.refreshStatus(for: code)
+        }
     }
 
     /// 语言码 → 本地化语言名
     private func displayName(for code: String) -> String {
-        Locale.current.localizedString(forLanguageCode: code) ?? code
+        Settings.displayLocale.localizedString(forLanguageCode: code) ?? code
     }
 }
 

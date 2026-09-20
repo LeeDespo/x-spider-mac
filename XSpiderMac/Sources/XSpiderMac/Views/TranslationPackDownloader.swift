@@ -40,21 +40,17 @@ struct TranslationPackDownloader: View {
 
     private func run(_ code: String) async {
         inFlight = code
-        store.beginDownload(languageCode: code)
         let target = SettingsStore.shared.settings.translateTargetLanguage
-            ?? Locale.current.language
         // 必须**新建** Configuration 实例，复用同一实例不会让 translationTask 重新执行
         request = TranslationSession.Configuration(
             source: Locale.Language(identifier: code),
             target: target
         )
-        // 给 translationTask 时间完成；prepareTranslation 的结果由 runner 回调写回
-        try? await Task.sleep(nanoseconds: 60_000_000_000)
-        // 超时兜底：避免某个语言卡住阻塞整个队列
-        if inFlight == code {
-            await store.finishDownload(languageCode: code, error: nil)
-            inFlight = nil
-        }
+        // 等 runner 回调（它会在 prepareTranslation 返回/抛错后调 markDownloadRequested）。
+        // 这里只做一个较短的兜底等待——真正的"下载完成"由 store 轮询状态判定，
+        // 因为 prepareTranslation 返回 ≠ 下载完成（见 TranslationPackStore 注释）。
+        try? await Task.sleep(nanoseconds: 10_000_000_000)
+        if inFlight == code { inFlight = nil }
     }
 }
 
@@ -73,13 +69,14 @@ private struct TranslationPackRunner: View {
                 var caught: Error?
                 do {
                     // prepareTranslation 会让系统去准备（下载）该语言对的语言包。
-                    // 首次下载系统可能弹一次确认——这是系统行为，应用无法绕过。
+                    // ⚠️ 它的返回**不代表下载完成**，只表示系统已接受请求；
+                    // 因此这里只上报"已请求"，完成与否由 store 轮询状态判定。
                     try await session.prepareTranslation()
                 } catch {
                     caught = error
                 }
-                // 写回结果（finishDownload 内部会清 downloadingLanguage 并重查状态）
-                await TranslationPackStore.shared.finishDownload(languageCode: code, error: caught)
+                await TranslationPackStore.shared.markDownloadRequested(languageCode: code,
+                                                                       error: caught)
             }
     }
 }

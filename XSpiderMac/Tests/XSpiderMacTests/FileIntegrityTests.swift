@@ -657,8 +657,8 @@ final class TranslationLanguageTests: XCTestCase {
         XCTAssertEqual(settings.translateTargetLanguageRaw, "",
                        "未设置时应为空（表示跟随系统）")
         XCTAssertEqual(settings.translateTargetLanguage.languageCode,
-                       Locale.current.language.languageCode,
-                       "未设置时应回落到系统语言")
+                       Settings.systemPreferredLanguage.languageCode,
+                       "未设置时应回落到**系统偏好语言**，而不是被 bundle 降级的 Locale.current")
 
         settings.app.translateTargetLanguage = "ja"
         XCTAssertEqual(settings.translateTargetLanguageRaw, "ja")

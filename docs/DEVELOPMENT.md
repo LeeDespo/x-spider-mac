@@ -353,6 +353,36 @@ X 的 GraphQL 端点对 `queryId` / `features` / `variables` 的格式极其敏�
 但系统**首次为某语言对下载时仍会弹一次确认**——这是系统行为，应用无法绕过；
 下载进度也由系统管理，我们只知道"开始了 / 结束了"。
 
+### ⚠️ 不能用 `Locale.current`（会毁掉目标语言）
+
+**实测**（App 内）：
+
+```
+Locale.current.identifier  == "en_US"        ← 被降级成英语
+Locale.preferredLanguages  == ["zh-Hans"]    ← 用户真实语言
+Bundle.main.localizations  == ["en"]         ← 原因
+```
+
+本 app 的三语是 `L10n` **自实现**的（不走 bundle），bundle 里只声明了 `en`，
+于是系统把 `Locale.current` 降级成开发语言。用它当翻译目标会导致
+**"设了跟随系统，却把日语翻成英语"**（用户实测反馈，且连带让英语包显示"无法下载"
+——因为源=目标=en，系统对同语言对返回 `unsupported`）。
+
+**正确做法**：用 `Settings.systemPreferredLanguage`（读 `Locale.preferredLanguages`）。
+取语言**显示名**同理，用 `Settings.displayLocale`，
+否则"日本語"会显示成 "Japanese"。
+
+### 语言包状态的三个实现要点
+
+1. **与目标语言相同 → `.notNeeded`（"无需语言包"），不要问系统**：
+   系统对 "zh → zh" 返回 `unsupported`，但用户视角是"不需要"。
+2. **`prepareTranslation()` 返回 ≠ 下载完成**：它只表示系统已接受请求。
+   之前把它当完成信号，于是下载刚发起就清掉"下载中"、UI 退回"可下载"，
+   而系统其实还在后台下载（用户实测："一直显示可下载"）。
+   现在请求发出即标记"下载中"，**轮询状态**直到变 `.installed` 才移除。
+3. **系统不暴露下载进度**（`Translation.framework` 无 progress 相关成员，实测确认）。
+   所以只有"下载中 / 已完成"两态，**无法显示百分比**——不要为此加进度条。
+
 ## 4.7 AppKit 交互的三个陷阱
 
 1. **`.help` 是 AppKit 工具提示**，由窗口级 tracking area 驱动，

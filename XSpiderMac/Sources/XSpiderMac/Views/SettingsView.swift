@@ -457,7 +457,7 @@ struct SettingsView: View {
         let list = settingsStore.settings.autoTranslateLanguageList
         guard !list.isEmpty else { return L("未设置") }
         let names = list.prefix(3).map {
-            Locale.current.localizedString(forLanguageCode: $0) ?? $0
+            Settings.displayLocale.localizedString(forLanguageCode: $0) ?? $0
         }
         return names.joined(separator: "、") + (list.count > 3 ? "…" : "")
     }
