@@ -94,7 +94,6 @@ script/package_dmg.sh
 | `docs/DEVELOPMENT.md` | 架构地图、与上游的语义对照、已知问题与设计取舍（**改代码前先读**） |
 | `AGENTS.md` | 面向 AI agent 的开发约束 |
 | `src/`、`src-tauri/` | 上游源码，**只作行为参照**，不参与构建 |
-| `homepage/`、`assets/`、`design/` | 上游官网与设计资源 |
 
 > `src/` 与 `src-tauri/` 是上游实现的唯一权威参照：X 的 GraphQL 端点对
 > queryId / features / variables 极其敏感，改动 API 或分页逻辑前应先对照上游实现。

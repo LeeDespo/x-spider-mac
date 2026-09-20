@@ -6,8 +6,11 @@
 
 上游 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React + zustand，Windows 优先，
 已停止维护）到 macOS ARM / SwiftUI 的移植，App 名 **XSpiderMac**。上游源码完整 vendor 在本仓库
-`src/`（前端）与 `src-tauri/`（Rust 侧）里，**只作行为参照，不再构建、不要修改**。`homepage/` 是上游
-官网，与 App 无关。
+`src/`（前端）与 `src-tauri/`（Rust 侧）里，**只作行为参照，不再构建、不要修改**。
+
+> 上游的其他内容（官网 `homepage/`、Windows 版截图、Tauri/Vite 脚手架）已从本仓库移除：
+> 它们与移植无关，且官网含上游的赞助入口。`src/` 与 `src-tauri/` **保留**——
+> 上游已停止维护，这是唯一一份可对照的行为参照。
 
 ## 目录速览
 
@@ -17,7 +20,8 @@
 | `XSpiderMac/Sources/XSpiderMac/` | `Stores/`(状态) `Services/`(网络/下载) `Views/`(UI) `Models/` `Support/` |
 | `src/`, `src-tauri/` | 上游源码，**移植行为的唯一权威参照**（尤其 `src/twitter/api.ts`、`src/stores/`） |
 | `script/build_and_run.sh` | 构建 + 启动 Debug 版（arm64） |
-| `docs/DEVELOPMENT.md` | 架构地图、构建验证方法、已知问题与修复方案（改代码前必读） |
+| `script/package_dmg.sh` | 打包 Release 为 dmg（未签名分发） |
+| `docs/DEVELOPMENT.md` | **开发者手册**：架构、模块、踩坑与设计决策（改代码前必读） |
 
 ## 黄金法则：与上游逐字对齐
 
