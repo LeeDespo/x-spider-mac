@@ -140,13 +140,25 @@ final class ImageCache {
         lastDiskCheckAt = Date()
         let root = dir
         let limit = limitBytes
+        // 回收比例读一次快照传下去（后台任务里不碰 MainActor 的 settings）
+        let reclaim = Int64(SettingsStore.shared.settings.cacheReclaimPercent)
         diskCheckTask = Task.detached(priority: .utility) { [weak self] in
-            Self.enforceLimit(dir: root, limitBytes: limit)
+            Self.enforceLimit(dir: root, limitBytes: limit, reclaimPercent: reclaim)
             await MainActor.run { self?.diskCheckTask = nil }
         }
     }
 
-    private nonisolated static func enforceLimit(dir: URL, limitBytes: Int64) {
+    /// 超限时按「回收比例」清理**最旧的**文件。
+    ///
+    /// **为什么不是只清到刚好低于上限**：那样每次缓存再涨一点就要重新全目录扫描
+    /// 并再清一次（`scheduleDiskLimitCheck` 有 60s 节流，但仍会频繁触发）。
+    /// 一次多回收一些（默认 30%）可以让后续写入长时间不再越界。
+    ///
+    /// 边界：回收比例钳在 10–100%；按 100% 时全部清掉。
+    /// 至少会删到"低于上限"为止，避免比例算出 0 字节时白扫一遍。
+    private nonisolated static func enforceLimit(dir: URL,
+                                                 limitBytes: Int64,
+                                                 reclaimPercent: Int64) {
         let fm = FileManager.default
         let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
         var total: Int64 = 0
@@ -157,14 +169,24 @@ final class ImageCache {
             return (u, v?.contentModificationDate ?? .distantPast, size)
         }
         guard total > limitBytes else { return }
-        let over = total - limitBytes
+
+        // 目标：回收总量的 reclaimPercent；但至少要清到低于上限
+        let byPercent = total * min(100, max(0, reclaimPercent)) / 100
+        let neededToGetUnderLimit = total - limitBytes
+        let target = max(byPercent, neededToGetUnderLimit)
+
         var removed: Int64 = 0
         for e in entries.sorted(by: { $0.date < $1.date }) {
-            guard removed < over else { break }
+            guard removed < target else { break }
             try? fm.removeItem(at: e.url)
             removed += e.size
         }
-        AppLogger.info("缓存超限自动清理", category: "APP", ["removed": "\(removed)", "limit": "\(limitBytes)"])
+        AppLogger.info("缓存超限自动清理", category: "APP", [
+            "removed": "\(removed)",
+            "limit": "\(limitBytes)",
+            "percent": "\(reclaimPercent)",
+            "total": "\(total)",
+        ])
     }
 
     /// 清空全部图片缓存（磁盘删除放后台）

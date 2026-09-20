@@ -205,6 +205,12 @@ struct AppSettings: Codable, Sendable {
     var cachingEnabled: Bool?
     /// 图片缓存上限 MB（50–500）
     var cacheLimitMB: Int?
+    /// 缓存**回收比例**（%，10–100，默认 30）。
+    ///
+    /// 语义：缓存达到上限时，一次清理掉**总量的这个百分比**。
+    /// 不是只清到刚好低于上限——那样会频繁触发清理（每次写入都可能越界），
+    /// 一次多回收一些可以让后续写入长时间不再触发。
+    var cacheReclaimPercent: Int?
     /// 液态玻璃模糊强度（0–100，仅 macOS 26+ 有效）
     var glassBlur: Int?
     /// 限流缓解设置
@@ -293,6 +299,8 @@ struct Settings: Codable, Sendable {
     var cachingEnabled: Bool { app.cachingEnabled ?? true }
     /// 缓存上限 MB（默认 200，钳制 50–500）
     var cacheLimitMB: Int { min(500, max(50, app.cacheLimitMB ?? 200)) }
+    /// 缓存回收比例（%，**最低 10、最高 100**，默认 30）
+    var cacheReclaimPercent: Int { min(100, max(10, app.cacheReclaimPercent ?? 30)) }
     /// 玻璃模糊强度（0–100，默认 60）
     var glassBlur: Int { min(100, max(20, app.glassBlur ?? 60)) }
     /// 打开应用自动同步（默认关）

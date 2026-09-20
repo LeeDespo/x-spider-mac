@@ -74,6 +74,7 @@
 		B6A84005CEE4B262755B17B7 /* TranslationPackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F129A5D9D1ED04776BED1E81 /* TranslationPackStore.swift */; };
 		B6F79EF95045436E10971ED0 /* DownloadFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D152F0C622E1B039FD2033 /* DownloadFilter.swift */; };
 		BF54EF745C13947AC292D2CB /* SavedAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 692D8C0DFF9BA1F0210A7FAE /* SavedAccount.swift */; };
+		C57276CB8398FAD3627D306B /* CacheReclaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75802F3F3F2C10B53E753D07 /* CacheReclaimTests.swift */; };
 		C8F2418BC5ABEBBA7B4B405B /* MediaDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF89D7F6225AE828A18C02A6 /* MediaDetailView.swift */; };
 		C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */; };
 		CA437AE628E377F593756EA1 /* HomeTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAED927235E402A41F636ED /* HomeTimelineView.swift */; };
@@ -149,6 +150,7 @@
 		6ACA5C4BE7800F96587A4FA8 /* MediaSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSelectionTests.swift; sourceTree = "<group>"; };
 		6B939FBBBCC3EED4DAF66D0A /* TwitterMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterMedia.swift; sourceTree = "<group>"; };
 		72BF360634AFA8E3C4715248 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
+		75802F3F3F2C10B53E753D07 /* CacheReclaimTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheReclaimTests.swift; sourceTree = "<group>"; };
 		76D769C342F080744CE4324F /* FloatingDownloadBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingDownloadBar.swift; sourceTree = "<group>"; };
 		7C37A4A51D4BED4741C8136C /* TranslationLanguageSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationLanguageSheets.swift; sourceTree = "<group>"; };
 		7D820608ABD013CC445BC411 /* TweetDetailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TweetDetailCache.swift; sourceTree = "<group>"; };
@@ -380,6 +382,7 @@
 		D3BEFBAEE027F494EEAA3D35 /* XSpiderMacTests */ = {
 			isa = PBXGroup;
 			children = (
+				75802F3F3F2C10B53E753D07 /* CacheReclaimTests.swift */,
 				E26A5AB33B525DCFEE4E8E78 /* CreationTaskSelectionTests.swift */,
 				DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */,
 				E718A31888D53077262DF1A4 /* FileIntegrityTests.swift */,
@@ -510,6 +513,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C57276CB8398FAD3627D306B /* CacheReclaimTests.swift in Sources */,
 				5801A37E7C5562760D72C728 /* CreationTaskSelectionTests.swift in Sources */,
 				75CA165417644DEFA269E1F5 /* DownloadEngineTests.swift in Sources */,
 				EDD8A44ADA963391578DF21B /* FileIntegrityTests.swift in Sources */,

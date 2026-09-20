@@ -53,9 +53,12 @@ struct SidebarView: View {
     /// 两行状态：上行 X GraphQL API（翻页、爬虫），下行媒体 CDN（图片视频下载）。
     /// 二者是不同域、不同配额，分开显示才能一眼看出是哪一侧出了问题。
     ///
-    /// **精简为标签**（需求）：边栏一行放不下完整文案（会被截断），
-    /// 因此只显示「正常 / 异常 / 限流」三档简称，**详细原因与倒计时进悬停提示**。
-    /// 状态灯配色不变（绿 / 黄 / 红），鼠标移上去即出详情。
+    /// **详情改用信息按钮**（需求）：悬停在窄边栏里不好用（`.help` 需要鼠标
+    /// 精确停在控件上，且是 AppKit 工具提示、行为不受控），改为每行一个 ⓘ 按钮，
+    /// 点击弹出完整说明。
+    ///
+    /// **熔断倒计时直接显示在行内**（"熔断中(37s)"）：它是用户最需要知道的
+    /// 实时信息，藏进弹窗反而要不断点开；这个长度在边栏放得下。
     private var accountStatusBar: some View {
         VStack(spacing: 0) {
             Divider()
@@ -65,18 +68,20 @@ struct SidebarView: View {
                 statusRow(
                     label: L("X API"),
                     lamp: lampColor(for: statusStore.severity),
-                    short: statusStore.shortLabel,
+                    short: { xAPIShortText },
                     help: fullStatusHelp(),
                     isDim: statusStore.severity == .ok,
+                    ticking: statusStore.breakerOpen,
                     probing: statusStore.probing,
                     retry: { Task { await statusStore.probeAndRecover() } }
                 )
                 statusRow(
                     label: L("媒体 CDN"),
                     lamp: statusStore.cdnThrottled ? .red : (statusStore.cdnStatusText == nil ? .green : .orange),
-                    short: statusStore.cdnShortLabel,
+                    short: { cdnShortText },
                     help: fullCDNHelp(),
                     isDim: statusStore.cdnStatusText == nil,
+                    ticking: statusStore.cdnThrottled,
                     probing: statusStore.probingCDN,
                     retry: { Task { await statusStore.probeCDN() } }
                 )
@@ -84,14 +89,34 @@ struct SidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            // 状态到期复位（简称不显示倒计时，但灯要按时变回绿）
+            // 状态到期复位（行内只在熔断时显示倒计时，灯要按时变回绿）
             expiryWatcher
         }
         .background(.thinMaterial)
     }
 
-    /// X API 的完整说明（悬停显示）：简称 + 具体状态 + 原始说明。
-    /// 把 `statusText` 拼进来，保证倒计时等动态信息在悬停里也能看到。
+    /// X API 行内文案：熔断中显示倒计时，其余用简称。
+    ///
+    /// 倒计时需要每秒刷新 → 用 `TimelineView` **只驱动这一个 Text**，
+    /// 不重绘整棵侧边栏（该模式此前已验证过）。
+    private var xAPIShortText: String {
+        guard statusStore.breakerOpen, statusStore.rateLimitDeadline != nil else {
+            return statusStore.shortLabel
+        }
+        let seconds = max(0, Int(statusStore.rateLimitDeadline?.timeIntervalSinceNow ?? 0))
+        return L("熔断中(%ds)").replacingOccurrences(of: "%d", with: "\(seconds)")
+    }
+
+    /// CDN 行内文案：限流时同样显示倒计时
+    private var cdnShortText: String {
+        guard let until = statusStore.cdnRateLimitedUntil, until > Date() else {
+            return statusStore.cdnShortLabel
+        }
+        let seconds = max(0, Int(until.timeIntervalSinceNow))
+        return L("熔断中(%ds)").replacingOccurrences(of: "%d", with: "\(seconds)")
+    }
+
+    /// X API 的完整说明（信息按钮弹出）：简称 + 具体状态 + 原始说明。
     private func fullStatusHelp() -> String {
         statusStore.shortLabel + " · " + statusStore.statusText + "\n\n" + statusStore.helpText
     }
@@ -101,45 +126,46 @@ struct SidebarView: View {
         return statusStore.cdnShortLabel + " · " + detail + "\n\n" + statusStore.cdnHelpText
     }
 
-    /// 单行状态：灯 + 名称 + **简称** + 重试。
+    /// 单行状态：灯 + 名称 + **行内文案** + 信息按钮 + 重试。
     ///
-    /// 简称只占几个字（正常/异常/限流），完整原因在悬停里看——
-    /// 边栏宽度不足以放下完整文案。
+    /// **不再用悬停**（`.help` 是 AppKit 工具提示，行为不受控、窄控件上难触发——
+    /// 用户两次反馈"悬停不显示详情"）。改为 ⓘ 按钮，点击弹出完整说明。
     ///
-    /// **悬停挂在整个左侧区域**（灯 + 名称 + 简称合并成一个命中区）：
-    /// 之前只挂在简称文本上，而它只有 2~3 个字宽，用户几乎要把鼠标精确
-    /// 停在字上才会出提示——表现为"悬停不显示详情"（实测反馈）。
-    /// 现在用 `contentShape` 把这一片都变成命中区，鼠标落在标签附近即可。
+    /// 行内文案在熔断时是"熔断中(37s)"，需要每秒刷新：
+    /// 用 `TimelineView` **只驱动这一个 Text**，不重绘整棵侧边栏。
     private func statusRow(
         label: String,
         lamp: Color,
-        short: String,
+        short: @escaping () -> String,
         help: String,
         isDim: Bool,
+        ticking: Bool,
         probing: Bool,
         retry: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(lamp)
-                    .frame(width: 7, height: 7)
-                    .overlay { Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1) }
+            Circle()
+                .fill(lamp)
+                .frame(width: 7, height: 7)
+                .overlay { Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1) }
 
-                Text(label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-                Text(short)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(isDim ? .secondary : .primary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 2)
+            // 熔断时每秒刷新倒计时；其余情况普通 Text（零额外开销）
+            if ticking {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    inlineText(short(), isDim: isDim)
+                }
+            } else {
+                inlineText(short(), isDim: isDim)
             }
-            // 整片可悬停：命中区扩展到文字周围（含空白），不再要求精确指到字上
-            .contentShape(Rectangle())
-            .help(help)
+
+            Spacer(minLength: 2)
+
+            // 信息按钮：点击查看完整详情（替代原悬停提示）
+            InfoHint(text: help)
 
             Button(action: retry) {
                 if probing {
@@ -154,6 +180,14 @@ struct SidebarView: View {
             .disabled(probing)
             .help(L("重试：立即探测连接；若正在限流则同时结束限流"))
         }
+    }
+
+    /// 行内文案（抽出来给 TimelineView 复用）
+    private func inlineText(_ text: String, isDim: Bool) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(isDim ? .secondary : .primary)
+            .lineLimit(1)
     }
 
     /// 到期后把状态落回正常。

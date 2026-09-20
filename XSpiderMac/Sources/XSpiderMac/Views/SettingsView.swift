@@ -687,6 +687,17 @@ struct SettingsView: View {
                         Text("\(mb) MB").tag(mb)
                     }
                 }
+
+                // 回收比例：达到上限时一次清掉多少已用容量
+                NumberStepperField(
+                    title: L("超限回收比例（%）"),
+                    value: Binding(
+                        get: { settingsStore.settings.cacheReclaimPercent },
+                        set: { settingsStore.settings.app.cacheReclaimPercent = max(10, min(100, $0)) }
+                    ),
+                    range: 10...100
+                )
+                .infoHint(L("缓存达到上限时，一次清理掉已用容量的这个百分比（最低 10%，最高 100%）。\n\n不是只清到刚好低于上限——那样缓存再涨一点就要重新扫描并再清一次。一次多回收一些，能让接下来一段时间不再触发清理。\n\n总是清理最旧的缓存文件；100% 表示全部清空。"))
             }
 
             HStack {
