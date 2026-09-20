@@ -316,6 +316,43 @@ X 的 GraphQL 端点对 `queryId` / `features` / `variables` 的格式极其敏�
 常规材质卡片。**低版本不是"降级分支"而是同一个 API 的正常回退**——
 `AGENTS.md` 说的"不写降级分支"针对的是"为版本差异隐藏功能"，不是这种材质回退。
 
+## 4.6.1 翻译与语言包
+
+**用系统 `Translation` 框架**（本地翻译），不抓 X 的翻译端点——
+后者要维护会失效的私有 queryId，且**消耗 X 配额**。
+相关 API 全部是 **macOS 15.0+**，与基线一致，无需版本判断。
+
+### 自动翻译的判据：白名单
+
+**只翻译设置里明确列出的语言**（`autoTranslateLanguages`），不是"凡非目标语言就翻"。
+
+理由：时间线里语言极杂，逐个遇到就翻既耗电刷屏，也会频繁向系统请求语言包。
+**清单为空 = 不自动翻译任何条目**（比"全部翻"安全）。
+判据实现见 `TranslationStore.shouldAutoTranslate`。
+
+### 语言包：会不会自动下载
+
+**会，但是"按需触发"**：`translationTask` 的会话首次 `translate()` 时若缺语言包，
+系统会弹窗提示并下载。浏览场景下体验不好——第一次遇到某语言要等下载。
+
+因此设置了**语言清单窗口**（`Views/TranslationLanguageSheets.swift`），
+可查看每种语言的包状态（已下载 / 可下载 / 不支持）并**预先下载**。
+
+### ⚠️ macOS 15 上 `TranslationSession` 没有公开 init
+
+它**只能由 SwiftUI 的 `translationTask(configuration:)` 交出**
+（`TranslationSession(installedSource:target:)` 是 **macOS 26+**，不能用）。
+所以"主动下载语言包"必须由**视图**做：`Views/TranslationPackDownloader.swift`
+是一个零尺寸视图，消费 `TranslationPackStore.pendingDownloads`，
+为每种语言新建一个 configuration 交给 `translationTask`，在闭包里调
+`prepareTranslation()`。
+
+**注意**：`LanguageAvailability.supportedLanguages` 是 **async** 属性（macOS 15 起）。
+
+**能否后台静默下载**：准备语言包这件事本身不需要用户操作（从我们这侧看就是后台下载），
+但系统**首次为某语言对下载时仍会弹一次确认**——这是系统行为，应用无法绕过；
+下载进度也由系统管理，我们只知道"开始了 / 结束了"。
+
 ## 4.7 AppKit 交互的三个陷阱
 
 1. **`.help` 是 AppKit 工具提示**，由窗口级 tracking area 驱动，
@@ -362,6 +399,31 @@ X 的 GraphQL 端点对 `queryId` / `features` / `variables` 的格式极其敏�
 | 引用卡永远空白 | 引用路径写成了 `legacy.quoted_status_result` | 真实路径是 `result.quoted_status_result.result` |
 | 评论区混进广告 | 未过滤 `promotedMetadata` | 三个解析入口都过滤 |
 | 评论的评论只显示贴主的 | **X 服务端行为**（实测：以评论为 focal 也只返回贴主那条，且无"更多回复"游标） | 不改——按服务端给的展示即正确 |
+
+## 5.3.1 连转同一条推文 → 卡片后面一片空白
+
+**现象**：某账号为刷浏览量连续转推同一条推文，列表里出现多张空白卡片
+（只有第一张正常）。搜索页尤其常见。
+
+**根因**：转推展平后，**每条的 `post.id` 都等于被转发的原推文 id**。
+于是同一页里出现多个相同 id，而 SwiftUI 的 `ForEach` 要求 id 唯一——
+重复时只渲染第一个，其余留空。**不是布局问题，是数据有重复 id。**
+
+**解法**：**同页去重**（此前只做了跨页去重）。
+
+- `HomepageStore.loadPostList`：原为 `seenPostIds = Set(posts.map(\.id))`——
+  只**记录**不过滤，同页重复全部进列表。现改为先过滤再记录：
+  ```swift
+  var pageSeen = Set<String>()
+  let dedupedPage = posts.filter { pageSeen.insert($0.id).inserted }
+  seenPostIds = pageSeen
+  ```
+- `loadMorePostList` 的 `seenPostIds.insert().inserted` **本身就覆盖同页与跨页**，
+  无需额外改动（已加注释说明，避免以后被"优化"掉）。
+- `HomeTimelineStore.reload` 同样是 `Set(newPosts.map(\.id))`，已一并修正。
+
+**如何避免再犯**：任何进 `ForEach` 的列表都要确认 id 唯一。
+"展平转推"这类操作会让**多条数据的 id 相同**，是重复 id 的高危来源。
 
 ## 5.4 UI 层级与手势
 

@@ -213,6 +213,14 @@ struct AppSettings: Codable, Sendable {
     var translateTargetLanguage: String?
     /// 自动翻译（仅翻译语言与目标语言不同的推文）
     var autoTranslate: Bool?
+    /// 自动翻译的**语言白名单**（BCP-47 主语言码，如 "ja"、"ko"）。
+    ///
+    /// 语义：**只有检测到这些语言的推文才自动翻译**。
+    /// 空数组 = 不自动翻译任何条目（比"全部语言都翻"更安全——
+    /// 后者会让时间线里每条外语都触发翻译，既费电又刷屏）。
+    ///
+    /// 用数组而非 Set：`Codable` 序列化稳定、顺序对用户可见（清单按加入顺序展示）。
+    var autoTranslateLanguages: [String]?
     /// 加快搜索页加载：设置时间范围后改用 X 的**搜索端点**（服务端按时间过滤），
     /// 而不是"拉时间线 + 本地剪裁"。默认 **开**（nil 视为开）。
     /// 关闭则回退到时间线方案（内有空窗期兜底，见 §14.3）。
@@ -247,6 +255,8 @@ struct Settings: Codable, Sendable {
     var autoClearSearchHistoryEnabled: Bool { app.autoClearSearchHistory ?? false }
     /// 加快搜索页加载（默认**开**；nil = 开）
     var fastSearchLoadingEnabled: Bool { app.fastSearchLoading ?? true }
+    /// 自动翻译的语言白名单（主语言码，小写）。空 = 不自动翻译任何条目。
+    var autoTranslateLanguageList: [String] { app.autoTranslateLanguages ?? [] }
     /// 主动状态检测（默认**开**；nil = 开）
     var activeStatusProbeEnabled: Bool { app.activeStatusProbe ?? true }
     /// 主动检测间隔秒（默认 30，**最低 5**——更短会被 X 视为异常流量，反而加剧限流）

@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var showCleanupDialog = false
     /// 同步清单管理弹窗
     @State private var showSyncListManager = false
+    /// 自动翻译语言清单窗口
+    @State private var showTranslationLanguages = false
 
     var body: some View {
         // **排序原则**（需求：常用的摆前面）：按"普通用户的使用频率"从高到低，
@@ -397,8 +399,26 @@ struct SettingsView: View {
             )) {
                 HStack(spacing: 6) {
                     Text(L("自动翻译"))
-                    InfoHint(text: L("开启后，仅当推文语言与目标语言不同时才自动翻译（语言未知的不翻译，由你手动点）。\n使用系统翻译，不消耗 X 的接口配额。"))
+                    InfoHint(text: L("开启后，**只有**下方清单里列出的语言会自动翻译。\n语言未知的推文不翻译（由你手动点）。\n使用系统翻译，不消耗 X 的接口配额。"))
                 }
+            }
+
+            if settingsStore.settings.autoTranslateEnabled {
+                // 自动翻译语言清单（需求：可单独管理 + 预先下载语言包）
+                Button {
+                    showTranslationLanguages = true
+                } label: {
+                    HStack {
+                        Text(L("自动翻译的语言"))
+                        Spacer()
+                        Text(languageSummary)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
             }
 
             Picker(L("翻译目标语言"), selection: Binding(
@@ -421,12 +441,25 @@ struct SettingsView: View {
                 Text("Русский").tag("ru")
             }
 
-            Text(L("首次翻译某语言时，系统会提示下载语言包；下载后可离线翻译。"))
+            Text(L("语言包由系统提供、本地翻译。可在语言清单里预先下载，避免浏览时才等待下载。"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         } header: {
             Label(L("翻译"), systemImage: "character.book.closed")
         }
+        .sheet(isPresented: $showTranslationLanguages) {
+            TranslationLanguageListSheet()
+        }
+    }
+
+    /// 清单摘要（"日文、韩文" / "未设置"）
+    private var languageSummary: String {
+        let list = settingsStore.settings.autoTranslateLanguageList
+        guard !list.isEmpty else { return L("未设置") }
+        let names = list.prefix(3).map {
+            Locale.current.localizedString(forLanguageCode: $0) ?? $0
+        }
+        return names.joined(separator: "、") + (list.count > 3 ? "…" : "")
     }
 
     private var homeSection: some View {

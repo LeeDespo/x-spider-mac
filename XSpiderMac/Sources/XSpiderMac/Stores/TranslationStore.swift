@@ -97,22 +97,30 @@ final class TranslationStore {
 
     /// 是否应对该条自动翻译。
     ///
-    /// 判据（按用户决策：**只翻译检测到非目标语言的推文**）：
+    /// 判据（**只翻译设置里明确勾选的语言**）：
     /// 1. 设置里开启了自动翻译；
     /// 2. 推文**语言已知**（`lang != nil`）——未知时不猜，交给用户手点；
-    /// 3. 语言 ≠ 目标语言（且不是目标语言的方言/同语种变体）。
+    /// 3. 该语言在**自动翻译语言清单**里（`autoTranslateLanguages`）。
+    ///
+    /// **为什么用白名单而不是"非目标语言就翻"**：时间线里语言极杂，
+    /// 逐个遇到就翻会让每条外语都触发翻译——既耗电刷屏，也会让系统
+    /// 频繁请求语言包。清单为空 = 不自动翻译任何条目。
+    ///
+    /// 清单里不含目标语言本身：那是"原文就是我要的语言"，没有翻译的必要
+    /// （用户在清单里也不会选它，但这里再挡一次更稳妥）。
     ///
     /// `lang` 来自 GraphQL 的 `legacy.lang`，**无需额外请求**。
-    ///
-    /// 标 `@MainActor`：需要读 `SettingsStore`（MainActor 隔离）。
-    /// 视图在 `.onAppear`（主线程）调用，无额外成本。
     @MainActor
     static func shouldAutoTranslate(lang: String?) -> Bool {
         let settings = SettingsStore.shared.settings
         guard settings.autoTranslateEnabled else { return false }
         guard let lang, !lang.isEmpty else { return false }
-        let target = settings.translateTargetLanguage
-        return !isSameLanguage(lang, target)
+        let wanted = settings.autoTranslateLanguageList
+        guard !wanted.isEmpty else { return false }
+        let main = TranslationPackStore.normalize(lang)
+        guard wanted.contains(main) else { return false }
+        // 目标语言本身不需要翻译
+        return !isSameLanguage(lang, settings.translateTargetLanguage)
     }
 
     /// 语言代码比对：X 给的是 BCP-47 短码（如 "ja"、"zh"、"en"），

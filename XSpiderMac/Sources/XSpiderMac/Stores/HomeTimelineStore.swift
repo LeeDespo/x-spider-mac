@@ -131,12 +131,16 @@ final class HomeTimelineStore {
         loadError = nil          // 新一次加载开始 → 清掉上次的错误提示
         defer { loading = false }
         do {
-            let (newPosts, next) = try await TwitterAPI.shared.getHomeTimeline(mode: mode)
+            let (raw, next) = try await TwitterAPI.shared.getHomeTimeline(mode: mode)
             guard gen == generation else { return }
+            // **同页去重**：同一账号连续转推同一条推文时，展平后多条的 id 等于原推文 id，
+            // 同页出现重复 id → SwiftUI `ForEach` 只渲染第一个、其余留空白。
+            var pageSeen = Set<String>()
+            let newPosts = raw.filter { pageSeen.insert($0.id).inserted }
             posts = newPosts
             // 首屏：热门顺序以"当页内排序"为初始值
             hotOrder = sortedByLikesIfHot(newPosts)
-            seenIds = Set(newPosts.map(\.id))
+            seenIds = pageSeen
             cursor = next
             loadError = nil
         } catch is CancellationError {

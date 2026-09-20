@@ -293,10 +293,16 @@ final class HomepageStore {
                 return
             }
             // 展示筛选：日期范围 + 媒体类型（与爬虫同一语义，见 applyDisplayFilter）。
-            // seenPostIds 记的是**服务端原始**推文，避免被筛掉的条目在相邻页重复出现
-            // 时又当成新条目走一遍筛选。
-            seenPostIds = Set(posts.map(\.id))
-            let visible = Self.applyDisplayFilter(posts, filter: filter)
+            //
+            // **同页也要去重**（不只是跨页）：`posts` 里可能含重复的 `rest_id` ——
+            // 同一账号连续转推同一条推文时，展平后每条的 `post.id` 都等于**原推文** id，
+            // 于是同一页出现多份相同 id。SwiftUI 的 `ForEach` 遇到重复 id 时
+            // 只会渲染第一个、其余留空（表现为"连续转推时后面几张卡片是空白"）。
+            // 去重后再记 `seenPostIds`：既避免同页重复，也保持跨页去重有效。
+            var pageSeen = Set<String>()
+            let dedupedPage = posts.filter { pageSeen.insert($0.id).inserted }
+            seenPostIds = pageSeen
+            let visible = Self.applyDisplayFilter(dedupedPage, filter: filter)
             postList = visible
             // 时间轴基准：服务端原始页里最旧一条（空窗期靠它跨过，见 hasReachedRangeStart）
             oldestSeenAt = posts.last?.createdAt
@@ -310,6 +316,7 @@ final class HomepageStore {
                 "source": filter.source.rawValue,
                 "screenName": userInfo?.screenName ?? "?",
                 "posts": "\(visible.count)",
+                "dupInPage": "\(posts.count - dedupedPage.count)",
                 "filteredOut": "\(posts.count - visible.count)",
                 "medias": "\(visible.reduce(0) { $0 + ($1.medias?.count ?? 0) })",
                 "hasMore": cursor != nil ? "1" : "0",
@@ -455,6 +462,11 @@ final class HomepageStore {
 
             // 上游: postList.list.concat(twitterPosts) + cursor 原样更新;
             // 附加跨页去重(上游无,但 X 会话模块可能在相邻页重复出现同一推文)。
+            //
+            // **同页重复同样被这行覆盖**：同一账号连续转推同一条推文时，展平后多条的
+            // `post.id` 都等于原推文 id，同页即出现重复 id → SwiftUI `ForEach`
+            // 只渲染第一个、其余留空白。`insert().inserted` 对同页内后续重复项
+            // 也返回 false，所以同页与跨页两种情况一并解决。
             //
             // **去重必须先于筛选**：先记 id 再过滤，否则被筛掉的推文没进 seenPostIds，
             // 它在相邻页重复出现时会被当成新条目重新走一遍筛选（甚至漏进列表）。

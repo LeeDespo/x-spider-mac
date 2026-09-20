@@ -247,11 +247,14 @@ struct HomeView: View {
                 } label: {
                     Image(systemName: "chevron.backward")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 26, height: 26)
+                        // 强调色用在**背景**上、图案用白色（与详情卡返回按钮一致）：
+                        // 它是这个状态下的主操作，实心强调色才有对应权重。
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color.accentColor))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .liquidGlass(interactive: true, cornerRadius: 13)
                 .help(L("返回时间线"))
                 .transition(.scale.combined(with: .opacity))
             } else {
