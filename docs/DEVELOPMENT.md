@@ -359,7 +359,7 @@ sending 'session' risks causing data races [#RegionIsolation::SendingRisksDataRa
 ## 9. 评论区层级、推广内容过滤与返回导航（2026-09-18）
 
 本轮四项改动，全部用**真实 TweetDetail 响应**核对过结构
-（`2100649211276529930` 无媒体且引用他人、`2099484254740631767` 带媒体且引用他人）。
+（`1900000000000000001` 无媒体且引用他人、`1900000000000000002` 带媒体且引用他人）。
 
 ### 9.1 推广内容（广告）过滤
 
@@ -369,7 +369,7 @@ sending 'session' risks causing data races [#RegionIsolation::SendingRisksDataRa
 实测确认：真实响应里广告挂在 **`conversationthread-*` entry 的 item 上**
 （路径 `entry.content.items[0].item.itemContent.promotedMetadata`），
 `adMetadataContainer` / `advertiser_results` / `impressionId` 等键齐全，
-正文与主推文毫无关系（`2100649211276529930` 里是 3 条投资/背包广告）。
+正文与主推文毫无关系（`1900000000000000001` 里是 3 条投资/背包广告）。
 
 三处解析入口都已过滤：
 
@@ -474,7 +474,7 @@ TTL 取 5 分钟的原因：评论会变（新回复、点赞数），缓存太�
 ### 10.1 评论自带的媒体（此前根本没渲染）
 
 **问题**：`replyRow` 只画头像 + 文字，评论附带的图片**完全没渲染**。
-带图评论（实测 `@leoakok` 在 `2100550768965423303` 下那张 947×2048 的照片，
+带图评论（实测 `@example_user` 在 `1900000000000000003` 下那张 947×2048 的照片，
 赞 326 / 回复 3）只显示一行文字，看起来像图片丢了。
 
 **解析层本来就有数据**：`legacy.entities.media` 已被 `mapTwitterPost` 映射进
@@ -772,7 +772,7 @@ https://x.com/search?q=from:USER since:A until:B&f=media  →  SearchTimeline, p
 https://x.com/search?q=from:USER since:A until:B&f=live   →  SearchTimeline, product="Latest"
 ```
 
-实测（`Da_aa_dad_`，2025-01-01~2026-09-01）：`product=Media` **40~42 条/页**，
+实测（`example_account`，2025-01-01~2026-09-01）：`product=Media` **40~42 条/页**，
 `product=Latest` 20 条，均带 bottom cursor，且返回内容**全部落在范围内**。
 
 #### 三个必须记住的实现要点
@@ -853,7 +853,7 @@ https://x.com/search?q=from:USER since:A until:B&f=live   →  SearchTimeline, p
 **实测结论：确实如此，且不是我们的解析问题。** 证据：
 
 1. 以该推文为 focal：`conversationthread-*` 下每条二级回复的作者**都是贴主**
-   （`EliottYRT`），别人的回复根本不在响应里；
+   （`example_author`），别人的回复根本不在响应里；
 2. 以**那条评论本身**为 focal 再查一次：只返回 1 条（仍是贴主），
    且 entries 里**没有"显示更多回复"的游标**——说明服务端不提供；
 3. 参数变体（`withBirdwatchNotes`、去掉空键等）返回结果**完全一致**。

@@ -21,8 +21,8 @@ final class SearchTimelineTests: XCTestCase {
     /// 基本形态：from + since + until
     func testRawQueryContainsUserAndRange() {
         let range = DownloadFilter.DateRange(start: date("2025-01-01"), end: date("2026-08-31"))
-        let q = TwitterAPI.searchRawQuery(screenName: "Da_aa_dad_", range: range, includeMediaOnly: false)
-        XCTAssertTrue(q.hasPrefix("from:Da_aa_dad_"), "按用户名限定，实际: \(q)")
+        let q = TwitterAPI.searchRawQuery(screenName: "example_account", range: range, includeMediaOnly: false)
+        XCTAssertTrue(q.hasPrefix("from:example_account"), "按用户名限定，实际: \(q)")
         XCTAssertTrue(q.contains("since:2025-01-01"))
         XCTAssertTrue(q.contains("until:"))
     }

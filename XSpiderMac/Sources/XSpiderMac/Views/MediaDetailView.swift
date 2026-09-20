@@ -397,6 +397,10 @@ struct MediaDetailView: View {
                                 help: L("书签")) { toggleBookmark() }
                 glassIconButton(icon: "square.and.arrow.up", tint: .secondary,
                                 help: L("分享")) { shareTweet() }
+                // 用默认浏览器打开当前推文（需求）：
+                // `safari` 是系统里代表"浏览器"的通用图标（不特指 Safari）
+                glassIconButton(icon: "safari", tint: .secondary,
+                                help: L("在浏览器中打开")) { openInBrowser() }
                 if let actionMessage {
                     Text(actionMessage).font(.caption).foregroundStyle(.secondary)
                 }
@@ -543,7 +547,7 @@ struct MediaDetailView: View {
     /// 评论里的媒体缩略图行：与媒体卡**同一套 hover 按钮**（下载/已下载 + 详细查看）。
 ///
 /// 布局与尺寸（与媒体卡一致的做法）：
-/// - **单张保持宽高比**：像 @leoakok 那张 947×2048 的竖长图，方形裁切只剩中间一条；
+/// - **单张保持宽高比**：像 @example_user 那张 947×2048 的竖长图，方形裁切只剩中间一条；
 /// - **多张用小方格 64pt**，尺寸要收着算：卡片宽 410，减内边距、缩进（最深 48）、
 ///   头像（30+10）后约 294pt，`4×64 + 3×4 = 268` 才放得下（用 84 会溢出被裁）；
 /// - 按钮直径 26pt：64pt 的格子里放得下两个，不挡住缩略图主体。
@@ -678,6 +682,15 @@ private struct ReplyMediaThumbCell: View {
         actionMessage = L("链接已复制")
     }
 
+    /// 用系统默认浏览器打开当前推文
+    private func openInBrowser() {
+        guard let url = URL(string: "https://x.com/\(post.user.screenName)/status/\(post.id)") else {
+            actionMessage = L("链接无效")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     private func loadReplies() async {
         loadingReplies = true
         defer { loadingReplies = false }
@@ -789,21 +802,9 @@ struct MediaContentView: View {
         Group {
             if media.type == .video || media.type == .gif,
                let videoUrl = MediaViewerView.bestVideoURL(media) {
+                // 系统播放条负责播放控制（已关闭其上不可用的「提取文字」按钮）
                 VideoPlayerContainer(url: videoUrl, player: $player)
                     .aspectRatio(videoAspect, contentMode: .fit)
-                    // 点预览位播放/暂停：不带系统播放条后，这是唯一的播放控制入口
-                    .contentShape(Rectangle())
-                    .onTapGesture { togglePlayback() }
-                    .overlay(alignment: .center) {
-                        // 暂停时给一个播放角标，否则用户不知道能点
-                        if !viewerOpen, let player, player.rate == 0 {
-                            Image(systemName: "play.circle.fill")
-                                .font(.system(size: 44))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .shadow(radius: 4)
-                                .allowsHitTesting(false)
-                        }
-                    }
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -820,25 +821,15 @@ struct MediaContentView: View {
         .onDisappear { rememberProgressAndPause() }
     }
 
-    /// 暂停/继续预览，并记住位置供查看窗口继承
-    private func togglePlayback() {
-        guard let player else { return }
-        if player.rate == 0 {
-            player.play()
-        } else {
-            player.pause()
-            rememberProgressAndPause(keepPlaying: true)
-        }
-    }
-
-    /// 把当前播放位置交给 `MediaViewerCenter`（查看窗口据此续播），并暂停
-    private func rememberProgressAndPause(keepPlaying: Bool = false) {
+    /// 把当前播放位置交给 `MediaViewerCenter`（查看窗口据此续播），并暂停。
+    /// 播放控制交给系统播放条，这里只负责"把进度交出去"。
+    private func rememberProgressAndPause() {
         guard let player, let url = (player.currentItem?.asset as? AVURLAsset)?.url else { return }
         let seconds = player.currentTime().seconds
         if seconds.isFinite, seconds > 0 {
             MediaViewerCenter.shared.rememberProgress(mediaId: url.absoluteString, seconds: seconds)
         }
-        if !keepPlaying { player.pause() }
+        player.pause()
     }
 
     private func loadHD() async {
@@ -861,20 +852,19 @@ struct MediaContentView: View {
 
 /// AppKit AVPlayerView 包装(规避 SwiftUI VideoPlayer 的 sheet 崩溃)。
 ///
-/// **`controlsStyle = .none`**：不接系统播放条。
-/// 详情卡是个紧凑的预览位（宽约 400pt），系统播放条会占掉一行高度、
-/// 还带一个「提取视频页面文字」按钮（该按钮依赖 X 的页面上下文，在这里不可用——
-/// 用户反馈过）。播放控制在**查看窗口**里（工具条 + 字幕 + 全屏）。
-///
-/// 点击画面仍可播放/暂停（由上层 `MediaContentView` 的 tap 手势处理）。
+/// **保留系统播放条**（`controlsStyle = .inline`），但**关掉画面文字识别**：
+/// 系统播放条上那个「识别页面文字 / 提取文字」按钮依赖 Live Text，
+/// 在原生播放器里点它没有可用结果（用户反馈"功能按钮不可用"），
+/// 因此用 `allowsVideoFrameAnalysis = false` 把它去掉，其余控制条功能照常。
 struct VideoPlayerContainer: NSViewRepresentable {
     let url: URL
     @Binding var player: AVPlayer?
 
     func makeNSView(context: Context) -> AVPlayerView {
         let v = AVPlayerView()
-        v.controlsStyle = .none
-        v.videoGravity = .resizeAspect
+        v.controlsStyle = .inline
+        // 关闭 Live Text：去掉播放条上那个不可用的「提取文字」按钮
+        v.allowsVideoFrameAnalysis = false
         let p = AVPlayer(url: url)
         v.player = p
         player = p

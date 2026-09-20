@@ -17,6 +17,9 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: moe.keli.xspider.mac
       INFOPLIST_KEY_CFBundleDisplayName: "X-Spider"
       INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+      # 版本号：与 GitHub Release 的 tag 保持一致（1.0.0）
+      MARKETING_VERSION: "1.0.0"
+      CURRENT_PROJECT_VERSION: "1"
       GENERATE_INFOPLIST_FILE: YES
       CODE_SIGN_STYLE: Automatic
       DEVELOPMENT_TEAM: ""

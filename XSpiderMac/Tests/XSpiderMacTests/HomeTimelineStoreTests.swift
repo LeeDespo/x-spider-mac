@@ -78,6 +78,9 @@ final class HomeTimelineStoreTests: XCTestCase {
     /// 二者若脱节，瀑布流会误报"已加载全部"而不再翻页（"滚到底不出下一页"）。
     @MainActor
     func testHasMoreIsDerivedFromCursor() {
+        // Store 是单例：必须先复位分页状态，否则其他测试遗留的 cursor
+        // 会让本断言偶发失败（之前就是这个问题）
+        HomeTimelineStore.shared.resetPagingForTesting()
         XCTAssertFalse(HomeTimelineStore.shared.hasMore,
                        "未加载任何数据时不应声称还有更多（cursor 初始为 nil）")
     }

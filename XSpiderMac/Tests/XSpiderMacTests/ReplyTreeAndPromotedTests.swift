@@ -269,14 +269,14 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
                        "focal 是根不是回复，留在结果里会重复渲染主推文")
     }
 
-    // MARK: - 真实响应形状（2026-09 实测，tweet 2100649211276529930 / 2099484254740631767）
+    // MARK: - 真实响应形状（2026-09 实测，tweet 1900000000000000001 / 1900000000000000002）
 
     /// 真实响应里：无媒体的 focal 引用了另一条带媒体的推文，且被引用作者
     /// **只有新结构的 `core.core`**（`legacy` 缺失）——若只读 legacy，引用卡作者会空白。
     func testQuotedAuthorFromNewCoreStructureOnly() {
         let quoted: [String: Any] = [
             "__typename": "Tweet",
-            "rest_id": "2100550768965423303",
+            "rest_id": "1900000000000000003",
             "legacy": [
                 "full_text": "What happened to quality control at Apple",
                 "created_at": "Sat Jan 20 15:15:36 +0000 2024",
@@ -285,16 +285,16 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
             ] as [String: Any],
             "core": ["user_results": ["result": [
                 "__typename": "User",
-                "rest_id": "1254456213527543808",
+                "rest_id": "1800000000000000001",
                 // 只有新结构 core.core；legacy 缺失（实测如此）
-                "core": ["screen_name": "TheAppleDesign", "name": "Apple Design",
+                "core": ["screen_name": "example_quoted", "name": "Apple Design",
                          "created_at": "Sun Apr 26 17:04:19 +0000 2020"] as [String: Any],
                 "avatar": ["image_url": "https://pbs.twimg.com/profile_images/x_normal.jpg"] as [String: Any],
             ] as [String: Any]]] as [String: Any],
         ]
         let result: [String: Any] = [
             "__typename": "Tweet",
-            "rest_id": "2100649211276529930",
+            "rest_id": "1900000000000000001",
             "legacy": ["full_text": "主推文", "created_at": "Sat Jan 20 15:15:36 +0000 2024",
                        "is_quote_status": true] as [String: Any],
             "quoted_status_result": ["result": quoted] as [String: Any],
@@ -302,15 +302,15 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
         let post = TwitterAPI.mapTwitterPost(result)
         let q = post?.quotedPost?.value
         XCTAssertNotNil(q, "引用必须解析出来")
-        XCTAssertEqual(q?.user.screenName, "TheAppleDesign",
+        XCTAssertEqual(q?.user.screenName, "example_quoted",
                        "作者在新结构 core.core 里，只读 legacy 会拿不到")
         XCTAssertEqual(q?.user.name, "Apple Design")
-        XCTAssertEqual(q?.user.id, "1254456213527543808")
+        XCTAssertEqual(q?.user.id, "1800000000000000001")
         XCTAssertEqual(q?.medias?.count, 1, "被引用推文的媒体也要解析出来")
     }
 
     /// 真实响应里广告挂在 `conversationthread-*` 的 item 上：
-    /// `item.itemContent.promotedMetadata` 非空。实测 tweet 2100649211276529930
+    /// `item.itemContent.promotedMetadata` 非空。实测 tweet 1900000000000000001
     /// 有 3 条这种广告（投资/背包广告），text 与主推文毫无关系。
     func testRealShapedPromotedInThreadIsDropped() {
         let ad: [String: Any] = [
@@ -323,26 +323,26 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
                     "impressionId": "abc",
                 ] as [String: Any],
                 "tweetDisplayType": "Tweet",
-                "tweet_results": ["result": tweet("2100528503813009883", text: "14周年限時加碼｜全年最勁獎賞只此一次🎁！")],
+                "tweet_results": ["result": tweet("1900000000000000005", text: "14周年限時加碼｜全年最勁獎賞只此一次🎁！")],
             ] as [String: Any],
         ]
         let ins = instructions([
-            tweetEntry("2100649211276529930", tweet("2100649211276529930", text: "主推文")),
-            entry("conversationthread-2100528503813009883", ["items": [ad]] as [String: Any]),
-            threadEntry("2100649211276529930", [tweet("2100705904333029797", text: "真实评论",
-                                                     replyTo: "2100649211276529930",
+            tweetEntry("1900000000000000001", tweet("1900000000000000001", text: "主推文")),
+            entry("conversationthread-1900000000000000005", ["items": [ad]] as [String: Any]),
+            threadEntry("1900000000000000001", [tweet("1900000000000000004", text: "真实评论",
+                                                     replyTo: "1900000000000000001",
                                                      screenName: "someone")]),
         ])
-        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "2100649211276529930")
-        XCTAssertEqual(nodes.map(\.post.id), ["2100705904333029797"],
+        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "1900000000000000001")
+        XCTAssertEqual(nodes.map(\.post.id), ["1900000000000000004"],
                        "真实形状的广告必须被丢弃，正常评论保留")
         // 广告的正文绝不应出现在结果里
         XCTAssertFalse(nodes.contains { ($0.post.fullText ?? "").contains("限時加碼") })
     }
 
-    // MARK: - 评论自带媒体与计数（真实：@leoakok 在 2100550768965423303 下的评论）
+    // MARK: - 评论自带媒体与计数（真实：@example_user 在 1900000000000000003 下的评论）
 
-    /// 真实形状：`@leoakok`（Leo）的评论带一张照片，且有赞数与回复数。
+    /// 真实形状：`@example_user`（Leo）的评论带一张照片，且有赞数与回复数。
     /// 实测 `legacy.favorite_count = 326`、`legacy.reply_count = 3`、
     /// `legacy.entities.media[0]` 为 947×2048 的 photo。
     ///
@@ -350,15 +350,15 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
     /// 之前渲染层完全没画，导致带图评论只剩文字。
     func testReplyMediaAndCountsAreParsed() {
         var legacy: [String: Any] = [
-            "full_text": "@TheAppleDesign this ☠️ https://t.co/T2I4ES67Qj",
+            "full_text": "@example_quoted this ☠️ https://t.co/T2I4ES67Qj",
             "created_at": "Sat Jan 20 15:15:36 +0000 2024",
             "favorite_count": 326,
             "reply_count": 3,
-            "in_reply_to_status_id_str": "2100550768965423303",
-            "in_reply_to_screen_name": "TheAppleDesign",
+            "in_reply_to_status_id_str": "1900000000000000003",
+            "in_reply_to_screen_name": "example_quoted",
             "entities": [
                 "media": [[
-                    "id_str": "2100584214701727780",
+                    "id_str": "1900000000000000006",
                     "type": "photo",
                     "media_url_https": "https://pbs.twimg.com/media/HSbGNYhXQAAKuL1.jpg",
                     "original_info": ["width": 947, "height": 2048] as [String: Any],
@@ -368,16 +368,16 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
         legacy["lang"] = "en"
         let result: [String: Any] = [
             "__typename": "Tweet",
-            "rest_id": "2100584214701727780",
+            "rest_id": "1900000000000000006",
             "legacy": legacy,
-            "core": ["user_results": ["result": user("leoakok", name: "Leo")] as [String: Any]],
+            "core": ["user_results": ["result": user("example_user", name: "Leo")] as [String: Any]],
         ]
         let ins = instructions([
-            tweetEntry("2100550768965423303", tweet("2100550768965423303", text: "主推文")),
-            threadEntry("2100550768965423303", [result]),
+            tweetEntry("1900000000000000003", tweet("1900000000000000003", text: "主推文")),
+            threadEntry("1900000000000000003", [result]),
         ])
-        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "2100550768965423303")
-        let node = nodes.first { $0.post.user.screenName == "leoakok" }
+        let nodes = TwitterAPI.extractReplyNodes(ins, focalId: "1900000000000000003")
+        let node = nodes.first { $0.post.user.screenName == "example_user" }
         XCTAssertNotNil(node, "Leo 的评论必须在结果里")
         XCTAssertEqual(node?.post.medias?.count, 1, "评论自带的媒体必须解析出来（渲染层才有得画）")
         XCTAssertEqual(node?.post.medias?.first?.type, .photo)
@@ -385,7 +385,7 @@ final class ReplyTreeAndPromotedTests: XCTestCase {
         XCTAssertEqual(node?.post.medias?.first?.height, 2048)
         XCTAssertEqual(node?.post.favoriteCount, 326, "评论点赞数要解析出来")
         XCTAssertEqual(node?.post.replyCount, 3, "评论的回复数要解析出来")
-        XCTAssertEqual(node?.parentScreenName, "TheAppleDesign")
+        XCTAssertEqual(node?.parentScreenName, "example_quoted")
     }
 
     /// 评论缩略图 URL：`/media/` 图片加 `name=small`；非 media 路径（视频封面）原样返回

@@ -233,22 +233,25 @@ final class VideoPlaybackModelTests: XCTestCase {
         m.togglePlay()
         m.play()
         m.restart()
-        m.beginScrub()
-        m.endScrub()
         m.teardown()
         XCTAssertFalse(m.isPlaying)
         XCTAssertEqual(m.currentTime, 0)
     }
 
-    /// 拖动进度条期间不应被播放进度覆盖（否则滑块跟手打架）
+    /// **进度不可拖动**（需求：调进度的手势与快捷键跟"切换媒体"冲突，故关闭）。
+    ///
+    /// 这条测试锁住设计意图：`VideoPlaybackModel` 不再暴露任何 seek/scrub 入口。
+    /// 若将来有人想加回拖动进度，请先解决与「双指左右滑切换」「←/→ 切换」的冲突
+    /// （它们都依赖水平手势 / 方向键）。
     @MainActor
-    func testScrubStateTracksEditing() {
+    func testProgressIsReadOnly() {
         let m = VideoPlaybackModel()
-        XCTAssertFalse(m.isScrubbing)
-        m.beginScrub()
-        XCTAssertTrue(m.isScrubbing, "拖动开始时进入 scrubbing：时间观察者据此跳过更新")
-        m.endScrub()
-        XCTAssertFalse(m.isScrubbing)
+        let mirror = Mirror(reflecting: m)
+        let scrubLike = mirror.children.compactMap(\.label).filter {
+            $0.lowercased().contains("scrub")
+        }
+        XCTAssertTrue(scrubLike.isEmpty,
+                      "不应存在拖动进度的入口，实际发现: \(scrubLike)")
     }
 }
 
@@ -295,7 +298,7 @@ final class TwitterMediaAspectTests: XCTestCase {
         let m = TwitterMedia(id: "1", url: nil, width: 947, height: 2048,
                              type: .photo, videoInfo: nil, createdTime: nil)
         XCTAssertEqual(m.aspectRatioValue, CGFloat(947) / CGFloat(2048), accuracy: 0.0001,
-                       "竖长图（@leoakok 那张）要按真实比例，才能不被裁成一条")
+                       "竖长图（@example_user 那张）要按真实比例，才能不被裁成一条")
     }
 
     func testAspectFallsBackToVideoInfo() {

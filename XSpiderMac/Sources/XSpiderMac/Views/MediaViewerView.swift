@@ -22,8 +22,6 @@ struct MediaViewerView: View {
     let center: MediaViewerCenter
     @State private var store = DownloadStore.shared
     @State private var playback = VideoPlaybackModel()
-    /// 可选字幕轨（nil = 还没读到；空数组 = 该视频没有字幕）
-    @State private var subtitleOptions: [SubtitleOption] = []
 
     /// 图片显示状态（切换媒体时重置）
     @State private var scale: CGFloat = 1
@@ -94,7 +92,6 @@ struct MediaViewerView: View {
         .task(id: media?.id) {
             resetImageTransform()
             await loadPlaybackIfNeeded()
-            await loadSubtitleOptions()
         }
         .onDisappear {
             // 离开查看窗口：暂停播放（详情页若在播，由详情页自己恢复）
@@ -149,13 +146,6 @@ struct MediaViewerView: View {
         playback.load(url: url, resumeAt: resumeAt)
     }
 
-    /// 读取可选字幕轨
-    private func loadSubtitleOptions() async {
-        subtitleOptions = []
-        guard isVideo, let item = playback.player?.currentItem else { return }
-        subtitleOptions = await SubtitleSupport.availableOptions(for: item)
-    }
-
     // MARK: - 工具条（纯图标；视频的播放控制全在这里）
 
     private var toolbar: some View {
@@ -165,15 +155,16 @@ struct MediaViewerView: View {
                 iconButton(playback.isPlaying ? "pause.fill" : "play.fill",
                            help: playback.isPlaying ? L("暂停") : L("播放")) { playback.togglePlay() }
 
-                // 进度条：可拖动定位。拖动期间暂停时间更新，避免与播放位置打架
-                Slider(value: Binding(
-                    get: { playback.isScrubbing ? playback.scrubTarget : playback.currentTime },
-                    set: { playback.scrubTarget = $0 }
-                ), in: 0...max(playback.duration, 0.01)) { editing in
-                    if editing { playback.beginScrub() } else { playback.endScrub() }
-                }
-                .controlSize(.small)
-                .frame(minWidth: 120)
+                // 播放进度：**只读展示**，不提供拖动。
+                //
+                // 原先这里是可拖动的 Slider，但拖动/点击它需要水平拖拽与点击，
+                // 与「双指左右滑切换媒体」「←/→ 切换」互相打架（用户反馈冲突）。
+                // 需求明确要求关掉调进度的手势与快捷键，故改为纯展示的进度条。
+                ProgressView(value: min(playback.currentTime, max(playback.duration, 0.01)),
+                             total: max(playback.duration, 0.01))
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+                    .frame(minWidth: 100)
 
                 Text("\(Self.timeText(playback.currentTime)) / \(Self.timeText(playback.duration))")
                     .font(.caption.monospacedDigit())
@@ -186,11 +177,6 @@ struct MediaViewerView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .leading)
-
-                // 字幕：有可选轨才显示（接入系统字幕功能，见 SubtitleSupport）
-                if !subtitleOptions.isEmpty {
-                    subtitleMenu
-                }
             } else {
                 iconButton("minus.magnifyingglass", help: L("缩小")) {
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -254,34 +240,6 @@ struct MediaViewerView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.bar)
-    }
-
-    /// 字幕选择菜单：列出所有可轨 + 「关闭字幕」
-    private var subtitleMenu: some View {
-        Menu {
-            Button(L("关闭字幕")) { playback.selectSubtitle(nil) }
-            Divider()
-            ForEach(subtitleOptions) { opt in
-                Button {
-                    playback.selectSubtitle(opt)
-                } label: {
-                    // 勾出当前选中项
-                    if playback.selectedSubtitle?.id == opt.id {
-                        Label(opt.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(opt.displayName)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: playback.selectedSubtitle == nil
-                  ? "captions.bubble" : "captions.bubble.fill")
-                .font(.system(size: 15, weight: .medium))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(L("字幕：选择语言或关闭"))
     }
 
     private func step(_ delta: Int) {
@@ -380,12 +338,6 @@ final class VideoPlaybackModel {
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
     var rate: Float = 1.0
-    /// 拖动进度条时的目标位置（拖动期间不跟播放进度，否则滑块会跟手打架）
-    var scrubTarget: Double = 0
-    /// 是否正在拖动进度条（拖动期间时间观察者不覆盖滑块位置）
-    private(set) var isScrubbing = false
-    /// 当前选中的字幕轨（nil = 关闭字幕）
-    private(set) var selectedSubtitle: SubtitleOption?
 
     private var timeObserver: Any?
 
@@ -418,7 +370,7 @@ final class VideoPlaybackModel {
         ) { [weak self] time in
             // 回调已在主队列：直接断言隔离域，避免每 0.25s 起一个 Task
             MainActor.assumeIsolated {
-                guard let self, !self.isScrubbing else { return }
+                guard let self else { return }
                 let s = time.seconds
                 self.currentTime = (s.isFinite && s >= 0) ? s : 0
                 // 记住进度：详情页与查看窗口之间切换时可继承（需求）
@@ -441,7 +393,6 @@ final class VideoPlaybackModel {
         isPlaying = false
         currentTime = 0
         duration = 0
-        selectedSubtitle = nil
     }
 
     func togglePlay() {
@@ -462,14 +413,6 @@ final class VideoPlaybackModel {
         play()
     }
 
-    /// 切字幕轨。`nil` = 关闭字幕。
-    func selectSubtitle(_ option: SubtitleOption?) {
-        guard let item = player?.currentItem,
-              let group = SubtitleSupport.legibleGroup(for: item) else { return }
-        item.select(option?.option, in: group)
-        selectedSubtitle = option
-    }
-
     /// 0.5 → 1 → 1.5 → 2 → 0.5 循环
     func cycleRate() {
         let options: [Float] = [0.5, 1.0, 1.5, 2.0]
@@ -478,20 +421,6 @@ final class VideoPlaybackModel {
         player?.rate = rate
     }
 
-    func beginScrub() {
-        isScrubbing = true
-        scrubTarget = currentTime
-        player?.pause()
-    }
-
-    func endScrub() {
-        isScrubbing = false
-        let target = min(max(0, scrubTarget), max(duration, 0))
-        player?.seek(to: CMTime(seconds: target, preferredTimescale: 600),
-                     toleranceBefore: .zero, toleranceAfter: .zero)
-        currentTime = target
-        play()
-    }
 }
 
 // MARK: - 可缩放图片

@@ -76,3 +76,6 @@ NETWORK_AND_WATERFALL_PLAN.md
 .codex/
 .opensquilla/
 .fetch/
+
+# 打包产物（dmg 走 GitHub Release，不进版本库）
+dist/

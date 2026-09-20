@@ -16,6 +16,9 @@ struct QuotedPostCard: View {
     var onAvatar: (() -> Void)? = nil
 
     @State private var hovering = false
+    /// 详情浮层是否已打开。用于**让出悬停提示**：`.help` 是 AppKit 工具提示，
+    /// 不受 SwiftUI 浮层遮挡影响，浮层开着时仍会从底层卡片弹出（见文件末尾注释）。
+    private var overlayOpen: Bool { DetailOverlayCenter.shared.post != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -88,6 +91,16 @@ struct QuotedPostCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onHover { hovering = $0 }
         .onTapGesture { onOpen() }
-        .help(L("打开被引用的推文"))
+        // 悬停提示只在**没有详情浮层**时挂载。
+        //
+        // 原因：`.help` 是 AppKit 工具提示，由窗口级别的 tracking area 驱动，
+        // **不受 SwiftUI 的 zIndex/浮层遮挡影响**。详情浮层打开时鼠标移到浮层上，
+        // 底层这张引用卡仍会弹出"打开被引用的推文"提示（用户反馈）。
+        // SwiftUI 层做遮罩挡不住它，只能在源头不挂这个 modifier。
+        .help(overlayOpen ? "" : L("打开被引用的推文"))
+        // 浮层打开时把悬停态复位，避免浮层期间卡片保持高亮
+        .onChange(of: overlayOpen) { _, open in
+            if open { hovering = false }
+        }
     }
 }

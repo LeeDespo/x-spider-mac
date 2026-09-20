@@ -54,6 +54,18 @@ final class HomeTimelineStore {
     /// 是否有更多可加载（媒体瀑布流与推文形态共用同一分页状态）
     var hasMore: Bool { cursor != nil }
     private var cursor: String?
+
+    /// 测试辅助：把分页状态复位（Store 是单例，测试间必须隔离）。
+    /// 与 `HomepageStore.clearErrorForTesting` 同类的隔离入口——
+    /// 之前缺这个，导致 `testHasMoreIsDerivedFromCursor` 会被其他测试的
+    /// 遗留 cursor 污染而偶发失败。
+    func resetPagingForTesting() {
+        cursor = nil
+        posts = []
+        loadError = nil
+        loading = false
+        loadingMore = false
+    }
     private var seenIds = Set<String>()
     private var generation = 0
 

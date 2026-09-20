@@ -103,9 +103,13 @@ struct SidebarView: View {
 
     /// 单行状态：灯 + 名称 + **简称** + 重试。
     ///
-    /// 简称只占几个字（正常/异常/限流），完整原因在 `.help` 悬停里看——
+    /// 简称只占几个字（正常/异常/限流），完整原因在悬停里看——
     /// 边栏宽度不足以放下完整文案。
-    /// 限流倒计时仍每秒刷新，但刷新的是**悬停内容**（简称本身不变，不重绘）。
+    ///
+    /// **悬停挂在整个左侧区域**（灯 + 名称 + 简称合并成一个命中区）：
+    /// 之前只挂在简称文本上，而它只有 2~3 个字宽，用户几乎要把鼠标精确
+    /// 停在字上才会出提示——表现为"悬停不显示详情"（实测反馈）。
+    /// 现在用 `contentShape` 把这一片都变成命中区，鼠标落在标签附近即可。
     private func statusRow(
         label: String,
         lamp: Color,
@@ -116,23 +120,26 @@ struct SidebarView: View {
         retry: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(lamp)
-                .frame(width: 7, height: 7)
-                .overlay { Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1) }
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(lamp)
+                    .frame(width: 7, height: 7)
+                    .overlay { Circle().strokeBorder(.black.opacity(0.08), lineWidth: 1) }
 
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            Text(short)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(isDim ? .secondary : .primary)
-                .lineLimit(1)
-                // 悬停显示详情（含实时倒计时）
-                .help(help)
+                Text(short)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(isDim ? .secondary : .primary)
+                    .lineLimit(1)
 
-            Spacer(minLength: 2)
+                Spacer(minLength: 2)
+            }
+            // 整片可悬停：命中区扩展到文字周围（含空白），不再要求精确指到字上
+            .contentShape(Rectangle())
+            .help(help)
 
             Button(action: retry) {
                 if probing {
