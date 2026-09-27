@@ -1,7 +1,8 @@
 import Foundation
 
 struct ProxySettings: Codable, Sendable {
-    var enable: Bool = true
+    /// 代理总开关（默认**关**：新装用户先直连，需要时再自行开启）
+    var enable: Bool = false
     var url: String = "http://127.0.0.1:7890"
     var useSystem: Bool = true
     /// 代理身份验证（可选）
@@ -203,14 +204,16 @@ struct AppSettings: Codable, Sendable {
     var liquidGlass: Bool?
     /// 图片缓存总开关（分类开关在 ImageCache.Category）
     var cachingEnabled: Bool?
-    /// 图片缓存上限 MB（50–500）
+    /// 图片缓存上限 MB（最低 100；`Settings.unlimitedCacheLimitMB` = 无上限）
     var cacheLimitMB: Int?
-    /// 缓存**回收比例**（%，10–100，默认 30）。
+    /// 缓存**超限回收目标**：占上限的百分比（默认 60，钳制 0–90）。
     ///
-    /// 语义：缓存达到上限时，一次清理掉**总量的这个百分比**。
-    /// 不是只清到刚好低于上限——那样会频繁触发清理（每次写入都可能越界），
-    /// 一次多回收一些可以让后续写入长时间不再触发。
-    var cacheReclaimPercent: Int?
+    /// 语义：占用**超过上限**时，从最旧的文件开始删，直到占用降到
+    /// `上限 × 这个百分比` 为止。例：上限 1 GB、此项 60%，占用涨到 2 GB 时
+    /// 会删到只剩 600 MB。留出这段余量，是为了让后续写入长时间不再触发清理
+    /// （只降到刚好低于上限的话，缓存稍涨一点就要重新扫描全目录再清一次）。
+    /// `0` = 超限后全部清空。
+    var cacheReclaimTargetPercent: Int?
     /// 液态玻璃模糊强度（0–100，仅 macOS 26+ 有效）
     var glassBlur: Int?
     /// 限流缓解设置
@@ -251,6 +254,13 @@ struct Settings: Codable, Sendable {
     }
 
     static let currentVersion = 3
+
+    /// 缓存上限取此值时表示**无上限**（不做容量控制）。
+    ///
+    /// 用 `0` 而不是 `Int.max`：越界判断、乘法都不会溢出，缺陷面最小。
+    static let unlimitedCacheLimitMB = 0
+    /// 缓存超限回收目标的钳制区间（设置界面、容量清理共用同一区间）
+    static let cacheReclaimTargetRange = 0...90
 
     /// 有效的账号子目录开关（nil 安全）
     var accountSubfolderEnabled: Bool { download.accountSubfolder ?? true }
@@ -297,10 +307,28 @@ struct Settings: Codable, Sendable {
     var recordFileNameValue: String { download.recordFileName ?? ".downloaded.json" }
     /// 图片缓存开关（默认开）
     var cachingEnabled: Bool { app.cachingEnabled ?? true }
-    /// 缓存上限 MB（默认 200，钳制 50–500）
-    var cacheLimitMB: Int { min(500, max(50, app.cacheLimitMB ?? 200)) }
-    /// 缓存回收比例（%，**最低 10、最高 100**，默认 30）
-    var cacheReclaimPercent: Int { min(100, max(10, app.cacheReclaimPercent ?? 30)) }
+    /// 缓存上限 MB（默认 200，**最低 100**；`unlimitedCacheLimitMB` = 无上限）
+    var cacheLimitMB: Int {
+        let raw = app.cacheLimitMB ?? 200
+        return raw == Self.unlimitedCacheLimitMB ? raw : max(100, raw)
+    }
+    /// 缓存上限的字节数（`nil` = 无上限，不做容量控制）。
+    ///
+    /// **单位必须与 UI 显示一致**：设置项写的是 "200 MB"，用户用 `ByteCountFormatter`
+    /// 的 `.file` 风格（**十进制**，1 MB = 1_000_000 字节）看实际占用。
+    /// 曾用 `1_048_576`（MiB），于是"设 200MB 却显示 209.7MB"，用户以为上限没生效。
+    var cacheLimitBytes: Int64? {
+        let mb = cacheLimitMB
+        guard mb != Self.unlimitedCacheLimitMB else { return nil }
+        return Int64(mb) * 1_000_000
+    }
+    /// 缓存超限回收目标（占上限的**百分比**，默认 60，钳制 0–90）。
+    ///
+    /// 超限后从最旧的文件删到「上限 × 这个百分比」为止；`0` = 全部清空。
+    var cacheReclaimTargetPercent: Int {
+        let r = Self.cacheReclaimTargetRange
+        return min(r.upperBound, max(r.lowerBound, app.cacheReclaimTargetPercent ?? 60))
+    }
     /// 玻璃模糊强度（0–100，默认 60）
     var glassBlur: Int { min(100, max(20, app.glassBlur ?? 60)) }
     /// 打开应用自动同步（默认关）

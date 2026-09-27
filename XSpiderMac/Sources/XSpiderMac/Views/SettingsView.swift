@@ -683,21 +683,27 @@ struct SettingsView: View {
                     get: { settingsStore.settings.cacheLimitMB },
                     set: { settingsStore.settings.app.cacheLimitMB = $0 }
                 )) {
-                    ForEach([50, 100, 200, 300, 500], id: \.self) { mb in
+                    ForEach([100, 200, 300, 500, 1000, 2000], id: \.self) { mb in
                         Text("\(mb) MB").tag(mb)
                     }
+                    // 无上限：不做容量控制（用 0 作哨兵值，见 Settings.unlimitedCacheLimitMB）
+                    Text(L("无上限")).tag(Settings.unlimitedCacheLimitMB)
                 }
+                .infoHint(L("超过上限后自动清理最旧的缓存文件。「无上限」= 不限制缓存占用。"))
 
-                // 回收比例：达到上限时一次清掉多少已用容量
+                // 超限回收目标：超过上限后回收，直到占用降到上限的这个百分比
                 NumberStepperField(
-                    title: L("超限回收比例（%）"),
+                    title: L("超限回收目标（占上限 %）"),
                     value: Binding(
-                        get: { settingsStore.settings.cacheReclaimPercent },
-                        set: { settingsStore.settings.app.cacheReclaimPercent = max(10, min(100, $0)) }
+                        get: { settingsStore.settings.cacheReclaimTargetPercent },
+                        set: {
+                            let r = Settings.cacheReclaimTargetRange
+                            settingsStore.settings.app.cacheReclaimTargetPercent = min(r.upperBound, max(r.lowerBound, $0))
+                        }
                     ),
-                    range: 10...100
+                    range: Settings.cacheReclaimTargetRange
                 )
-                .infoHint(L("缓存达到上限时，一次清理掉已用容量的这个百分比（最低 10%，最高 100%）。\n\n不是只清到刚好低于上限——那样缓存再涨一点就要重新扫描并再清一次。一次多回收一些，能让接下来一段时间不再触发清理。\n\n总是清理最旧的缓存文件；100% 表示全部清空。"))
+                .infoHint(L("占用超过上限时，从最旧的文件开始删除，直到占用降到「上限 × 这个百分比」为止。\n\n例：上限 1 GB、此项 60%，占用涨到 2 GB 时会删到只剩 600 MB。留出的这段余量，能让后续写入长时间不再触发清理。\n\n0% 表示超限后全部清空。"))
             }
 
             HStack {

@@ -52,13 +52,10 @@ final class ImageCache {
         return UserDefaults.standard.object(forKey: category.settingKey) as? Bool ?? true
     }
 
-    /// 缓存上限字节。
+    /// 缓存上限字节（`nil` = 设置里选了「无上限」，不做容量控制）。
     ///
-    /// **单位必须与 UI 显示一致**：设置项写的是 "200 MB"，用户用 `ByteCountFormatter`
-    /// 的 `.file` 风格（**十进制**，1 MB = 1_000_000 字节）看实际占用。
-    /// 此前这里乘 `1_048_576`（MiB），于是"设 200MB 却显示 209.7MB"——
-    /// 用户以为上限没生效（实测反馈）。现在统一为十进制，两处口径一致。
-    private var limitBytes: Int64 { Int64(SettingsStore.shared.settings.cacheLimitMB) * 1_000_000 }
+    /// 单位口径（十进制 MB）由 `Settings.cacheLimitBytes` 决定，见那里的说明。
+    private var limitBytes: Int64? { SettingsStore.shared.settings.cacheLimitBytes }
 
     // MARK: - 读取（先内存 → 磁盘 → 网络；重活全在后台）
 
@@ -137,28 +134,31 @@ final class ImageCache {
 
     private func scheduleDiskLimitCheck() {
         guard diskCheckTask == nil, Date() > lastDiskCheckAt.addingTimeInterval(60) else { return }
+        // 无上限：没有可回收的目标，连扫描都不必做
+        guard let limit = limitBytes else { return }
         lastDiskCheckAt = Date()
         let root = dir
-        let limit = limitBytes
-        // 回收比例读一次快照传下去（后台任务里不碰 MainActor 的 settings）
-        let reclaim = Int64(SettingsStore.shared.settings.cacheReclaimPercent)
+        // 目标百分比读一次快照传下去（后台任务里不碰 MainActor 的 settings）
+        let targetPercent = Int64(SettingsStore.shared.settings.cacheReclaimTargetPercent)
         diskCheckTask = Task.detached(priority: .utility) { [weak self] in
-            Self.enforceLimit(dir: root, limitBytes: limit, reclaimPercent: reclaim)
+            Self.enforceLimit(dir: root, limitBytes: limit, targetPercent: targetPercent)
             await MainActor.run { self?.diskCheckTask = nil }
         }
     }
 
-    /// 超限时按「回收比例」清理**最旧的**文件。
+    /// 超限时删除**最旧**的文件，直到占用降到「上限 × 目标百分比」。
     ///
-    /// **为什么不是只清到刚好低于上限**：那样每次缓存再涨一点就要重新全目录扫描
-    /// 并再清一次（`scheduleDiskLimitCheck` 有 60s 节流，但仍会频繁触发）。
-    /// 一次多回收一些（默认 30%）可以让后续写入长时间不再越界。
+    /// 例：上限 1 GB、目标 60%、当前 2 GB → 从最旧开始删，删到只剩 600 MB。
     ///
-    /// 边界：回收比例钳在 10–100%；按 100% 时全部清掉。
-    /// 至少会删到"低于上限"为止，避免比例算出 0 字节时白扫一遍。
-    private nonisolated static func enforceLimit(dir: URL,
-                                                 limitBytes: Int64,
-                                                 reclaimPercent: Int64) {
+    /// **为什么不只降到刚好低于上限**：那样缓存再涨一点就要重新全目录扫描并再清一次
+    /// （`scheduleDiskLimitCheck` 有 60s 节流，写入频繁时仍会不断触发）。
+    /// 直接回收出余量，后续写入可以长时间不再越界。
+    /// 目标为 `0%` 时全部清空。
+    ///
+    /// 可见性为 internal（而非 private）以便单测直接跑真实删除逻辑。
+    nonisolated static func enforceLimit(dir: URL,
+                                         limitBytes: Int64,
+                                         targetPercent: Int64) {
         let fm = FileManager.default
         let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
         var total: Int64 = 0
@@ -170,23 +170,28 @@ final class ImageCache {
         }
         guard total > limitBytes else { return }
 
-        // 目标：回收总量的 reclaimPercent；但至少要清到低于上限
-        let byPercent = total * min(100, max(0, reclaimPercent)) / 100
-        let neededToGetUnderLimit = total - limitBytes
-        let target = max(byPercent, neededToGetUnderLimit)
-
-        var removed: Int64 = 0
+        let target = reclaimTargetBytes(limitBytes: limitBytes, targetPercent: targetPercent)
+        var remaining = total
         for e in entries.sorted(by: { $0.date < $1.date }) {
-            guard removed < target else { break }
+            guard remaining > target else { break }
             try? fm.removeItem(at: e.url)
-            removed += e.size
+            remaining -= e.size
         }
         AppLogger.info("缓存超限自动清理", category: "APP", [
-            "removed": "\(removed)",
+            "before": "\(total)",
+            "after": "\(remaining)",
             "limit": "\(limitBytes)",
-            "percent": "\(reclaimPercent)",
-            "total": "\(total)",
+            "target": "\(target)",
         ])
+    }
+
+    /// 回收目标字节数 = **上限 × 目标百分比 / 100**。
+    ///
+    /// 先除后乘，避免上限很大时 `limit × percent` 溢出。纯函数，便于单测。
+    nonisolated static func reclaimTargetBytes(limitBytes: Int64, targetPercent: Int64) -> Int64 {
+        let r = Settings.cacheReclaimTargetRange
+        let clamped = min(Int64(r.upperBound), max(Int64(r.lowerBound), targetPercent))
+        return limitBytes / 100 * clamped
     }
 
     /// 清空全部图片缓存（磁盘删除放后台）
