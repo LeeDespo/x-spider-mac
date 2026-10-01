@@ -19,6 +19,7 @@
 		19650F9D6A6CD1474627A8FD /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4929D4EF622DB948DE5B5 /* GlassBackground.swift */; };
 		1B046CD60A725B4727260701 /* NavigationItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50035F8AB3BD56B42F4BDC3 /* NavigationItem.swift */; };
 		1C52D12FA380F2CEC29BB661 /* WindowConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491496E19FE861DE65FB5614 /* WindowConfig.swift */; };
+		1D5BEDCFE772AE22BB0DAC95 /* ComponentLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC82484CB5D00D7B37205937 /* ComponentLiveTests.swift */; };
 		1EC28CCFAF84F769D283C27B /* Aria2Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247792FC3A5153BA109AB30B /* Aria2Engine.swift */; };
 		28FD816424E84727DEABCCA7 /* GlassCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A721BC7BC346461F850A948 /* GlassCompat.swift */; };
 		2A0330AD196BAA76929E427F /* SearchTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5BCB4E79F3443C0CC5CE98E /* SearchTimelineTests.swift */; };
@@ -197,6 +198,7 @@
 		D591D72697C9E0A53F5DE3B4 /* QuotedPostCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotedPostCard.swift; sourceTree = "<group>"; };
 		D8723406FAF93C4C12966B02 /* FileNameTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameTemplateTests.swift; sourceTree = "<group>"; };
 		DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineTests.swift; sourceTree = "<group>"; };
+		DC82484CB5D00D7B37205937 /* ComponentLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComponentLiveTests.swift; sourceTree = "<group>"; };
 		E06EB16B79AA2B554F917225 /* TranslatableText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslatableText.swift; sourceTree = "<group>"; };
 		E26A5AB33B525DCFEE4E8E78 /* CreationTaskSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreationTaskSelectionTests.swift; sourceTree = "<group>"; };
 		E39372895FAA6B9A4C468E94 /* SyncView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncView.swift; sourceTree = "<group>"; };
@@ -389,6 +391,7 @@
 			isa = PBXGroup;
 			children = (
 				75802F3F3F2C10B53E753D07 /* CacheReclaimTests.swift */,
+				DC82484CB5D00D7B37205937 /* ComponentLiveTests.swift */,
 				E26A5AB33B525DCFEE4E8E78 /* CreationTaskSelectionTests.swift */,
 				DA9DDDA95C4F6ABB7FB0263B /* DownloadEngineTests.swift */,
 				E718A31888D53077262DF1A4 /* FileIntegrityTests.swift */,
@@ -520,6 +523,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C57276CB8398FAD3627D306B /* CacheReclaimTests.swift in Sources */,
+				1D5BEDCFE772AE22BB0DAC95 /* ComponentLiveTests.swift in Sources */,
 				5801A37E7C5562760D72C728 /* CreationTaskSelectionTests.swift in Sources */,
 				75CA165417644DEFA269E1F5 /* DownloadEngineTests.swift in Sources */,
 				EDD8A44ADA963391578DF21B /* FileIntegrityTests.swift in Sources */,
