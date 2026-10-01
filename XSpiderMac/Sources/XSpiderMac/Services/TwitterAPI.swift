@@ -57,7 +57,7 @@ actor TwitterAPI {
     static func componentProxyValue(_ proxy: ProxySettings) -> JSONValue {
         if proxy.enable, !proxy.useSystem, !proxy.url.isEmpty { return .string(proxy.url) }
         if proxy.useSystem {
-            if let system = Aria2Engine.systemProxy() { return .string(system) }
+            if let system = SystemProxy.current() { return .string(system) }
             return proxy.url.isEmpty ? .null : .string(proxy.url)
         }
         return .null

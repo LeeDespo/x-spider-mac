@@ -135,6 +135,25 @@ struct SettingsView: View {
 
     // MARK: - 引擎设置
 
+    /// 组件状态（绿灯 = 进程真的起来并握手成功）。
+    struct ComponentState {
+        var isReady: Bool
+        var label: String
+    }
+    @State private var componentState = ComponentState(isReady: false, label: L("组件未启动"))
+
+    private func refreshComponentState() async {
+        if let info = XSpiderComponent.shared.currentInfo {
+            let aria2 = XSpiderComponent.locate("aria2next") != nil
+            componentState = ComponentState(
+                isReady: true,
+                label: L("组件就绪") + " · " + info.transport + " · 契约 " + info.contractVersion
+                    + (aria2 ? " · aria2Next 可用" : " · 未找到 aria2Next（仅内置后端）"))
+        } else {
+            componentState = ComponentState(isReady: false, label: L("组件未启动（首次取数或下载时自动拉起）"))
+        }
+    }
+
     private var engineSection: some View {
         Section {
             // 下载引擎选择
@@ -190,23 +209,27 @@ struct SettingsView: View {
                 }
             }
 
-            if settingsStore.settings.engineMode != .builtIn {
-                HStack {
-                    // 连接状态：内核可执行文件在 + 可执行 = 绿灯
-                    Circle()
-                        .fill(Aria2Engine.isAvailable ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(Aria2Engine.isAvailable ? L("aria2Next 连接正常") : L("aria2Next 内核未找到"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button(L("重启内核")) {
-                        Aria2Engine.shared.restart()
+            // 组件状态：整个下载与取数都由它承担，所以这一行的含义是"组件在不在、什么形态"。
+            // 绿灯的判据是**进程真的起来了并完成了握手**（不是"文件存在"）——
+            // 文件在但被隔离/未签名时会以 137 静默死掉，那种情况下"文件存在"是假绿灯。
+            HStack {
+                Circle()
+                    .fill(componentState.isReady ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(componentState.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(L("重启组件")) {
+                    Task {
+                        _ = try? await XSpiderComponent.shared.restart()
+                        await refreshComponentState()
                     }
-                    .compatGlassButton()
                 }
-                .padding(.leading, 16)
+                .compatGlassButton()
             }
+            .padding(.leading, 16)
+            .task { await refreshComponentState() }
 
             // 同时并发下载数（− 数字 +，数字可点击输入）
             NumberStepperField(

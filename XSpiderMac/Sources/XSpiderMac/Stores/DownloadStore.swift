@@ -54,16 +54,13 @@ final class DownloadStore {
         if alsoDeleteFiles {
             for gid in targets {
                 if let task = tasks.first(where: { $0.gid == gid }) {
-                    pathsToDelete.append((task.dir as NSString).appendingPathComponent(task.fileName))
-                    let tmpName = tmpFileName(for: task)
-                    let dirURL = URL(fileURLWithPath: task.dir)
-                    pathsToDelete.append(dirURL.appendingPathComponent(tmpName).path)
-                    pathsToDelete.append(dirURL.appendingPathComponent(tmpName + ".aria2").path)
-                    // 旧版 staging 位置兼容清理
-                    let legacy = AppDirectories.staging.appendingPathComponent(legacyAria2FileName(for: task))
-                    pathsToDelete.append(legacy.path)
-                    pathsToDelete.append(legacy.path + ".aria2")
-                    // URLSession 引擎的新位置 tmp(带 UUID 无法精确匹配,按前缀清理交给 resolveStale)
+                    let dest = (task.dir as NSString).appendingPathComponent(task.fileName)
+                    pathsToDelete.append(dest)
+                    // 组件的断点文件（名字带引擎标识，见 docs/02 §E3：两个引擎的断点物理隔开）
+                    for suffix in [".part.http", ".part.aria2next",
+                                   ".part.http.aria2", ".part.aria2next.aria2"] {
+                        pathsToDelete.append(dest + suffix)
+                    }
                 }
             }
         }
@@ -85,19 +82,22 @@ final class DownloadStore {
         ])
     }
 
-    /// 引擎内部状态（resumeData、进行中的 URLSession 任务）
-    private var sessionTasks: [String: URLSessionDownloadTask] = [:]
-    /// aria2 引擎（进程管理）
-    private let aria2 = Aria2Engine.shared
-    /// aria2 任务 → 暂存文件路径（完成后原子移动到目标位置）
-    private var aria2StagingPaths: [String: URL] = [:]
-    private var resumeDataMap: [String: Data] = [:]
-    private var session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.httpCookieStorage = nil
-        config.httpShouldSetCookies = false
-        return URLSession(configuration: config)
-    }()
+    /// 下载执行现在全部归组件（`dl.*`）。应用侧只留：
+    /// 目录与文件名的计算（`targetDir` / `fileNameWithIndex`）、
+    /// 收尾的内容校验（`FileIntegrity`）、下载记录（`.downloaded.json`）、通知。
+    ///
+    /// 为什么不留一份 URLSession 实现：断点续传与完整性校验一旦有两份实现，
+    /// 就会出现"内置引擎好好的、外派引擎拼出损坏文件"这类只在部分用户那里复现的问题
+    /// ——`docs/01-ARCHITECTURE.md` §5.2 把这条写成了纪律。
+    ///
+    /// `dl.events` 的增量游标（下次把返回的 seq 传回去）。
+    private var componentCursor: UInt64 = 0
+    /// 轮询任务：只要还有 active/waiting 就活着。
+    private var componentPoller: Task<Void, Never>?
+    /// 已经交给组件的任务（`gid` 就是契约里的 `job_id`，跨重启稳定）。
+    private var componentJobs: Set<String> = []
+    /// 已经做完应用侧收尾（内容校验 + 记录）的任务，避免事件与列表两条路重复收尾。
+    private var finalized: Set<String> = []
 
     private var settings: Settings { SettingsStore.shared.settings }
     private let fm = FileManager.default
@@ -559,204 +559,92 @@ final class DownloadStore {
         return min(configured, settings.cdnMaxConcurrent)
     }
 
-    /// 实际拉起（引擎分发），供 pump 与恢复场景使用
+    /// 实际拉起：**把任务交给组件**（`dl.enqueue`）。
+    ///
+    /// 目录与文件名仍然是应用算好的（组件只收 `dest_dir` + `file_name`）；
+    /// `job_id` 用 `gid`——它本来就是"跨重启稳定的业务 id"，正好当幂等键：
+    /// 重复入队（暂停后恢复、重试、重启对账）不会重复下载。
     private func launch(_ task: DownloadTask) {
-        guard let url = URL(string: task.downloadUrl) else {
+        guard URL(string: task.downloadUrl) != nil else {
             update(gid: task.gid) { $0.status = .error; $0.error = "无效的下载地址" }
             return
         }
         try? fm.createDirectory(atPath: task.dir, withIntermediateDirectories: true)
         let engine = engineFor(task)
-        // 记录本次实际使用的引擎：恢复时据此判断引擎是否变更（变更则丢弃断点重下）
-        let previousEngine = task.engine
         update(gid: task.gid) { $0.status = .active; $0.engine = engine }
-        AppLogger.debug("任务开始下载", category: "DL", [
+        AppLogger.debug("任务交给组件下载", category: "DL", [
             "gid": task.gid, "engine": engine.rawValue,
             "file": task.fileName, "user": task.post.user.screenName,
         ])
 
-        // 引擎切换过：丢弃另一引擎遗留的断点与半成品，从头下载
-        // （resumeData 是 URLSession 独有的，aria2 无法续写；混合会导致损坏文件）
-        if let previousEngine, previousEngine != engine {
-            resumeDataMap.removeValue(forKey: task.gid)
-            discardPartialArtifacts(for: task)
-            AppLogger.info("引擎已变更,丢弃断点重新下载", category: "DL", [
-                "file": task.fileName,
-                "from": previousEngine.rawValue, "to": engine.rawValue,
-            ])
+        var params: [String: JSONValue] = [
+            "job_id": .string(task.gid),
+            "url": .string(task.downloadUrl),
+            "dest_dir": .string(task.dir),
+            "file_name": .string(task.fileName),
+            // `tag` 是不透明的：组件只存不解释，这里放推文 id 便于排障
+            "tag": .string(task.post.id),
+            "requirements": .object([
+                "resume": .bool(true),
+                "segments": .int(segmentsFor(task)),
+            ]),
+        ]
+        // 已知大小就给它：组件的完成判据是**落盘字节数**，给了它才能校验完整性。
+        // 不知道就不传这个键（契约里 `expect_size` 是整数，**不接受 null**）；
+        // 组件会自己探（`net.probe_size` 那条路径），代价是一次 CDN 请求。
+        if task.totalSize > 0 {
+            params["expect_size"] = .int(Int(task.totalSize))
         }
 
-        if engine == .aria2, Aria2Engine.isAvailable {
-            launchAria2(task, proxy: currentProxyArgument())
-            return
+        componentJobs.insert(task.gid)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await XSpiderComponent.shared.call("dl.enqueue", params)
+                self.startComponentPolling()
+            } catch {
+                self.handleComponentLaunchFailure(gid: task.gid, error: error)
+            }
         }
-
-        launchBuiltIn(task, url: url)
     }
 
-    /// 引擎分流。auto = 按**文件大小**而非媒体类型：
-    /// aria2 的价值是多连接分块与跨会话续传，收益随文件增大而显现；小图走内置更省开销，
-    /// 也少一层"进程/RPC 是否就绪"的失败面。
+    /// 「希望多连接」的分片数。
     ///
-    /// 大小判据优先用 `totalSize`（进度回调或历史记录已知），未知时按媒体元数据估算；
-    /// **不发额外请求探测**（CDN 请求同样消耗配额）。
+    /// 组件的 `requirements` 是**能力表达**而不是引擎名（契约 §4.11）：
+    /// - 内置引擎 → 1（单连接）；
+    /// - aria2 引擎 → 用户设的每文件连接数；
+    /// - 自动 → 1，由组件按**真实大小**决定要不要多连接
+    ///   （旧实现拿"码率×时长"估算，实测差 5 倍，已废弃）。
+    private func segmentsFor(_ task: DownloadTask) -> Int {
+        switch settings.engineMode {
+        case .builtIn, .auto: return 1
+        case .aria2: return max(1, settings.aria2Split)
+        }
+    }
+
+    /// 引擎分流：**只用于展示与分片意图**，真正的引擎选择在组件里。
+    ///
+    /// 旧实现会按"码率 × 时长"估算大小来挑引擎，实测那个估算差 5.25 倍
+    /// （`docs/02` §E9），所以现在的判据只有两个：用户的设置，以及组件拿到的真实大小。
     private func engineFor(_ task: DownloadTask) -> DownloadEngine {
         switch settings.engineMode {
-        case .builtIn:
-            return .builtIn
-        case .aria2:
-            return .aria2
+        case .builtIn, .aria2:
+            return settings.engineMode
         case .auto:
-            guard Aria2Engine.isAvailable else { return .builtIn }
+            // 展示层面的粗判：知道大小就按阈值，不知道就先算 aria2（组件也会这么判）
+            guard XSpiderComponent.locate("aria2next") != nil else { return .builtIn }
             let threshold = Int64(settings.aria2SizeThresholdMB) * 1_048_576
-            let known = task.totalSize > 0 ? task.totalSize : estimatedSize(task.media)
-            if known <= 0 {
-                // 大小未知：视频/GIF 体积通常远大于阈值，照片走内置
-                return (task.media.type == .video || task.media.type == .gif) ? .aria2 : .builtIn
-            }
-            return known > threshold ? .aria2 : .builtIn
+            if task.totalSize > 0 { return task.totalSize > threshold ? .aria2 : .builtIn }
+            return .aria2
         }
     }
 
-    /// 从媒体元数据粗估字节数（仅用于引擎选择，不求精确）
-    private func estimatedSize(_ media: TwitterMedia) -> Int64 {
-        // 视频：最高码率(bits/s) × 时长(s) ÷ 8
-        if let variants = media.videoInfo?.variants,
-           let best = variants.compactMap(\.bitrate).max(),
-           let ms = media.videoInfo?.duration, ms > 0 {
-            return Int64(Double(best) * (ms / 1000.0) / 8.0)
-        }
-        // 图片：按像素粗估（原图约 0.5 字节/像素，量级够用）
-        if let w = media.width, let h = media.height, w > 0, h > 0 {
-            return Int64(Double(w * h) * 0.5)
-        }
-        return 0
-    }
-
-    /// 当前代理参数（手动代理优先，其次系统代理）——aria2c 不继承系统代理需显式传
-    private func currentProxyArgument() -> String? {
-        let proxy = settings.proxy
-        if proxy.enable, !proxy.useSystem, !proxy.url.isEmpty { return proxy.url }
-        if proxy.useSystem { return Aria2Engine.systemProxy() }
-        return nil
-    }
-
-    /// 丢弃某任务在目标目录内的半成品与断点（引擎切换/重下前调用）
-    private func discardPartialArtifacts(for task: DownloadTask) {
-        let dir = task.dir
-        let names = [tmpFileName(for: task), tmpFileName(for: task) + ".aria2",
-                     legacyAria2FileName(for: task), legacyAria2FileName(for: task) + ".aria2"]
-        for name in names {
-            try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(name))
-        }
-        aria2StagingPaths.removeValue(forKey: task.gid)
-    }
-
-    private func launchAria2(_ task: DownloadTask, proxy: String?) {
-        // 手动代理(非系统)时的身份验证凭证注入
-        let proxySettings = settings.proxy
-        if !proxySettings.useSystem, proxySettings.enable, let user = proxySettings.username, !user.isEmpty {
-            Aria2Engine.proxyCredential = (user, proxySettings.password ?? "")
-        } else {
-            Aria2Engine.proxyCredential = nil
-        }
-        aria2.progressHandler = { [weak self] gid, done, total in
-            Task { @MainActor in
-                self?.update(gid: gid) {
-                    $0.completeSize = done
-                    if total > 0 { $0.totalSize = total }
-                }
-            }
-        }
-        aria2.pauseHandler = { [weak self] gid in
-            Task { @MainActor in
-                self?.update(gid: gid) { $0.status = .paused }
-                self?.pump()
-                self?.refreshSleepAssertion()
-            }
-        }
-        aria2.completionHandler = { [weak self] gid, result in
-            Task { @MainActor in
-                switch result {
-                case .success(let fileURL):
-                    self?.finalizeDownload(gid: gid, stagedFile: fileURL)
-                case .failure(let error):
-                    self?.handleTaskError(gid: gid, error: error)
-                }
-            }
-        }
-        // 临时文件直接放目标目录（免拷贝），统一用 tmpFileName 命名，
-        // 保证清理时能准确删除（旧实现两种命名并存，删的是从未创建的路径）
-        let stagingName = tmpFileName(for: task)
-        aria2StagingPaths[task.gid] = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(stagingName))
-        aria2.start(
-            gid: task.gid, urlString: task.downloadUrl,
-            destDir: task.dir,
-            fileName: stagingName,
-            proxy: proxy,
-            connections: settings.aria2Split,
-            fileAllocation: settings.aria2FileAllocation
-        )
-    }
-
-    /// 统一的引擎临时文件名：`.xspider-tmp-<gid>-<原名>`（目标目录内，隐藏前缀防重名）。
-    /// 两种引擎共用同一个名字——此前 aria2 用 `<gid>-<name>`、URLSession 用
-    /// `.xspider-tmp-urlsession-<uuid>`、而 `aria2StagingPaths` 记的是第三种，
-    /// 导致删除清理时删的是一个从未被创建的路径（残留永远留在用户目录）。
-    private func tmpFileName(for task: DownloadTask) -> String {
-        let safe = task.fileName
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        return ".xspider-tmp-\(task.gid)-\(safe)"
-    }
-
-    /// 历史遗留的 aria2 临时命名（`<gid>-<name>`）：仅用于清理旧版本残留。
-    /// 新任务不再使用，保留此函数以免旧残留永远删不掉。
-    private func legacyAria2FileName(for task: DownloadTask) -> String {
-        let safe = task.fileName
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        return "\(task.gid)-\(safe)"
-    }
-
-    /// 内置 URLSession 引擎分支体（launch 尾部调用）
-    private func launchBuiltIn(_ task: DownloadTask, url: URL) {
-        var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        request.setValue("https://x.com", forHTTPHeaderField: "Referer")
-
-        let sessionTask: URLSessionDownloadTask
-        if let resumeData = resumeDataMap[task.gid] {
-            sessionTask = session.downloadTask(withResumeData: resumeData)
-            resumeDataMap.removeValue(forKey: task.gid)
-        } else {
-            sessionTask = session.downloadTask(with: request)
-        }
-
-        let gid = task.gid
-        let delegate = DownloadDelegate(store: self, gid: gid, dir: task.dir)
-        sessionTask.delegate = delegate
-        sessionTask.resume()
-        sessionTasks[gid] = sessionTask
-    }
-
+    /// 暂停：**保留断点**（组件会把半成品留在目标目录，恢复时接着下）。
+    /// 与"取消"的区别只在这里——取消会连半成品一起清掉。
     func pause(_ gid: String) {
-        guard let task = sessionTasks[gid] else {
-            // aria2 引擎的任务
-            aria2.pause(gid: gid)
-            update(gid: gid) { $0.status = .paused }
-            pump()
-            refreshSleepAssertion()
-            return
-        }
-        task.cancel(byProducingResumeData: { [weak self] data in
-            Task { @MainActor in
-                if let data { self?.resumeDataMap[gid] = data }
-                self?.sessionTasks.removeValue(forKey: gid)
-                self?.update(gid: gid) { $0.status = .paused }
-                self?.refreshSleepAssertion()
-            }
-        })
+        update(gid: gid) { $0.status = .paused }
+        componentCall("dl.pause", gid)
+        refreshSleepAssertion()
     }
 
     func unpause(_ gid: String) {
@@ -765,27 +653,20 @@ final class DownloadStore {
     }
 
     func remove(_ gid: String, alsoDeleteFiles: Bool = false) {
-        sessionTasks[gid]?.cancel()
-        sessionTasks.removeValue(forKey: gid)
-        aria2.cancel(gid: gid)
-        // 引擎临时文件(现在位于目标目录内;兼容旧版 staging 位置)
-        if let tmp = aria2StagingPaths.removeValue(forKey: gid) {
-            try? fm.removeItem(at: tmp)
-            try? fm.removeItem(at: URL(fileURLWithPath: tmp.path + ".aria2"))
-        }
-        resumeDataMap.removeValue(forKey: gid)
+        // 取消 = 丢弃断点并清掉临时文件（组件负责），目标目录保持干净
+        componentCall("dl.cancel", gid)
+        componentJobs.remove(gid)
         if let index = tasks.firstIndex(where: { $0.gid == gid }) {
             let task = tasks[index]
             if alsoDeleteFiles {
                 // 源文件 + 目标目录内引擎临时文件 + 旧 staging 残留
                 let destURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(task.fileName))
                 try? fm.removeItem(at: destURL)
-                let tmpName = tmpFileName(for: task)
-                try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName)))
-                try? fm.removeItem(at: URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(tmpName + ".aria2")))
-                let legacyStaging = legacyAria2FileName(for: task)
-                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging))
-                try? fm.removeItem(at: AppDirectories.staging.appendingPathComponent(legacyStaging + ".aria2"))
+                // 组件可能把断点留在目标目录（文件名带引擎标识），一并清掉
+                for suffix in [".part.http", ".part.aria2next", ".part.http.aria2", ".part.aria2next.aria2"] {
+                    try? fm.removeItem(atPath: (task.dir as NSString)
+                        .appendingPathComponent(task.fileName + suffix))
+                }
             }
             tasks.remove(at: index)
         }
@@ -874,42 +755,223 @@ final class DownloadStore {
     // MARK: - 下载完成回调（DownloadDelegate / Aria2Engine 调用）
 
     /// URLSession 引擎的完成回调
-    func handleDownloadCompleted(gid: String, localURL: URL?, response: URLResponse?, error: Error?) {
-        defer {
-            sessionTasks.removeValue(forKey: gid)
-            // 失败路径：目标目录内的稳定临时文件清理（成功路径由 finalizeDownload rename 消化）
-            if let localURL,
-               localURL.lastPathComponent.hasPrefix(".xspider-tmp-"),
-               error != nil {
-                try? fm.removeItem(at: localURL)
+    // MARK: - 组件事件轮询
+
+    /// 起一个轮询任务（幂等）：只要还有 active/waiting 就活着，全静下来就自己结束。
+    ///
+    /// 为什么用轮询而不是流：契约的三种形态（HTTP / stdio / C ABI）都不支持推送流，
+    /// 统一用"带游标的增量 + 列表对账"才可能三形态行为一致（ADR-029）。
+    /// 400ms 是**外壳自己的节流**——组件按事件发，多久刷新由调用方决定。
+    private func startComponentPolling() {
+        guard componentPoller == nil else { return }
+        componentPoller = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let busy = self.tasks.contains { $0.status == .active || $0.status == .waiting }
+                if !busy && self.componentJobs.isEmpty {
+                    self.componentPoller = nil
+                    return
+                }
+                await self.pollComponentOnce()
+                try? await Task.sleep(nanoseconds: 400_000_000)
             }
         }
-
-        if let error {
-            handleTaskError(gid: gid, error: error)
-            return
-        }
-        guard let localURL else {
-            update(gid: gid) { $0.status = .error; $0.error = "本地文件缺失" }
-            AppLogger.error("下载完成但本地文件缺失", category: "DL", ["gid": gid])
-            return
-        }
-        finalizeDownload(gid: gid, stagedFile: localURL)
     }
 
-    /// 统一错误处理：可重试 → **指数退避**后重新排队；不可重试或重试耗尽 → error + 通知。
+    /// 拉一次增量事件 + 一次列表对账。
     ///
-    /// 两点改进（对应"提升下载稳定性"）：
-    /// 1. **指数退避**（1/2/4/8/16s）：固定 1s 在限流场景下等于持续敲门，会加重限流。
-    /// 2. **区分可否重试**：403/404/410 与"内容不是媒体/不是图片"再试也不会成功，
-    ///    直接终结（原先一律重试 5 次，纯属放大限流）。
+    /// 两个都要：事件用来画进度（增量日志），而"结束了没有"必须问 `dl.list`
+    /// ——外壳崩溃重连之后只有它是权威的（`docs/07-API-REFERENCE.md` §5）。
+    private func pollComponentOnce() async {
+        do {
+            let events = try await XSpiderComponent.shared.call("dl.events", ["since": .int(Int(componentCursor))])
+            componentCursor = UInt64(events[int: "seq"] ?? Int(componentCursor))
+            for event in events[array: "events"] ?? [] {
+                applyComponentEvent(event)
+            }
+
+            let list = try await XSpiderComponent.shared.call("dl.list")
+            for job in (list[array: "jobs"] ?? []).compactMap({ $0.asObject }) {
+                reconcile(job)
+            }
+        } catch {
+            // 传输抖动不该让整轮崩：下一轮再试（组件内部对单次请求已重试过）
+            AppLogger.debug("组件轮询失败（下一轮再试）", category: "DL", [
+                "error": error.localizedDescription,
+            ])
+        }
+    }
+
+    /// 单个事件的即时反应（进度、完成、失败）。
+    private func applyComponentEvent(_ event: JSONValue) {
+        guard let fields = event.asObject,
+              let jobId = fields[string: "job_id"],
+              tasks.contains(where: { $0.gid == jobId }) else { return }
+        switch fields[string: "kind"] {
+        case "progress":
+            let done = Int64(fields[int: "done"] ?? 0)
+            let total = Int64(fields[int: "total"] ?? 0)
+            update(gid: jobId) { task in
+                task.completeSize = max(task.completeSize, done)   // 单调不减
+                if total > 0 { task.totalSize = total }
+                if task.status != .active { task.status = .active }
+            }
+        case "completed":
+            let bytes = Int64(fields[int: "bytes"] ?? 0)
+            finalizeComponentDownload(gid: jobId, reportedBytes: bytes)
+        case "failed":
+            let reason = fields[string: "reason"] ?? "unknown"
+            let message = (fields[object: "error"])?[string: "message"] ?? reason
+            handleComponentFailure(gid: jobId, reason: reason,
+                                   status: fields[object: "error"]?[int: "status"], message: message)
+        case "skipped":
+            // 文件已经在且大小对：直接算完成（不重复下载）
+            update(gid: jobId) { $0.status = .complete }
+            componentJobs.remove(jobId)
+            pump()
+        default:
+            break
+        }
+    }
+
+    /// 用 `dl.list` 的权威状态对账（事件可能漏、也可能被我们中途接手）。
+    private func reconcile(_ job: [String: JSONValue]) {
+        guard let jobId = job[string: "job_id"], tasks.contains(where: { $0.gid == jobId }) else { return }
+        let state = job[string: "state"] ?? "unknown"
+        let done = Int64(job[int: "done"] ?? 0)
+        let total = Int64(job[int: "total"] ?? 0)
+        update(gid: jobId) { task in
+            task.completeSize = max(task.completeSize, done)
+            if total > 0 { task.totalSize = total }
+            switch state {
+            case "waiting":
+                // 组件自己在排队（并发额度），保持 active 的展示语义即可
+                if task.status != .active { task.status = .active }
+            case "active":
+                task.status = .active
+            case "paused":
+                task.status = .paused
+            case "complete":
+                task.status = .complete
+                task.error = nil
+            case "error":
+                if task.status != .error { task.status = .error }
+            default:
+                break
+            }
+        }
+        if state == "complete" || state == "error" {
+            componentJobs.remove(jobId)
+            // 组件报"完成"之后，应用自己再验一遍内容（见 finalizeComponentDownload 的说明）
+            if state == "complete", tasks.first(where: { $0.gid == jobId })?.status == .complete {
+                // finalizeComponentDownload 已处理过收尾；这里只兜底清账
+                if !finalized.contains(jobId) {
+                    finalizeComponentDownload(gid: jobId, reportedBytes: done)
+                }
+            }
+        }
+    }
+
+    /// 收尾：内容校验 → 记录 → 通知 → 让出并发槽位。
+    ///
+    /// **为什么应用还要自己验一遍**：组件回答的是"字节数与服务端声明一致"，
+    /// 而 CDN 出错时可能返回一个 HTML 错误页、字节数还可能是对的。
+    /// 所以"这是不是一张真的图/真的 mp4"留在应用侧判（`docs/06` §5.4 的分工）。
+    private func finalizeComponentDownload(gid: String, reportedBytes: Int64) {
+        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
+        let task = tasks[index]
+        finalized.insert(gid)
+        defer {
+            componentJobs.remove(gid)
+            pump()
+            refreshSleepAssertion()
+        }
+
+        let destPath = (task.dir as NSString).appendingPathComponent(task.fileName)
+        let expected = reportedBytes > 0 ? reportedBytes : task.totalSize
+        switch FileIntegrity.verify(path: destPath, expectedTotal: expected, type: task.media.type) {
+        case .failure(let reason):
+            AppLogger.warn("下载内容校验未通过,按失败处理", category: "DL", [
+                "file": task.fileName,
+                "reason": reason.errorDescription ?? "?",
+            ])
+            cleanupFailedArtifacts(task: task, path: destPath)
+            handleTaskError(gid: gid, error: reason)
+        case .success(let size):
+            update(gid: gid) {
+                $0.status = .complete
+                $0.completeSize = size
+                $0.totalSize = size
+                $0.error = nil
+            }
+            AppLogger.info("下载完成", category: "DL", [
+                "file": task.fileName, "size": "\(size)",
+                "user": task.post.user.screenName,
+                "engine": task.engine?.rawValue ?? settings.engine.rawValue,
+            ])
+            Self.completedFileNameCache[task.downloadUrl] = task.fileName
+            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime,
+                             dir: task.dir, fileName: task.fileName)
+            AccountStatusStore.shared.noteCDNSuccess()
+        }
+    }
+
+    /// 组件的结构化失败 → 应用的重试/状态机。
+    ///
+    /// **只按结构化字段判断**（`reason` / `error.code` / `error.status`），
+    /// 绝不匹配文案——那是契约里明令禁止的（旧实现曾按 aria2 的输出文案判断能否重试，
+    /// 引擎一换就全错）。
+    private func handleComponentFailure(gid: String, reason: String, status: Int?, message: String) {
+        componentJobs.remove(gid)
+        finalized.remove(gid)
+        let error = ComponentDownloadError(reason: reason, status: status, message: message)
+        reportComponentCDNOutcome(reason: reason, status: status)
+        handleTaskError(gid: gid, error: error)
+    }
+
+    /// 入队就失败（连不上组件 / 参数不对）：不重试，直接把话说清楚。
+    private func handleComponentLaunchFailure(gid: String, error: Error) {
+        componentJobs.remove(gid)
+        update(gid: gid) {
+            $0.status = .error
+            $0.error = error.localizedDescription
+        }
+        notify(title: "任务下载失败", body: "\(tasks.first(where: { $0.gid == gid })?.fileName ?? "")\n\(error.localizedDescription)")
+        pump()
+        refreshSleepAssertion()
+    }
+
+    /// 组件的 CDN 相关失败上报给状态行（只有 429 / 4xx 才写，避免把磁盘错误误报成 CDN 异常）。
+    private func reportComponentCDNOutcome(reason: String, status: Int?) {
+        if status == 429 || reason == "rate_limited" {
+            AccountStatusStore.shared.noteCDNRateLimited(retryAfter: nil)
+        } else if let status, [403, 404, 410, 451].contains(status) {
+            AccountStatusStore.shared.noteCDNFailure("HTTP \(status)")
+        }
+    }
+
+    /// 发一条不关心结果的组件调用（暂停/取消这类"尽力而为"的操作）。
+    private func componentCall(_ method: String, _ gid: String) {
+        Task { [weak self] in
+            do {
+                _ = try await XSpiderComponent.shared.call(method, ["job_id": .string(gid)])
+            } catch {
+                AppLogger.debug("组件调用 \(method) 失败", category: "DL", [
+                    "gid": gid, "error": error.localizedDescription,
+                ])
+                _ = self  // 保持闭包对 self 的弱引用语义
+            }
+        }
+    }
+
     private func handleTaskError(gid: String, error: Error) {
         guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
         let task = tasks[index]
         let retryable = isRetryable(error)
 
         // CDN 侧结果上报（被动）：驱动侧边栏第二行与并发降级
-        reportCDNOutcome(error)
+        reportComponentCDNOutcome(reason: (error as? ComponentDownloadError)?.reason ?? "unknown",
+                                  status: (error as? ComponentDownloadError)?.status)
 
         if retryable, task.retryCountRemains > 0 {
             let attempt = 5 - task.retryCountRemains          // 0,1,2,3,4
@@ -949,7 +1011,10 @@ final class DownloadStore {
         }
     }
 
-    /// 是否值得重试。资源不存在/无权限/内容根本不是媒体 → 重试无用且会放大限流。
+    /// 是否值得重试。**只看结构化字段**：`reason`（组件给的短标签）与 `status`（HTTP 码）。
+    ///
+    /// 这里正是"不许按文案判断"的发源地：旧实现按 aria2 的输出文案（`exit 3` / `404`）
+    /// 猜能不能重试，引擎一换就全错——现在 `reason` 是组件用**数字错误码**映射出来的。
     private func isRetryable(_ error: Error) -> Bool {
         if let failure = error as? FileIntegrity.Failure {
             switch failure {
@@ -957,124 +1022,33 @@ final class DownloadStore {
             case .missing, .empty, .truncated: return true  // 可能被限流/中断，值得重试
             }
         }
-        if let netError = error as? NetworkError, case .httpStatus(let code) = netError {
-            switch code {
-            case 403, 404, 410, 451: return false
-            case 429, 500, 502, 503, 504: return true
-            default: return code >= 500
+        if let componentError = error as? ComponentDownloadError {
+            if let status = componentError.status {
+                switch status {
+                case 403, 404, 410, 451: return false
+                case 429, 500, 502, 503, 504: return true
+                default: return status >= 500
+                }
             }
-        }
-        if let engineError = error as? EngineError, case .failed(let message) = engineError {
-            // aria2 把 HTTP 状态写进错误文案（exit 3 = 资源未找到，exit 13 = 文件已存在）
-            if message.contains("exit 3") || message.contains("exit 13") { return false }
-            if message.contains("404") || message.contains("403") { return false }
-            return true
+            switch componentError.reason {
+            case "not_found", "invalid", "integrity_failed", "disk_full", "permission_denied":
+                return false
+            default:
+                return true   // transport / upstream / cancelled 之外的都值得再试
+            }
         }
         return true
     }
 
-    /// 把下载失败按类型上报到状态（CDN 行）。只对 CDN 相关错误写 CDN 状态，
-    /// 避免把本地磁盘错误误报成"媒体服务器异常"。
-    private func reportCDNOutcome(_ error: Error) {
-        if let netError = error as? NetworkError, case .httpStatus(let code) = netError, code == 429 {
-            AccountStatusStore.shared.noteCDNRateLimited(retryAfter: nil)
-            return
-        }
-        let message = error.localizedDescription
-        if message.contains("429") {
-            AccountStatusStore.shared.noteCDNRateLimited(retryAfter: nil)
-        } else if message.contains("404") || message.contains("403") || message.contains("exit 3") {
-            AccountStatusStore.shared.noteCDNFailure(message)
-        }
-    }
-
-    /// 把暂存文件落盘到目标位置并更新状态（URLSession 与 aria2 共用）。
+    /// 清理某任务的失败残留：目标文件 + 组件留下的断点（`.part.http` / `.part.aria2next`）。
     ///
-    /// **完整性校验是唯一的成功判据**：实测 aria2 失败时会留下 0 字节文件，旧代码
-    /// 只看"文件存在"就判成功 → 坏文件被标记完成、写进下载记录、永不重试（成批损坏的根因）。
-    private func finalizeDownload(gid: String, stagedFile: URL) {
-        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else {
-            try? fm.removeItem(at: stagedFile)
-            return
-        }
-        let task = tasks[index]
-
-        // 移动到目标目录（aria2 已在目标位置；URLSession 的临时文件需立即搬运）
-        let destURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(task.fileName))
-        try? fm.createDirectory(atPath: task.dir, withIntermediateDirectories: true)
-        do {
-            if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
-            if stagedFile.standardizedFileURL.path == destURL.standardizedFileURL.path {
-                // aria2 直接写到目标位置
-            } else {
-                try fm.moveItem(at: stagedFile, to: destURL)
-            }
-        } catch {
-            // 临时文件即将被系统删除：move 失败时先拷贝兜底，仍失败才报错
-            do {
-                try? fm.removeItem(at: destURL)
-                try fm.copyItem(at: stagedFile, to: destURL)
-            } catch {
-                update(gid: gid) { $0.status = .error; $0.error = error.localizedDescription }
-                AppLogger.error("下载文件落盘失败", category: "DL", [
-                    "file": task.fileName, "error": error.localizedDescription,
-                ])
-                notify(title: "任务下载失败", body: "\(task.fileName)\n文件写入失败: \(error.localizedDescription)")
-                cleanupFailedArtifacts(task: task, path: destURL.path)
-                pump()
-                refreshSleepAssertion()
-                return
-            }
-        }
-
-        // 落盘完成 → 校验内容（0 字节 / 大小不符 / 错误页 / 非图片一律判失败并重试）
-        let expected = task.totalSize
-        switch FileIntegrity.verify(path: destURL.path, expectedTotal: expected, type: task.media.type) {
-        case .failure(let reason):
-            AppLogger.warn("下载内容校验未通过,按失败处理", category: "DL", [
-                "file": task.fileName,
-                "reason": reason.errorDescription ?? "?",
-                "bytes": "\(((try? fm.attributesOfItem(atPath: destURL.path)[.size]) as? Int64) ?? 0)",
-            ])
-            // 清掉坏文件与 .aria2 控制文件，避免下次 --continue 读到脏状态拼出损坏文件
-            cleanupFailedArtifacts(task: task, path: destURL.path)
-            handleTaskError(gid: gid, error: reason)
-            return
-        case .success(let size):
-            update(gid: gid) {
-                $0.status = .complete
-                $0.completeSize = size
-                $0.totalSize = size
-                $0.error = nil
-            }
-            AppLogger.info("下载完成", category: "DL", [
-                "file": task.fileName, "size": "\(size)", "user": task.post.user.screenName,
-                "engine": task.engine?.rawValue ?? SettingsStore.shared.settings.engine.rawValue,
-            ])
-            Self.completedFileNameCache[task.downloadUrl] = task.fileName
-            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime, dir: task.dir, fileName: task.fileName)
-            // CDN 恢复正常：清除限流标记，让并发恢复（若此前被降级）
-            AccountStatusStore.shared.noteCDNSuccess()
-            pump()
-            refreshSleepAssertion()
-        }
-    }
-
-    /// 清理某任务的失败残留：目标位置半成品 + aria2 控制文件 + 临时文件 + 旧 staging 位置。
-    /// 不清理的话，下次 --continue 会把 0 字节/半截文件当"已下载"续写，拼出损坏文件。
+    /// 不清理的话，下次续传会把半截文件当"已下载"接着写，拼出损坏文件——
+    /// 这是参考实现里验证过的一条（`docs/02` §E4）。
     private func cleanupFailedArtifacts(task: DownloadTask, path: String) {
-        let fm = FileManager.default
         try? fm.removeItem(atPath: path)
-        try? fm.removeItem(atPath: path + ".aria2")
-        // 目标目录内的引擎临时文件（统一命名后与 tmpFileName 一致）
-        let dir = task.dir
-        try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(tmpFileName(for: task)))
-        try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(tmpFileName(for: task) + ".aria2"))
-        // 兼容历史遗留命名（<gid>-<name>，早期版本用过）
-        let legacy = (dir as NSString).appendingPathComponent(legacyAria2FileName(for: task))
-        try? fm.removeItem(atPath: legacy)
-        try? fm.removeItem(atPath: legacy + ".aria2")
-        aria2StagingPaths.removeValue(forKey: task.gid)
+        for suffix in [".part.http", ".part.aria2next", ".part.http.aria2", ".part.aria2next.aria2"] {
+            try? fm.removeItem(atPath: path + suffix)
+        }
     }
 
     /// 等到所有任务离开 active/waiting(下载完成或失败)。
@@ -1097,57 +1071,14 @@ final class DownloadStore {
     }
 }
 
-// MARK: - URLSession 代理（进度 + 完成）
+/// 组件报回来的下载失败（**结构化**：reason 是短标签，status 是 HTTP 码）。
+///
+/// 单独包一层而不是直接把组件的 `ComponentError` 传来传去：下载侧要的是
+/// "重试不重试"这一个判断，而它只用得上 reason 与 status 两个字段。
+struct ComponentDownloadError: LocalizedError {
+    let reason: String
+    let status: Int?
+    let message: String
 
-final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let store: DownloadStore
-    let gid: String
-    /// 目标目录（稳定临时文件直接放这里,免二次拷贝）
-    let taskDir: String
-
-    init(store: DownloadStore, gid: String, dir: String) {
-        self.store = store
-        self.gid = gid
-        self.taskDir = dir
-        super.init()
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        Task { @MainActor in
-            self.store.update(gid: self.gid) {
-                $0.completeSize = totalBytesWritten
-                if totalBytesExpectedToWrite > 0 { $0.totalSize = totalBytesExpectedToWrite }
-            }
-        }
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // 关键：必须在回调返回前同步处理——回调返回后系统会删除 location 临时文件。
-        // 稳定位置直接放目标目录（.xspider-tmp- 前缀）：这一次拷贝是跨卷/跨目录的必经一步,
-        // 之后的 finalize 是同卷 rename,零拷贝。
-        let destDir = self.taskDir
-        let stableURL = URL(fileURLWithPath: (destDir as NSString)
-            .appendingPathComponent(".xspider-tmp-urlsession-\(UUID().uuidString)"))
-        do {
-            try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-            try? FileManager.default.removeItem(at: stableURL)
-            try FileManager.default.copyItem(at: location, to: stableURL)
-            Task { @MainActor in
-                self.store.handleDownloadCompleted(gid: self.gid, localURL: stableURL, response: downloadTask.response, error: nil)
-            }
-        } catch {
-            struct TempCopyError: LocalizedError { let errorDescription: String? }
-            let msg = TempCopyError(errorDescription: "临时文件拷贝失败: \(error.localizedDescription)")
-            Task { @MainActor in
-                self.store.handleDownloadCompleted(gid: self.gid, localURL: nil, response: downloadTask.response, error: msg)
-            }
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error else { return }
-        Task { @MainActor in
-            self.store.handleDownloadCompleted(gid: self.gid, localURL: nil, response: task.response, error: error)
-        }
-    }
+    var errorDescription: String? { message.isEmpty ? reason : message }
 }

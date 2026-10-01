@@ -53,6 +53,63 @@ final class ComponentLiveTests: XCTestCase {
         XCTAssertNotNil(user.mediaCount, "媒体数应当有值")
     }
 
+
+    /// **下载路径的真实链路**：应用建任务 → 组件搬字节 → 应用验内容与记录。
+    ///
+    /// 这条是下载迁移的验收：`DownloadStore.launch` 现在只做"算好目录与文件名 → `dl.enqueue`"，
+    /// 字节、断点、并发都由组件负责；应用仍然自己做内容校验（魔数/HTML 误页）与下载记录。
+    @MainActor
+    func testDownloadThroughTheStoreAndComponent() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        // 落到临时目录，别碰用户自己的下载文件夹
+        let outDir = NSTemporaryDirectory() + "xspider-live-\(UUID().uuidString)"
+        SettingsStore.shared.settings.download.saveDirBase = outDir
+        SettingsStore.shared.settings.download.sameFileSkip = false
+        defer { try? FileManager.default.removeItem(atPath: outDir) }
+
+        // 挑一个**小**媒体（省配额与时间）：优先图片
+        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, count: 10)
+        let pairs = page.posts.compactMap { post -> (TwitterPost, TwitterMedia)? in
+            guard let media = (post.medias ?? []).first else { return nil }
+            return (post, media)
+        }
+        let (post, media) = try XCTUnwrap(pairs.min { lhs, rhs in
+            (lhs.1.type == .photo ? 0 : 1, lhs.1.width ?? 0) < (rhs.1.type == .photo ? 0 : 1, rhs.1.width ?? 0)
+        }, "需要至少一条带媒体的推文")
+
+        let created = await DownloadStore.shared.createDownloadTask(post: post, media: media)
+        let task = try XCTUnwrap(created, "建任务失败（可能是重复判定）")
+        XCTAssertEqual(task.status, .waiting, "建完任务应当排队等组件")
+
+        DownloadStore.shared.start(task)
+
+        let deadline = Date().addingTimeInterval(120)
+        var finalTask = task
+        while Date() < deadline {
+            if let current = DownloadStore.shared.tasks.first(where: { $0.gid == task.gid }),
+               current.status == .complete || current.status == .error {
+                finalTask = current
+                break
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        XCTAssertEqual(finalTask.status, .complete,
+                       "下载没成功：\(finalTask.error ?? "无错误信息")")
+        let path = (finalTask.dir as NSString).appendingPathComponent(finalTask.fileName)
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? nil
+        XCTAssertNotNil(size, "文件没落盘：\(path)")
+        XCTAssertEqual(size, finalTask.completeSize, "落盘字节数要与任务状态一致")
+        XCTAssertGreaterThan(size ?? 0, 0, "0 字节不能算成功")
+    }
+
     /// 取一页媒体时间线：这条同时验证**分页形状**与**媒体映射**
     /// （`medias[].url` / `ext` / `kind` 能不能落进 `TwitterMedia`）。
     func testFetchUserMediasThroughTheAppPath() async throws {
