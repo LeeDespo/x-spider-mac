@@ -112,11 +112,22 @@ final class ComponentLiveTests: XCTestCase {
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
         await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
 
-        // 落到临时目录，别碰用户自己的下载文件夹
+        // 落到临时目录，别碰用户自己的下载文件夹。
+        //
+        // **必须先存后改、改完还原**：这些设置是持久化的（`settings.v2`），
+        // 直接改会把用户真实的下载目录与「跳过已下载」开关一起带歪——
+        // 我第一次跑这条测试就干了这事（用户真实目录是 ~/Pictures/photo，
+        // 被改成 /var/folders/…/xspider-live-<uuid>，而那目录随后被删了）。
+        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
+        let originalSkip = SettingsStore.shared.settings.download.sameFileSkip
         let outDir = NSTemporaryDirectory() + "xspider-live-\(UUID().uuidString)"
         SettingsStore.shared.settings.download.saveDirBase = outDir
         SettingsStore.shared.settings.download.sameFileSkip = false
-        defer { try? FileManager.default.removeItem(atPath: outDir) }
+        defer {
+            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
+            SettingsStore.shared.settings.download.sameFileSkip = originalSkip
+            try? FileManager.default.removeItem(atPath: outDir)
+        }
 
         // 挑一个**小**媒体（省配额与时间）：优先图片
         let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
