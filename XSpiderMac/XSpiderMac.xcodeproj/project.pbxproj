@@ -13,6 +13,7 @@
 		045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */; };
 		091318096325BDC05BC87AFE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9400B7A22AAE4F79E7F30449 /* SettingsView.swift */; };
 		0F47BB2443DF850442B690E6 /* CookieLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC62ED12CBAD140BBABD0F7A /* CookieLoginSheet.swift */; };
+		0FE2EDD65A49C7054520F1EA /* XSpiderMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E170CE15079348AEFB4C7F /* XSpiderMappingTests.swift */; };
 		11D8850DCA918D37D7CAA6A4 /* TranslatableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06EB16B79AA2B554F917225 /* TranslatableText.swift */; };
 		1575F841CA3A2D04BEF848CC /* NavigationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9610436F9C97839865629445 /* NavigationHistory.swift */; };
 		16A281D8046D175DFF5C9008 /* DownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65114E0D2408F2AD861228F0 /* DownloadStore.swift */; };
@@ -114,6 +115,7 @@
 /* Begin PBXFileReference section */
 		06ABBB28B693BF9F78A8B01C /* DetailOverlayCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailOverlayCenter.swift; sourceTree = "<group>"; };
 		07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacApp.swift; sourceTree = "<group>"; };
+		09E170CE15079348AEFB4C7F /* XSpiderMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMappingTests.swift; sourceTree = "<group>"; };
 		0AD4B7CDFCDBFCD97AAACBBE /* MediaViewerAndFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaViewerAndFilterTests.swift; sourceTree = "<group>"; };
 		0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAPI.swift; sourceTree = "<group>"; };
 		13AD8E0566B641889F9C73FB /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
@@ -394,6 +396,7 @@
 				A2499F196B8B22FC477F513B /* TranslationWhitelistTests.swift */,
 				644D8F09D2A505D1D1276D06 /* TweetDetailUserTests.swift */,
 				3D6131CF69D6CFCE40580DB2 /* XSpiderMacTests.swift */,
+				09E170CE15079348AEFB4C7F /* XSpiderMappingTests.swift */,
 			);
 			path = XSpiderMacTests;
 			sourceTree = "<group>";
@@ -524,6 +527,7 @@
 				7007CBDFC5152BBC34294CF1 /* TranslationWhitelistTests.swift in Sources */,
 				98BF145151F69EE572184F28 /* TweetDetailUserTests.swift in Sources */,
 				045047B4F912DAD5F8CFD1E8 /* XSpiderMacTests.swift in Sources */,
+				0FE2EDD65A49C7054520F1EA /* XSpiderMappingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

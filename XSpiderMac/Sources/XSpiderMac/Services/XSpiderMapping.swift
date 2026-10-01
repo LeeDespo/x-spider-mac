@@ -194,7 +194,12 @@ enum XSpiderMapping {
             return depth(of: parentId, seen: seen.union([id])) + 1
         }
         for id in order {
-            byId[id]?.depth = depth(of: id)
+            // RHS 必须先算进局部变量：直接写 `byId[id]?.depth = depth(of: id)` 时，
+            // 左侧持有对 `byId` 的**写访问**，而 `depth` 里又要读同一个字典——
+            // 嵌套函数捕获的本地 var 走同一个访问盒，运行时的独占性检查会直接
+            // fatalError（SIGABRT）。这不是理论问题：它让"打开带评论的推文"必崩。
+            let computed = depth(of: id)
+            byId[id]?.depth = computed
         }
         return (focal, order.compactMap { byId[$0] })
     }
