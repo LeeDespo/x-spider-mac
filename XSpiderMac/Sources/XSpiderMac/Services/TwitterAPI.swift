@@ -25,6 +25,13 @@ actor TwitterAPI {
     /// 凭据**只进不出**：组件不回显、不落盘、不打日志；这里也不打。
     func configure(cookie: String, proxy: ProxySettings) async {
         self.cookieString = cookie
+        // 取数虽然已经交给组件，但**还有两条路在用本机的 NetworkClient**：
+        // 关注态查询（v1.1 friendships/show）与账户信息探测（抓 x.com 首页）。
+        // 所以这里仍要重建它：只换引用不关连接池的话，旧连接会指向失效的代理路径，
+        // 在超时前一直挂着并持续占用请求闸门——表现是"代理恢复了但应用还卡着"，
+        // 而且会拖慢同一闸门下的其它请求（实测：一条后台重试把一次 4s 的请求拖到 31s）。
+        await client.invalidate()
+        self.client = NetworkClient(proxy: proxy)
         let settings = await MainActor.run { SettingsStore.shared.settings }
         do {
             _ = try await XSpiderComponent.shared.ensureStarted()
