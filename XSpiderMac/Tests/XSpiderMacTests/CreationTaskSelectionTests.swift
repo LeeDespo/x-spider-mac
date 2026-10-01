@@ -12,33 +12,46 @@ final class CreationTaskSelectionTests: XCTestCase {
                      type: type, videoInfo: nil, createdTime: nil)
     }
 
-    private func post(_ id: String, mediaIds: [String]) -> TwitterPost {
+    private func post(_ id: String, mediaIds: [String],
+                      createdAt: Date? = Date(), type: MediaType = .photo) -> TwitterPost {
         TwitterPost(id: id,
                     user: TwitterUser(screenName: "u", avatar: "", name: "U", id: "1",
                                       mediaCount: nil, registerTime: nil),
-                    createdAt: Date(), fullText: "t", tags: [], views: nil, lang: nil,
+                    createdAt: createdAt, fullText: "t", tags: [], views: nil, lang: nil,
                     retweeted: nil, retweetCount: nil, replyCount: nil,
                     possiblySensitive: nil, favorited: nil, favoriteCount: nil,
                     bookmarkCount: nil, bookmarked: nil,
-                    medias: mediaIds.map { media($0) })
+                    medias: mediaIds.map { media($0, type: type) })
     }
 
-    /// 复刻 `CreationTaskStore.runCreationTask` 里对单个媒体的取舍判断。
-    /// 与生产代码保持一致：先查排除集（跳过并计数），再查包含集（只留勾选的）。
+    /// 取舍判据：**直接调生产代码**（`CreationTaskStore.decide`）。
+    ///
+    /// 以前这里复刻了一份同样的逻辑——生产代码改了它照样绿，那种测试只证明
+    /// "我抄的那份是对的"。现在判据只有一份，改坏了这里就会红。
+    ///
+    /// 日期边界用"无限宽"：这组用例只验选择集；日期与去重有各自的用例（见文件末尾）。
     private func decide(post: TwitterPost, media: TwitterMedia, task: CreationTask)
         -> (enqueue: Bool, countedAsSkip: Bool) {
-        let key = MediaSelectionKey.make(post: post, media: media)
-        if task.excludedKeys.contains(key) { return (false, true) }
-        if !task.includedKeys.isEmpty {
-            return (task.includedKeys.contains(key), false)
-        }
-        return (true, false)
+        var seen = Set<String>()
+        return decide(post: post, media: media, task: task, seen: &seen)
     }
 
-    private func task(excluded: Set<String> = [], included: Set<String> = []) -> CreationTask {
+    private func decide(post: TwitterPost, media: TwitterMedia, task: CreationTask,
+                        seen: inout Set<String>, since: Date = .distantPast,
+                        until: Date = .distantFuture) -> (enqueue: Bool, countedAsSkip: Bool) {
+        switch CreationTaskStore.decide(post: post, media: media, task: task,
+                                        since: since, until: until, seenDownloadURLs: &seen) {
+        case .enqueue: return (true, false)
+        case .countedAsSkip: return (false, true)
+        case .ignored: return (false, false)
+        }
+    }
+
+    private func task(excluded: Set<String> = [], included: Set<String> = [],
+                      types: [MediaType] = [.photo, .video, .gif]) -> CreationTask {
         CreationTask(id: "t", user: TwitterUser(screenName: "u", avatar: "", name: "U",
                                                 id: "1", mediaCount: nil, registerTime: nil),
-                     filter: DownloadFilter(mediaTypes: [.photo, .video, .gif], source: .medias),
+                     filter: DownloadFilter(mediaTypes: types, source: .medias),
                      excludedKeys: excluded, includedKeys: included)
     }
 
@@ -122,5 +135,95 @@ final class CreationTaskSelectionTests: XCTestCase {
 
         // 清理（避免影响其他测试）
         for t in store.creationTasks { store.removeCreationTask(t.id) }
+    }
+
+    // MARK: - 日期边界（本地日历，精确的一层由外壳做）
+
+    /// `since`/`until` 是**本地日历**边界；组件的粗筛按 UTC 天、比它宽一天，
+    /// 所以精确判定必须留在这里——否则 UTC+8 下开始日的最初 8 小时会被丢掉。
+    func testDateBoundaryIsDecidedLocally() {
+        let since = Date(timeIntervalSince1970: 1_700_000_000)
+        let until = since.addingTimeInterval(3600)
+        let t = task()
+        var seen = Set<String>()
+
+        let inside = post("100", mediaIds: ["m1"], createdAt: since.addingTimeInterval(60))
+        XCTAssertTrue(decide(post: inside, media: inside.medias![0], task: t,
+                             seen: &seen, since: since, until: until).enqueue)
+
+        let tooOld = post("200", mediaIds: ["m2"], createdAt: since.addingTimeInterval(-1))
+        let r = decide(post: tooOld, media: tooOld.medias![0], task: t,
+                       seen: &seen, since: since, until: until)
+        XCTAssertFalse(r.enqueue)
+        XCTAssertTrue(r.countedAsSkip, "日期以外的媒体要计入跳过数（用户看得到）")
+
+        let tooNew = post("300", mediaIds: ["m3"], createdAt: until.addingTimeInterval(1))
+        XCTAssertFalse(decide(post: tooNew, media: tooNew.medias![0], task: t,
+                              seen: &seen, since: since, until: until).enqueue)
+    }
+
+    /// **没有 `created_at` 的条目放行**（docs/02 §D4：不能因为解析不到时间就丢内容）。
+    func testPostWithoutCreatedAtIsKept() {
+        let p = post("100", mediaIds: ["m1"], createdAt: nil)
+        var seen = Set<String>()
+        XCTAssertTrue(decide(post: p, media: p.medias![0], task: task(), seen: &seen,
+                             since: .distantFuture, until: .distantFuture).enqueue,
+                      "时间缺失不该被当成「不符合日期范围」")
+    }
+
+    // MARK: - 媒体类型与去重
+
+    /// 类型不符的媒体**不入队、也不计入跳过数**（它在旧的 `where` 里就被滤掉了）。
+    func testMediaTypeMismatchIsIgnoredNotCounted() {
+        let photo = post("100", mediaIds: ["m1"], type: .photo)
+        let t = task(types: [.video])
+        var seen = Set<String>()
+        let r = decide(post: photo, media: photo.medias![0], task: t, seen: &seen)
+        XCTAssertFalse(r.enqueue)
+        XCTAssertFalse(r.countedAsSkip, "类型不符不是「跳过」，不该进跳过计数")
+    }
+
+    /// 同一次任务内同一个 URL 只入队一次（块的边界可能让同一媒体再次出现）。
+    func testSameURLIsEnqueuedOnlyOncePerTask() {
+        let p = post("100", mediaIds: ["m1", "m2"])
+        // 两个媒体指向同一个 URL → 第二个要静默跳过
+        let same = TwitterMedia(id: "m2", url: p.medias![0].url, width: 10, height: 10,
+                                type: .photo, videoInfo: nil, createdTime: nil)
+        var seen = Set<String>()
+        XCTAssertTrue(decide(post: p, media: p.medias![0], task: task(), seen: &seen).enqueue)
+        let second = decide(post: p, media: same, task: task(), seen: &seen)
+        XCTAssertFalse(second.enqueue)
+        XCTAssertFalse(second.countedAsSkip, "重复不是「跳过」")
+    }
+
+    // MARK: - 爬取策略
+
+    /// 策略把日期**各放宽一天**交给组件（组件按 UTC 天比较），
+    /// 精确边界由外壳按候选的 `created_at` 再判一次。
+    func testCrawlStrategyWidensTheDateWindowByOneDay() {
+        let calendar = Calendar.current
+        let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 12))!
+        let end = calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12))!
+        let filter = DownloadFilter(dateRange: .init(start: start, end: end),
+                                    mediaTypes: [.photo, .video], source: .medias)
+
+        let strategy = CreationTaskStore.crawlStrategy(for: filter)
+        XCTAssertEqual(strategy[string: "since"], "2026-09-09", "开始日放宽一天")
+        XCTAssertEqual(strategy[string: "until"], "2026-09-21", "结束日放宽一天（end 是当天零点）")
+
+        let limits = strategy[object: "limits"]
+        XCTAssertEqual(limits?[int: "max_pages"], CreationTaskStore.crawlChunkPages,
+                       "分块大小要传下去，否则一次调用会跑到底（进度看不见、取消不响应）")
+        XCTAssertEqual(limits?[int: "empty_page_limit"], CreationTaskStore.maxConsecutiveEmptyPages)
+        XCTAssertEqual(strategy[array: "media_types"]?.compactMap(\.asString),
+                       ["photo", "video"], "媒体类型作为粗筛透传")
+    }
+
+    /// 没有日期范围时不传 since/until（无限宽），否则会把全部内容挡掉。
+    func testCrawlStrategyOmitsDatesWhenNoRange() {
+        let strategy = CreationTaskStore.crawlStrategy(
+            for: DownloadFilter(mediaTypes: [.photo], source: .medias))
+        XCTAssertNil(strategy[string: "since"])
+        XCTAssertNil(strategy[string: "until"])
     }
 }

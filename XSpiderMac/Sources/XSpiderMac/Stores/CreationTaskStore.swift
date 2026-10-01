@@ -1,6 +1,10 @@
 import Foundation
 
 /// 上游 stores/download.ts 的 CreationTask 调度器：串行执行、可取消、日期过滤、sameFileSkip、跳过计数。
+///
+/// **爬取本身交给组件**（`crawl.run`）：翻页、游标推进、终止判据族（到底 / 时间轴推进 /
+/// 连续空页 / 游标未推进）都只有一份实现。外壳保留的是**产品语义**那一层——
+/// 勾选与排除、精确的本地日历边界、同一次任务内不重复、进度与挂起。
 @MainActor
 @Observable
 final class CreationTaskStore {
@@ -18,7 +22,16 @@ final class CreationTaskStore {
     /// 客户端日期过滤会让窄范围的用户连续翻很多空页；不设上限会一直翻到
     /// 服务端尽头，正是 AGENTS.md 大坑 3 说的 429 风暴。
     /// 取 5：足够跳过零星的活动稀疏页，又不至于空转太久。
-    static let maxConsecutiveEmptyPages = 5
+    /// **这条判据现在由组件执行**（`strategy.limits.empty_page_limit`），这里只留取值。
+    nonisolated static let maxConsecutiveEmptyPages = 5
+
+    /// 一次性交给组件的爬取**最多翻几页**。
+    ///
+    /// `crawl.run` 是"跑到停为止再返回"，而外壳要边跑边报进度、要能在限流时挂起、
+    /// 还要能被取消。切成小块之后，每块之间外壳才有机会做这些事；块内部照旧由组件
+    /// 做页间节流。代价是每块末尾可能多翻 ≤ (crawlChunkPages-1) 页（块的边界对不上
+    /// 用户要的内容），可接受。
+    nonisolated static let crawlChunkPages = 3
 
     func createCreationTask(user: TwitterUser, filter: DownloadFilter,
                             selection: MediaSelection = MediaSelection()) {
@@ -90,40 +103,34 @@ final class CreationTaskStore {
         scheduleNext()
     }
 
-    /// 上游 runCreationTask（src/stores/download.ts）的忠实复刻：
-    ///   while (nextCursor !== null && now.isAfter(since)) {
-    ///     fetch(nextCursor); nextCursor = cursor; now = last?.createdAt || now;
-    ///     日期过滤 → 媒体类型过滤 → sameFileSkip → batchCreateDownloadTask
-    ///   }
-    /// 两个要害（上游原文即如此，此前移植走样导致重复检索与请求风暴）：
-    ///   1. cursor 推进紧跟 fetch 之后，**早于**任何过滤与 continue；
-    ///   2. 终止靠 now 递减穿过 since，不靠页数上限。
+    // MARK: - 爬取循环
+
+    /// 一次创建任务：**分块**跑 `crawl.run`，把候选变成下载任务。
+    ///
+    /// 与旧实现（自己翻页）相比，终止判据不再在这里：
+    /// 组件给 `done_reason`，这里只区分"本块跑满（`page_limit_reached`）→ 用 next_cursor 接着跑"
+    /// 与"这一轮结束了"。
     private func runCreationTask(_ task: CreationTask) async {
         let filter = task.filter
         let userId = task.user.id
 
         var completeCount = 0
         var skipCount = 0
-        // 上游: let now = dayjs() —— 首页之前取当前时间
-        var now = Date()
-        let since = filter.dateRange?.start ?? Date(timeIntervalSince1970: 0)
-        // 用 inclusiveEnd：「至」当天要整天含在内（DatePicker 的 end 是零点），
-        // 与展示路径（applyDisplayFilter）保持同一边界语义
-        let until = filter.dateRange?.inclusiveEnd ?? now
-
-        // 上游: let nextCursor = undefined（首轮跑，服务端返回 null 即到底）。
-        // Swift 无 undefined，用 hasFetched 区分"尚未请求"与"服务端已给 null"。
-        var nextCursor: String? = nil
-        var hasFetched = false
-        var guardAgainstRepeatedCursor: String?
-
-        // include 态（用户只勾了几个）：勾选的项都收齐了就收工，不必翻到服务端尽头。
-        // 这是"选择下载"相对旧「下载全部」的实质好处——只为自己要的东西付费翻页。
+        // include 态（用户只勾了几个）：勾选的都收齐就收工，不必翻到服务端尽头。
         var remainingIncluded = task.includedKeys
-        // 客户端日期过滤导致某页"过滤后为空"时，连续多少页没命中就停（防 429 风暴）
-        var consecutiveEmptyPages = 0
 
-        while !hasFetched || (nextCursor != nil && now > since) {
+        // **精确**的日期边界（本地日历），与展示路径 `applyDisplayFilter` 同源。
+        // 组件那侧的 `since/until` 是**粗筛**（按 UTC 天比较，故意各放宽一天），
+        // 精确的这一层由 `decide` 按候选自带的 `created_at` 做——见 `crawlStrategy(for:)`。
+        let since = filter.dateRange?.start ?? Date(timeIntervalSince1970: 0)
+        let until = filter.dateRange?.inclusiveEnd ?? Date()
+
+        let strategy = Self.crawlStrategy(for: filter)
+        var cursor: String? = nil
+        // 同一次任务内不重复入队（块的边界可能让同一媒体再次出现）
+        var seenDownloadURLs = Set<String>()
+
+        while true {
             if Task.isCancelled { return }
 
             // 限流自适应：X API 处于限流/离线/登录失效时**挂起**而不是失败退出——
@@ -131,121 +138,10 @@ final class CreationTaskStore {
             await waitWhileThrottled(userId: userId)
             if Task.isCancelled { return }
 
+            let result: [String: JSONValue]
             do {
-                let posts: [TwitterPost]
-                let newCursor: String?
-                if filter.source == .medias {
-                    let r = try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: nextCursor)
-                    posts = r.posts
-                    newCursor = r.cursor
-                } else {
-                    let r = try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: nextCursor)
-                    posts = r.posts
-                    newCursor = r.cursor
-                }
-                if Task.isCancelled { return }
-
-                // 上游: nextCursor = cursor; now = R.last(twitterPosts)?.createdAt || now
-                // —— 紧跟 fetch，早于过滤（放循环尾会让被过滤清空的页重抓同一页）
-                nextCursor = newCursor
-                hasFetched = true
-                if let lastCreated = posts.last?.createdAt { now = lastCreated }
-
-                // X 偶发回吐与上一页相同的 cursor（限流/游标失效）。此时后续页必然重复，
-                // 上游会原地空转并刷爆配额；判为到底退出。不设页数上限，正常翻页不受影响。
-                if let sent = guardAgainstRepeatedCursor, let got = newCursor, sent == got {
-                    AppLogger.warn("游标未推进,判定到底停止爬取", category: "DL", [
-                        "userId": userId,
-                    ])
-                    break
-                }
-                guardAgainstRepeatedCursor = nextCursor
-
-                // 上游日期过滤：until 前 + since 后；无 createdAt 放行
-                let filteredPosts = posts.filter { post in
-                    guard let createdAt = post.createdAt else { return true }
-                    return createdAt <= until && createdAt >= since
-                }
-
-                // 上游: skipCount += getMediaCounts(twitterPosts) - getMediaCounts(filteredPosts)
-                let totalMediaCount = posts.reduce(0) { $0 + ($1.medias?.count ?? 0) }
-                let filteredMediaCount = filteredPosts.reduce(0) { $0 + ($1.medias?.count ?? 0) }
-                skipCount += totalMediaCount - filteredMediaCount
-
-                // 上游: 无符合日期条件的推文 → 记录进度后 continue（cursor 已推进）
-                if filteredPosts.isEmpty {
-                    // 客户端日期过滤会让某页整体落空：这里计数并在连续多页落空时停止，
-                    // 否则窄范围下会一直翻到服务端尽头（429 风暴，见 AGENTS.md 大坑 3）
-                    consecutiveEmptyPages += 1
-                    if consecutiveEmptyPages >= Self.maxConsecutiveEmptyPages {
-                        AppLogger.info("连续多页无符合日期内容,停止爬取", category: "DL", [
-                            "userId": userId, "pages": "\(consecutiveEmptyPages)",
-                        ])
-                        break
-                    }
-                    updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                    try await Self.pageThrottle()
-                    continue
-                }
-                consecutiveEmptyPages = 0
-
-                // 上游: 逐帖筛媒体类型 → prepareDownloadTask → sameFileSkip 存在性检查
-                var paramsList: [(post: TwitterPost, media: TwitterMedia)] = []
-                var seenDownloadURLs = Set<String>()
-                for post in filteredPosts {
-                    let medias = post.medias ?? []
-                    for media in medias where (filter.mediaTypes?.contains(media.type) ?? false) {
-                        // 同一次爬取内不重复入队（会话模块可能与主条目重复）
-                        if let url = downloadURL(for: media), !seenDownloadURLs.insert(url).inserted { continue }
-                        let key = MediaSelectionKey.make(post: post, media: media)
-                        // 全选态下用户取消的项：跳过（「全选后取消几个」的要求）
-                        if task.excludedKeys.contains(key) {
-                            skipCount += 1
-                            continue
-                        }
-                        // include 态（用户只勾了几个）：只处理勾选的，
-                        // 同时收窄爬取终点——勾选的项都拿到了就没必要继续翻页
-                        if !task.includedKeys.isEmpty {
-                            guard task.includedKeys.contains(key) else { continue }
-                            remainingIncluded.remove(key)
-                        }
-                        paramsList.append((post, media))
-                    }
-                }
-
-                // include 态：勾选的项全部到手 → 收工（不必翻到底）
-                if !task.includedKeys.isEmpty, remainingIncluded.isEmpty {
-                    // 本页仍要把已收齐的这批交出去，再退出循环
-                    if !paramsList.isEmpty {
-                        let beforeCount = DownloadStore.shared.tasks.count
-                        await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
-                        let addedCount = DownloadStore.shared.tasks.count - beforeCount
-                        completeCount += addedCount
-                        skipCount += paramsList.count - addedCount
-                        updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                    }
-                    AppLogger.info("所选媒体已全部找到,提前结束爬取", category: "DL", ["userId": userId])
-                    break
-                }
-
-                // 上游: 无待下载媒体 → 记录进度后 continue（cursor 已推进）
-                if paramsList.isEmpty {
-                    updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-                    try await Self.pageThrottle()
-                    continue
-                }
-
-                // 上游: await batchCreateDownloadTask(paramsList); completeCount += paramsList.length
-                // sameFileSkip 由 DownloadStore.createDownloadTask 内部按设置判定并计数跳过
-                let beforeCount = DownloadStore.shared.tasks.count
-                await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
-                let addedCount = DownloadStore.shared.tasks.count - beforeCount
-                completeCount += addedCount
-                skipCount += paramsList.count - addedCount
-
-                updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
-
-                try await Self.pageThrottle()
+                result = try await TwitterAPI.shared.crawlPage(
+                    source: filter.source, userId: userId, cursor: cursor, strategy: strategy)
             } catch is CancellationError {
                 AppLogger.info("创建任务已取消", category: "DL", ["userId": userId])
                 return
@@ -255,6 +151,59 @@ final class CreationTaskStore {
                 ])
                 break
             }
+            if Task.isCancelled { return }
+
+            // 候选只说"哪条推文的哪个媒体"（有损）；命名与记账要**完整推文**
+            // （契约 1.5.0 的 `posts`，与 candidates 是同一批数据的两个视角）。
+            let postsById = Self.postsById(result)
+
+            var paramsList: [(post: TwitterPost, media: TwitterMedia)] = []
+            for candidate in (result[array: "candidates"] ?? []).compactMap({ $0.asObject }) {
+                guard let postId = candidate[string: "post_id"],
+                      let mediaId = candidate[string: "media_id"],
+                      let post = postsById[postId],
+                      let media = post.medias?.first(where: { $0.id == mediaId }) else { continue }
+                switch Self.decide(post: post, media: media, task: task,
+                                   since: since, until: until,
+                                   seenDownloadURLs: &seenDownloadURLs) {
+                case .enqueue:
+                    paramsList.append((post, media))
+                    if !task.includedKeys.isEmpty {
+                        remainingIncluded.remove(MediaSelectionKey.make(post: post, media: media))
+                    }
+                case .countedAsSkip:
+                    skipCount += 1
+                case .ignored:
+                    break
+                }
+            }
+
+            if !paramsList.isEmpty {
+                // sameFileSkip 由 `createDownloadTask` 内部按设置判定并拒绝；
+                // 这里用任务数的差额补 `skipCount`（与旧实现同一算法）。
+                let beforeCount = DownloadStore.shared.tasks.count
+                await DownloadStore.shared.batchCreateDownloadTasks(paramsList)
+                let addedCount = DownloadStore.shared.tasks.count - beforeCount
+                completeCount += addedCount
+                skipCount += paramsList.count - addedCount
+            }
+            updateCreationTaskProgress(id: task.id, completeCount: completeCount, skipCount: skipCount)
+
+            // include 态：勾选的项全部到手 → 收工（不必翻到底）。
+            //
+            // **刻意不用契约的 `wanted_keys`**：那边的 key 是媒体 id，而外壳的键是
+            // `postId/mediaId`，两套键对不上时它**静默不生效**（不报错，只是多翻页）——
+            // "以为它在起作用"比"晚一点停"更危险。外壳自己判断更直接。
+            if !task.includedKeys.isEmpty, remainingIncluded.isEmpty {
+                AppLogger.info("所选媒体已全部找到,提前结束爬取", category: "DL", ["userId": userId])
+                break
+            }
+
+            // 本块跑满就接着跑，其它 `done_reason`（到底 / 时间轴推进 / 连续空页 /
+            // 游标未推进 / 收齐 / 取消 / 出错）都表示这一轮结束了。
+            guard result[string: "done_reason"] == "page_limit_reached",
+                  let next = result[string: "next_cursor"] else { break }
+            cursor = next
         }
 
         AppLogger.info("创建任务爬取结束", category: "DL", [
@@ -264,20 +213,88 @@ final class CreationTaskStore {
         ])
     }
 
-    /// 页间节流。上游靠浏览器渲染节奏自然限速，Swift 循环无此节流，显式等价（防 429）。
-    ///
-    /// 节奏随状态自适应：正常 500ms；处于限流/异常（且未被 TTL 放行）时放缓到 1.5s。
-    private static func pageThrottle() async throws {
-        let caution = await MainActor.run {
-            AccountStatusStore.shared.shouldSuspendNewWork
+    /// `crawl.run` 的 `posts[]` → `[id: TwitterPost]`（候选按 `post_id` 回连它）。
+    private static func postsById(_ result: [String: JSONValue]) -> [String: TwitterPost] {
+        var out: [String: TwitterPost] = [:]
+        for json in (result[array: "posts"] ?? []).compactMap({ $0.asObject }) {
+            if let post = XSpiderMapping.post(json) { out[post.id] = post }
         }
-        let nanos: UInt64 = caution ? 1_500_000_000 : 500_000_000
-        do {
-            try await Task.sleep(nanoseconds: nanos)
-        } catch {
-            throw CancellationError()
-        }
+        return out
     }
+
+    // MARK: - 策略与取舍（纯函数，测试直接调）
+
+    /// `crawl.run` 的策略参数。
+    ///
+    /// 日期**故意各放宽一天**：组件按 **UTC 天**比较（`docs/02` §D3），而用户选的是
+    /// **本地日历**——在 UTC+8 下，开始日的最初 8 小时会被它当成前一天丢掉。
+    /// 放宽之后组件只是"省请求的粗筛"，精确边界由 `decide` 再做一次。
+    /// （时区偏移最大 ±14 小时 < 24 小时，所以 ±1 天足够覆盖。）
+    nonisolated static func crawlStrategy(for filter: DownloadFilter) -> [String: JSONValue] {
+        var strategy: [String: JSONValue] = [
+            "limits": .object([
+                "page_size": .int(20),                 // 与旧循环用的端点默认值一致
+                "page_throttle_ms": .int(500),         // 与旧循环的页间节流一致
+                "max_pages": .int(Self.crawlChunkPages),
+                "empty_page_limit": .int(Self.maxConsecutiveEmptyPages),
+            ]),
+        ]
+        if let range = filter.dateRange {
+            let widenedStart = Calendar.current.date(byAdding: .day, value: -1, to: range.start)
+                ?? range.start
+            strategy["since"] = .string(TwitterAPI.searchDateString(widenedStart))
+            strategy["until"] = .string(TwitterAPI.searchDateString(TwitterAPI.nextDay(range.end)))
+        }
+        if let types = filter.mediaTypes {
+            strategy["media_types"] = .array(types.map { .string($0.rawValue) })
+        }
+        return strategy
+    }
+
+    /// 一条候选的取舍。
+    enum CandidateDecision: Equatable {
+        /// 建下载任务
+        case enqueue
+        /// 跳过并计入 `skipCount`（日期不符 / 用户在排除集里）
+        case countedAsSkip
+        /// 静默跳过（include 态下没勾选 / 同一次任务里已经见过）
+        case ignored
+    }
+
+    /// 候选 → 要不要建下载任务。
+    ///
+    /// **组件已经做过粗筛**，这里做的是组件**不该知道**的那一层：
+    /// - **精确的本地日历边界**：组件的日期按 UTC 天比较，比本地日历宽一天；
+    /// - **媒体类型逐条判**：组件是按"这条推文里有符合的类型"来保留推文的，
+    ///   被保留的推文里其它类型的媒体也会出现在候选里；
+    /// - **勾选 / 排除集**：产品语义，刻意不进契约（外壳在候选上过滤，零额外请求）；
+    /// - **同一次任务内不重复**：块的边界可能让同一媒体再次出现。
+    ///
+    /// 抽成纯函数是为了让测试**调生产代码**——旧测试里复刻了一份同样的判据，
+    /// 生产代码改了它不会红（"断言写错比代码写错更贵"）。
+    nonisolated static func decide(post: TwitterPost, media: TwitterMedia, task: CreationTask,
+                                   since: Date, until: Date,
+                                   seenDownloadURLs: inout Set<String>) -> CandidateDecision {
+        // 没有下载地址、或本次任务里已经见过 → 静默跳过（不计入跳过数）
+        guard let url = downloadURL(for: media), seenDownloadURLs.insert(url).inserted else {
+            return .ignored
+        }
+        // 日期：本地日历边界；**没有 createdAt 的放行**（不能因为解析不到时间就丢内容）
+        if let createdAt = post.createdAt, createdAt < since || createdAt > until {
+            return .countedAsSkip
+        }
+        // 媒体类型：`nil` = 一个类型都不选。UI 始终给全三型；这层语义保持与原实现一致。
+        guard task.filter.mediaTypes?.contains(media.type) ?? false else { return .ignored }
+
+        let key = MediaSelectionKey.make(post: post, media: media)
+        // 全选态下用户取消的项（「全选后取消几个」）
+        if task.excludedKeys.contains(key) { return .countedAsSkip }
+        // include 态：只处理勾选的
+        if !task.includedKeys.isEmpty, !task.includedKeys.contains(key) { return .ignored }
+        return .enqueue
+    }
+
+    // MARK: - 限流挂起
 
     /// 限流期间挂起：等状态恢复或熔断冷却结束再继续（cursor 不变，进度保留）。
     ///

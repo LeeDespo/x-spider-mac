@@ -181,6 +181,76 @@ final class ComponentLiveTests: XCTestCase {
         XCTAssertNotEqual(playable.absoluteString, poster, "封面与播放地址不该是同一个")
     }
 
+    /// **真正跑一遍创建任务循环**（`CreationTaskStore.runCreationTask`）。
+    ///
+    /// 这条循环整段是新写的（翻页交给 `crawl.run`，外壳只做"分块 + 选择集 + 进度"），
+    /// 别的地方测不到它：离线进不了网，而 `crawlPage` 那条只验了两个前提假设。
+    ///
+    /// 两个关键手法：
+    /// - **窗口取一条真实推文的日期**（先取一页拿到 `createdAt`），这样那一天必然有内容，
+    ///   于是这条路能真的走完"候选 → 回连完整推文 → 建下载任务"；
+    /// - 落盘目录换成临时目录、跑完删掉，同一个测试里的媒体顺手取消掉——
+    ///   不碰用户真实的下载目录与「跳过已下载」开关（先存后改、改完还原）。
+    @MainActor
+    func testCreationTaskLoopRunsEndToEnd() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
+        let originalSkip = SettingsStore.shared.settings.download.sameFileSkip
+        let outDir = NSTemporaryDirectory() + "xspider-live-crawl-\(UUID().uuidString)"
+        SettingsStore.shared.settings.download.saveDirBase = outDir
+        SettingsStore.shared.settings.download.sameFileSkip = false
+        defer {
+            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
+            SettingsStore.shared.settings.download.sameFileSkip = originalSkip
+            try? FileManager.default.removeItem(atPath: outDir)
+        }
+
+        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        // 拿一条真实推文的日期当窗口 → 这一天必定有内容，循环不会空转
+        let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, count: 10)
+        let reference = try XCTUnwrap(page.posts.compactMap(\.createdAt).max(),
+                                      "需要一条带时间的推文来确定窗口")
+        let day = Calendar.current.startOfDay(for: reference)
+        let filter = DownloadFilter(dateRange: .init(start: day, end: day),
+                                    mediaTypes: [.photo, .video, .gif],
+                                    source: .medias)
+
+        // 临时目录里已经有的任务先清掉，好让"这次新建了哪些"可判定
+        let before = Set(DownloadStore.shared.tasks.map(\.gid))
+
+        let store = CreationTaskStore()
+        store.createCreationTask(user: user, filter: filter)
+        let task = try XCTUnwrap(store.creationTasks.first, "任务没入队")
+
+        // 循环在串行调度器里跑，等它把任务从队列里摘掉
+        let deadline = Date().addingTimeInterval(180)
+        while Date() < deadline, store.creationTasks.contains(where: { $0.id == task.id }) {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        XCTAssertFalse(store.creationTasks.contains(where: { $0.id == task.id }),
+                       "创建任务应当在超时前结束（循环卡住就是这条红）")
+
+        // **候选真的变成了下载任务**：这正是"候选（有损）→ posts（完整）→ 建任务"那条链路
+        let created = DownloadStore.shared.tasks.filter { !before.contains($0.gid) }
+        XCTAssertFalse(created.isEmpty,
+                       "这一天有媒体，循环应当至少建出一个下载任务（窗口=\(day)）")
+        for download in created {
+            XCTAssertTrue(download.dir.hasPrefix(outDir),
+                          "任务落盘目录应当是我们给的临时目录，实际：\(download.dir)")
+            AppLogger.info("live 创建任务产出", category: "DL", [
+                "file": download.fileName, "type": download.media.type.rawValue,
+            ])
+        }
+
+        // 收尾：把这些任务取消掉（清临时文件），不留半成品
+        for download in created { DownloadStore.shared.remove(download.gid, alsoDeleteFiles: true) }
+    }
+
     /// **下载路径的真实链路**：应用建任务 → 组件搬字节 → 应用验内容与记录。
     ///
     /// 这条是下载迁移的验收：`DownloadStore.launch` 现在只做"算好目录与文件名 → `dl.enqueue`"，
@@ -246,6 +316,72 @@ final class ComponentLiveTests: XCTestCase {
         XCTAssertNotNil(size, "文件没落盘：\(path)")
         XCTAssertEqual(size, finalTask.completeSize, "落盘字节数要与任务状态一致")
         XCTAssertGreaterThan(size ?? 0, 0, "0 字节不能算成功")
+    }
+
+    /// 新的创建任务爬取路径：`crawl.run` **分块**跑，候选要能回连到完整推文。
+    ///
+    /// 离线测不了这条循环（要真网络），而它整段是新写的，所以这里验两个**假设**：
+    /// 1. 候选能凭 `post_id`/`media_id` 在 `posts` 里找到完整推文（否则命名与记账拿不到正文）；
+    /// 2. `max_pages` 生效——本块跑满时 `done_reason == page_limit_reached` 且给了 `next_cursor`，
+    ///    拿它续跑能拿到**不同的**内容（说明真在翻页，不是原地打转）。
+    ///
+    /// **不建下载任务**：那会往用户的下载目录写真实文件，live 测试不该有那种副作用。
+    func testCrawlPagesJoinBackToFullPosts() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        // 用 tesla（fixture 与 canary 都用它，媒体量稳定）
+        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        // 只跑一页一块：这条测的是"分块与回连"，不是爬多少内容
+        let strategy: [String: JSONValue] = [
+            "limits": .object(["page_size": .int(20), "page_throttle_ms": .int(200),
+                               "max_pages": .int(1)]),
+        ]
+
+        let first = try await TwitterAPI.shared.crawlPage(
+            source: .medias, userId: user.id, cursor: nil, strategy: strategy)
+        let candidates = (first[array: "candidates"] ?? []).compactMap { $0.asObject }
+        let posts = (first[array: "posts"] ?? []).compactMap { $0.asObject }
+        XCTAssertFalse(candidates.isEmpty, "这一页应当有媒体候选")
+
+        // ① 候选 → 完整推文 → 那个媒体：这正是 runCreationTask 里做的连接
+        var postsById: [String: TwitterPost] = [:]
+        var postsWithText = 0
+        for json in posts {
+            let post = try XCTUnwrap(XSpiderMapping.post(json), "posts 里的推文必须能解析")
+            postsById[post.id] = post
+            // `fullText` 是契约的必填字段：**键必须在**。
+            // 但不能要求它非空——纯媒体、无文字的推文，`full_text` 本来就是 ""。
+            XCTAssertNotNil(post.fullText, "正文这个键必须在（候选里完全没有）")
+            if !(post.fullText ?? "").isEmpty { postsWithText += 1 }
+        }
+        XCTAssertGreaterThan(postsWithText, 0,
+                             "这一页至少要有一条带文字的推文，否则说明 posts 根本没带出正文")
+        for candidate in candidates {
+            let postId = try XCTUnwrap(candidate[string: "post_id"])
+            let mediaId = try XCTUnwrap(candidate[string: "media_id"])
+            let post = try XCTUnwrap(postsById[postId], "候选的推文必须在 posts 里：\(postId)")
+            let media = try XCTUnwrap(post.medias?.first { $0.id == mediaId },
+                                      "候选的媒体必须在推文里：\(mediaId)")
+            XCTAssertNotNil(downloadURL(for: media), "回连到的媒体要能算出下载地址")
+        }
+
+        // ② 分块：本块跑满 → 有 done_reason 与 next_cursor，续跑要拿到新内容
+        XCTAssertEqual(first[string: "done_reason"], "page_limit_reached",
+                       "max_pages=1 时应当报「本块跑满」")
+        let cursor = try XCTUnwrap(first[string: "next_cursor"], "跑满了就必须给续爬游标")
+
+        let second = try await TwitterAPI.shared.crawlPage(
+            source: .medias, userId: user.id, cursor: cursor, strategy: strategy)
+        let secondKeys = Set((second[array: "candidates"] ?? []).compactMap { $0.asObject }
+            .compactMap { $0[string: "key"] })
+        let firstKeys = Set(candidates.compactMap { $0[string: "key"] })
+        XCTAssertFalse(secondKeys.isEmpty, "续爬也应当有候选")
+        XCTAssertTrue(secondKeys.isDisjoint(with: firstKeys),
+                      "续爬必须拿到**不同的**媒体，否则就是原地打转")
     }
 
     /// 取一页媒体时间线：这条同时验证**分页形状**与**媒体映射**

@@ -194,6 +194,26 @@ actor TwitterAPI {
     func createBookmark(id: String) async throws { try await mutate("bookmark", tweetId: id) }
     func deleteBookmark(id: String) async throws { try await mutate("unbookmark", tweetId: id) }
 
+    // MARK: - 爬取（crawl.run）
+
+    /// 跑**一小段**爬取，返回这一段的候选与完整推文。
+    ///
+    /// 外壳把"跑多长"切成一块块，由调用方用返回的 `next_cursor` 续跑：
+    /// `crawl.run` 本身是"跑到停为止再返回"，而外壳要边跑边报进度、
+    /// 要能在限流时挂起、还要能被取消——切成小块才有这些机会。
+    /// 终止判据（到底 / 时间轴推进 / 连续空页 / 游标未推进）都在组件里，
+    /// 调用方只看 `done_reason`。
+    func crawlPage(source: DownloadFilter.Source, userId: String, cursor: String?,
+                   strategy: [String: JSONValue]) async throws -> [String: JSONValue] {
+        var params: [String: JSONValue] = [
+            "source": .string(source.rawValue),
+            "user_id": .string(userId),
+            "strategy": .object(strategy),
+        ]
+        if let cursor, !cursor.isEmpty { params["cursor"] = .string(cursor) }
+        return try await componentCall("crawl.run", params)
+    }
+
     // MARK: - 媒体 CDN 连通性探测
 
     /// 探测结果。**按结构区分**，不匹配文案。
