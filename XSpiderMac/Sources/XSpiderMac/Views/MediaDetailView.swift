@@ -393,6 +393,10 @@ struct MediaDetailView: View {
             HStack(spacing: 12) {
                 glassIconButton(icon: liked ? "heart.fill" : "heart", tint: liked ? .pink : .secondary,
                                 help: L("点赞")) { toggleLike() }
+                // 转推：`arrow.2.squarepath` 没有 fill 变体，用**高亮色**表达已转推
+                // （与点赞/书签同一套 `glassIconButton`，材质与不支持液态玻璃时的回退都一致）
+                glassIconButton(icon: "arrow.2.squarepath", tint: retweeted ? .green : .secondary,
+                                help: L("转推")) { toggleRetweet() }
                 glassIconButton(icon: bookmarked ? "bookmark.fill" : "bookmark", tint: bookmarked ? .blue : .secondary,
                                 help: L("书签")) { toggleBookmark() }
                 glassIconButton(icon: "square.and.arrow.up", tint: .secondary,

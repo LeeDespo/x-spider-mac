@@ -105,6 +105,7 @@ final class DownloadStore {
     private init() {
         restoreTasks()
         loadRecordCaches()
+        syncWithComponentOnLaunch()
         // CDN 限流解除（到期 / 用户点重试 / 某任务成功后确认恢复）时唤醒等待队列。
         // 没有这条回调，限流期间被压住的 waiting 任务在恢复后不会自动启动——
         // 并发上限虽回到设置值，却没人调用 pump。
@@ -514,6 +515,50 @@ final class DownloadStore {
 
     // MARK: - 任务控制
 
+    /// 启动时与组件对账一次。
+    ///
+    /// 两件事，缺一件都会出现"界面与事实相反"：
+    /// 1. **组件会自动重新排队未完成的任务**（它读自己的记录做断点续传），
+    ///    而本应用的策略是"重启不自动续传"（怕意外流量）——所以对账之后要把它
+    ///    **真的暂停掉**，而不是只在界面上写着"已暂停"；
+    /// 2. 停机期间组件可能已经下完（或被取消）：用 `dl.list` 的权威状态收尾，
+    ///    否则那几条会永远停在"暂停"。
+    ///
+    /// 为什么以前不需要：事件轮询只在**有新任务入队**时才启动，
+    /// 而"这次启动只有恢复任务"的情况不会有任何入队动作。
+    private func syncWithComponentOnLaunch() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let list = try await XSpiderComponent.shared.call("dl.list")
+                let jobs = (list[array: "jobs"] ?? []).compactMap { $0.asObject }
+                guard !jobs.isEmpty else { return }
+
+                var toPause: [String] = []
+                for job in jobs {
+                    guard let jobId = job[string: "job_id"],
+                          let task = self.tasks.first(where: { $0.gid == jobId }) else { continue }
+                    let state = job[string: "state"] ?? ""
+                    if task.status == .paused, state == "waiting" || state == "active" {
+                        toPause.append(jobId)
+                        continue  // 不要再走 reconcile 把它标成 active
+                    }
+                    self.reconcile(job)
+                }
+                for jobId in toPause {
+                    _ = try? await XSpiderComponent.shared.call("dl.pause", ["job_id": .string(jobId)])
+                }
+                AppLogger.info("启动时与组件对账", category: "DL", [
+                    "jobs": "\(jobs.count)", "已按策略暂停": "\(toPause.count)",
+                ])
+            } catch {
+                AppLogger.debug("启动对账失败（组件可能还没起来）", category: "DL", [
+                    "error": error.localizedDescription,
+                ])
+            }
+        }
+    }
+
     private func refreshSleepAssertion() {
         SleepPreventer.shared.update(activeDownloadCount: tasks.count { $0.status == .active || $0.status == .waiting })
     }
@@ -600,7 +645,24 @@ final class DownloadStore {
         Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await XSpiderComponent.shared.call("dl.enqueue", params)
+                let result = try await XSpiderComponent.shared.call("dl.enqueue", params)
+                // `already_known` = 组件里**已经有**这个 job（暂停中 / 失败 / 已完成），
+                // 而 **enqueue 不会重启它**——幂等键的语义就是"别重复做"。
+                // 所以"继续"与"重试"走到这里时必须补一次 `dl.resume`
+                // （对 paused 与 error 都有效，只拒绝已完成）。
+                // 少了这一步的症状很隐蔽：界面显示"下载中"，而组件里任务还是 paused，
+                // 进度永远停在断点处不动。
+                if result[string: "accepted_by"] == "already_known" {
+                    do {
+                        _ = try await XSpiderComponent.shared.call(
+                            "dl.resume", ["job_id": .string(task.gid)])
+                    } catch {
+                        // 已完成的任务 resume 会被拒（契约如此），交给 dl.list 对账收尾
+                        AppLogger.debug("dl.resume 被拒（任务可能已完成）", category: "DL", [
+                            "gid": task.gid, "error": error.localizedDescription,
+                        ])
+                    }
+                }
                 self.startComponentPolling()
             } catch {
                 self.handleComponentLaunchFailure(gid: task.gid, error: error)

@@ -127,7 +127,12 @@ final class ComponentLiveTests: XCTestCase {
             // "语法合法但不存在"的 id 才给的——那条映射由组件侧单测覆盖，
             // **不在这里试**：猜一个"看起来不存在"的小 id 有可能真的存在
             // （我第一次用 `"1"`，结果真的在账号上留下了一个赞）。
-            XCTAssertEqual(error.code, "upstream", "实际：\(error)")
+            //
+            // **刻意不钉死具体的 code**：X 先校验账号的写权限还是先解析 id，
+            // 决定了我们拿到 141（→ unauthorized）还是 ParseInt（→ upstream）。
+            // 这里要证明的是"X 收到了并拒绝了"，不是"恰好是哪个码"。
+            XCTAssertTrue(["upstream", "not_found", "unauthorized"].contains(error.code ?? ""),
+                          "应当是 X 明确拒绝的结构化错误，实际：\(error)")
             XCTAssertFalse(error.isTransport, "连不上的话这条测试没有意义：\(error)")
         }
     }

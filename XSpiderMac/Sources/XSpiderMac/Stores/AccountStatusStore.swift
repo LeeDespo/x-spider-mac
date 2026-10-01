@@ -413,9 +413,13 @@ final class AccountStatusStore {
 
     /// 用户点媒体 CDN 行的「重试」：结束 CDN 冷却并真的探一次媒体服务器。
     ///
-    /// 探测方式：对一张公开的 X 媒体缩略图发一次极小的 HEAD/GET（只读首字节就断开），
-    /// 比下载整个文件便宜得多，失败也只影响这一次探测。用固定的官方静态图，
-    /// 避免依赖用户当前列表里恰好有可下载的媒体。
+    /// 探测方式：**经组件**（`net.probe_size`）对一张公开的 X 媒体缩略图发一次极小的
+    /// 请求（`HEAD`，失败退到 1 字节 `Range`），比下载整个文件便宜得多。
+    ///
+    /// **为什么必须经组件**：组件用的是**下载时用的那个代理**。此前这里是
+    /// `URLSession.shared` 直连——它只认系统代理，所以应用里把代理关掉之后，
+    /// 探测器仍然（走系统代理）成功，这一行就永远显示"正常"（用户实测报过）。
+    /// 判定只看结构化的结果类型，不看文案。
     func probeCDN() async {
         guard !probingCDN else { return }
         probingCDN = true
@@ -428,39 +432,19 @@ final class AccountStatusStore {
         cdnRateLimitedUntil = nil
         if wasThrottled { onCDNRecovered?() }
 
-        // 探测 URL 必须属于媒体 CDN 域（pbs.twimg.com）。
-        // 早前用的 /media/EV5m1XjXQAAEqUd 实测已 404，会把正常网络误报成异常。
-        let probeURL = URL(string: "https://pbs.twimg.com/profile_images/1683325380441128960/yRsRRjGO.jpg")!
-        var request = URLRequest(url: probeURL)
-        request.httpMethod = "GET"
-        request.setValue(Self.cdnProbeUserAgent, forHTTPHeaderField: "User-Agent")
-        // 只取首个分片即判定连通（服务器不支持 Range 时会返回全量，但我们只看状态码）
-        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
-        request.timeoutInterval = 12
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 429 {
-                let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
-                noteCDNRateLimited(retryAfter: after)
-                AppLogger.warn("CDN 探测:仍被限流", category: "DL")
-            } else if (200..<400).contains(status), !data.isEmpty {
-                // 已在上方清过限流标记，这里只需清失败原因（不再依赖 noteCDNSuccess 触发回调）
-                cdnLastFailure = nil
-                AppLogger.info("CDN 探测:连接正常", category: "DL", ["bytes": "\(data.count)"])
-            } else {
-                noteCDNFailure("HTTP \(status)")
-                AppLogger.warn("CDN 探测:异常状态", category: "DL", ["status": "\(status)"])
-            }
-        } catch is CancellationError {
-            return
-        } catch {
-            noteCDNFailure(error.localizedDescription)
-            AppLogger.warn("CDN 探测失败", category: "DL", ["error": error.localizedDescription])
+        switch await TwitterAPI.shared.probeCDN() {
+        case .ok(let bytes):
+            // 已在上方清过限流标记，这里只需清失败原因（不再依赖 noteCDNSuccess 触发回调）
+            cdnLastFailure = nil
+            AppLogger.info("CDN 探测:连接正常", category: "DL", ["bytes": "\(bytes)"])
+        case .rateLimited(let retryAfter):
+            noteCDNRateLimited(retryAfter: retryAfter.map(TimeInterval.init))
+            AppLogger.warn("CDN 探测:仍被限流", category: "DL")
+        case .failed(let reason):
+            noteCDNFailure(reason)
+            AppLogger.warn("CDN 探测失败", category: "DL", ["error": reason])
         }
     }
-
-    private static let cdnProbeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
     // MARK: - 展示
 

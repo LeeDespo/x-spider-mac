@@ -139,10 +139,14 @@ final class AppStore {
         }
     }
 
-    /// 登录成功后把当前账户加入已存列表（cookie 保存在当前 cookieString;多账户需各自保存 cookie）
+    /// 登录成功后把当前账户加入已存列表（每个账户各自保存自己的 cookie）。
+    ///
+    /// **同一个会话只能有一条记录**：按 cookie 也去一次重。一条 cookie 就是一个登录会话，
+    /// 出现两条同名不同 cookie、或不同名同一 cookie 的记录，都是"切换账号切不动"的温床
+    /// （列表里两条记录的 cookie 逐字节相同，切谁都是一样的账号）。
     func rememberCurrentAccount() {
         guard let acc = account, !cookieString.isEmpty else { return }
-        var list = savedAccounts.filter { $0.screenName != acc.screenName }
+        var list = savedAccounts.filter { $0.screenName != acc.screenName && $0.cookie != cookieString }
         list.insert(SavedAccount(screenName: acc.screenName, avatar: acc.avatar, cookie: cookieString), at: 0)
         savedAccounts = list
     }

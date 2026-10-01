@@ -77,6 +77,12 @@ final class XSpiderComponent: @unchecked Sendable {
             return nil
         }
 
+        /// 建议等待秒数（仅 `rate_limited` 有）。
+        var retryAfterS: Int? {
+            if case let .contract(_, _, _, retryAfter, _) = self { return retryAfter }
+            return nil
+        }
+
         /// 传输层问题可以重试（契约错误重试只会更慢地失败）。
         var isTransport: Bool {
             if case .transport = self { return true }

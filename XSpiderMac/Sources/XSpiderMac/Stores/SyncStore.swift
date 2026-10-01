@@ -420,7 +420,7 @@ enum SyncFailure: LocalizedError {
         if let apiErr = error as? TwitterAPIError {
             switch apiErr {
             case .userNotFound: return .userNotFound(screenName)
-            case .missingScreenName, .missingAvatar: return .authExpired
+            case .missingScreenName, .missingAvatar, .notAuthorized: return .authExpired
             default: break
             }
         }

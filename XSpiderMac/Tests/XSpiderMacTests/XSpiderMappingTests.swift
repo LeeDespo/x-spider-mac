@@ -54,6 +54,40 @@ final class XSpiderMappingTests: XCTestCase {
         ]
     }
 
+    // MARK: - 引用推文
+
+    /// `post.quoted` → `quotedPost`。
+    ///
+    /// 这一条以前是坏的：映射里写死 `quotedPost: nil`，于是**引用推文在界面上只剩空壳**
+    /// （契约当时只有 `quoted_id`）。契约 1.4.0 给了内嵌对象，这里跟着接上。
+    func testQuotedPostIsMappedAndOnlyOneLevelDeep() throws {
+        // 内层自带一个 `quoted`，用来验证"只嵌一层"：内层不该再展开
+        var inner = try XCTUnwrap(postJSON(id: "quoted").asObject, "内层样本要是个对象")
+        inner["quoted_id"] = .string("222")
+        inner["quoted"] = postJSON(id: "222")
+
+        var outer = try XCTUnwrap(postJSON(id: "outer").asObject)
+        outer["quoted_id"] = .string("quoted")
+        outer["quoted"] = .object(inner)
+
+        let post = try XCTUnwrap(XSpiderMapping.post(outer))
+
+        let quoted = try XCTUnwrap(post.quotedPost?.value, "引用推文要映射成 quotedPost")
+        XCTAssertEqual(quoted.id, "quoted")
+        XCTAssertEqual(quoted.fullText, "内容")
+        XCTAssertNil(quoted.quotedPost, "只嵌一层：内层的引用不该再展开")
+    }
+
+    /// 取不到被引用的推文时（被删/不可见）：**不能编造**，`quotedPost` 就是 nil。
+    func testMissingQuotedBodyLeavesQuotedPostNil() throws {
+        var outer = try XCTUnwrap(postJSON(id: "outer").asObject)
+        outer["quoted_id"] = .string("777")
+        // 没有 `quoted` 键
+
+        let post = try XCTUnwrap(XSpiderMapping.post(outer))
+        XCTAssertNil(post.quotedPost)
+    }
+
     // MARK: - 崩溃回归
 
     /// **打开带评论的推文不能崩。**

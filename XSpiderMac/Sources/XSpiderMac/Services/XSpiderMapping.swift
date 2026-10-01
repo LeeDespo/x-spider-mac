@@ -119,11 +119,14 @@ enum XSpiderMapping {
 
         let retweetedBy = json[object: "retweeted_by"].flatMap { Self.author($0) }
 
-        // 被引用的推文：契约只给 id（`quoted_id`），没有内嵌对象——
-        // 参考实现的内嵌引用来自 X 的 `quoted_status_result`。
-        // 视图要显示引用内容时会用 id 单独取（`fetch.tweet_detail`），
-        // 所以这里不塞半成品对象，避免"看起来有其实空"的卡片。
-        _ = includeQuoted
+        // 被引用的推文：契约 1.4.0 起 `post.quoted` 自带内嵌对象（正文/作者/媒体），
+        // 与参考实现的 `quoted_status_result` 是同一条。
+        // `includeQuoted: false` 用在内层——**只递归一层**（X 不允许"引用里再引用"，
+        // 内层再向下取遇到异常数据会无限递归）。
+        // 取不到时（被删/不可见）`quoted` 不出现，`quoted_id` 仍在，卡片自然退化成"只有 id"。
+        let quoted = includeQuoted
+            ? json[object: "quoted"].flatMap { post($0, includeQuoted: false) }
+            : nil
 
         return TwitterPost(
             id: id,
@@ -142,7 +145,7 @@ enum XSpiderMapping {
             bookmarkCount: json[int: "bookmark_count"],
             bookmarked: json[bool: "bookmarked"],
             medias: medias,
-            quotedPost: nil,
+            quotedPost: quoted.map(QuotedPostBox.init),
             retweetedBy: retweetedBy)
     }
 

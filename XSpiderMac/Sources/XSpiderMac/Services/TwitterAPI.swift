@@ -83,7 +83,9 @@ actor TwitterAPI {
         guard let component = error as? XSpiderComponent.ComponentError else { return error }
         switch component.code {
         case "not_found": return TwitterAPIError.userNotFound
-        case "unauthorized": return TwitterAPIError.missingScreenName  // → SyncFailure.authExpired
+        // 带上组件给的原文：141（账号被限制写操作）与"cookie 失效"都是 unauthorized，
+        // 但两者的可操作提示不同——按 code 分流，把原因如实带给用户。
+        case "unauthorized": return TwitterAPIError.notAuthorized(component.errorDescription ?? "")
         case "parse": return TwitterAPIError.parseFailure
         case "upstream": return TwitterAPIError.responseError(status: component.status ?? 0)
         default: return error
@@ -145,8 +147,13 @@ actor TwitterAPI {
     /// 这一条以前是"每个外壳自己写一遍"的：抓 x.com 首页、正则掏 `screen_name`。
     /// 搬进组件还有个附带好处：**它和签名用的页面抓取走同一条路**，
     /// 不会再各自处理"未登录会 307 到 onboarding"这类细节。
+    /// - 传了 `cookieStringOverride` 时**先把它推给组件**再问"我是谁"：顺序反了会拿到
+    ///   **上一个账号**的信息（组件里的凭据还是旧的）。切账号的 bug 就出在这里。
     func getAccountInfo(cookieStringOverride: String? = nil, fast: Bool = false) async throws -> TwitterAccountInfo {
-        _ = (cookieStringOverride, fast)
+        if let override = cookieStringOverride, !override.isEmpty {
+            _ = try await componentCall("auth.set_cookie", ["cookie": .string(override)])
+        }
+        _ = fast
         let result = try await componentCall("auth.whoami")
         guard let account = result[object: "account"],
               let screenName = account[string: "screen_name"], !screenName.isEmpty else {
@@ -186,6 +193,39 @@ actor TwitterAPI {
     func deleteRetweet(id: String) async throws { try await mutate("unretweet", tweetId: id) }
     func createBookmark(id: String) async throws { try await mutate("bookmark", tweetId: id) }
     func deleteBookmark(id: String) async throws { try await mutate("unbookmark", tweetId: id) }
+
+    // MARK: - 媒体 CDN 连通性探测
+
+    /// 探测结果。**按结构区分**，不匹配文案。
+    enum CDNProbe: Sendable {
+        /// 连得通（服务端没说长度也算通——请求本身成功了）。
+        case ok(bytes: Int)
+        case rateLimited(retryAfter: Int?)
+        case failed(String)
+    }
+
+    /// 探一次媒体 CDN（`net.probe_size`，最多产生一个字节的流量）。
+    ///
+    /// **必须走组件**：它用的是**下载时用的那个代理**。此前这里用 `URLSession.shared`
+    /// 直连——那只认系统代理，于是应用里把代理关掉之后，探测器仍然（走系统代理）成功，
+    /// 侧边栏的"媒体 CDN"就永远显示正常（用户实测报过这个）。
+    /// 现在探测与下载走同一条出口，显示才与事实一致。
+    func probeCDN() async -> CDNProbe {
+        // 用一个**长期存在**的媒体 URL 作探针：以前用过 /media/xxx 那条实测已 404，
+        // 会把正常网络误报成异常。
+        let probe = "https://pbs.twimg.com/profile_images/1683325380441128960/yRsRRjGO.jpg"
+        do {
+            let result = try await XSpiderComponent.shared.call(
+                "net.probe_size", ["url": .string(probe)])
+            return .ok(bytes: result[int: "size"] ?? 0)
+        } catch let error as XSpiderComponent.ComponentError {
+            // 只看 code：`rate_limited` 是"CDN 现在不让我下"，与"连不上"是两回事
+            if error.code == "rate_limited" { return .rateLimited(retryAfter: error.retryAfterS) }
+            return .failed(error.errorDescription ?? "探测失败")
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
 
     // MARK: - 搜索时间线（SearchTimeline：服务端按时间范围过滤）
 
@@ -922,6 +962,9 @@ extension Date {
 enum TwitterAPIError: LocalizedError {
     case responseError(status: Int)
     case missingScreenName
+    /// `unauthorized` 的通称：cookie 失效，或**账号被限制写操作**（上游 141）。
+    /// 带原因是为了让界面说人话，而不是统一成一句「响应中找不到 screen_name」。
+    case notAuthorized(String)
     case missingAvatar
     case userNotFound
     case parseFailure
@@ -930,6 +973,8 @@ enum TwitterAPIError: LocalizedError {
         switch self {
         case .responseError(let status): return "响应错误：status=\(status)"
         case .missingScreenName: return "Cookie 无效或未登录：响应中找不到 screen_name"
+        case .notAuthorized(let reason):
+            return reason.isEmpty ? "当前账号无权执行该操作，请重新登录或换一个账号" : reason
         case .missingAvatar: return "响应中找不到头像"
         case .userNotFound: return "找不到该用户"
         case .parseFailure: return "响应解析失败"
