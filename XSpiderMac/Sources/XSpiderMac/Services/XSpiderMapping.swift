@@ -87,9 +87,16 @@ enum XSpiderMapping {
             videoInfo = VideoInfo(url: nil, duration: duration, variants: variants, aspectRatio: aspect)
         }
 
+        // **封面**取契约的 `poster_url`（= X 的 `media_url_https`）：视频/动图给的是静帧，
+        // 图片则是它本身。应用的 `TwitterMedia.url` 一直是这个语义
+        // （网格与详情页把它当图片解码、照片下载时再补 `?name=orig`），
+        // 所以**不能**填可下载地址——那样视频格子会去解码 mp4，整片空白。
+        // 图片缺 poster 时回落 `url`（两者本来就相同）。
+        let poster = json[string: "poster_url"] ?? (kind == .photo ? url : nil)
+
         return TwitterMedia(
             id: json[string: "id"],
-            url: url,
+            url: poster,
             width: width,
             height: height,
             type: kind,

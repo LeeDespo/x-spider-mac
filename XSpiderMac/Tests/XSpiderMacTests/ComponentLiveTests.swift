@@ -54,6 +54,51 @@ final class ComponentLiveTests: XCTestCase {
     }
 
 
+
+    /// **视频这条路的回归测试**：封面必须是图片、可播放地址必须是 mp4，两者不能混。
+    ///
+    /// 用户实测报过"视频无法显示、图片正常"：原因是映射把 `TwitterMedia.url` 填成了
+    /// **可下载的 mp4**，而界面拿它当封面图解码（`thumbnailURL(for:)` / `loadHD()`）
+    /// → 视频格子整片空白。契约里当时根本没有封面字段，所以这条也是"接入才暴露"的缺口。
+    @MainActor
+    func testVideoMediaHasAPosterAndAPlayableURL() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        // 多取几页，视频不一定在第一页
+        var videos: [TwitterMedia] = []
+        var cursor: String?
+        for _ in 0..<3 {
+            let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, cursor: cursor, count: 20)
+            videos = page.posts.flatMap { $0.medias ?? [] }.filter { $0.type == .video }
+            if !videos.isEmpty { break }
+            cursor = page.cursor
+            if cursor == nil { break }
+        }
+        let video = try XCTUnwrap(videos.first, "取不到任何视频（这条测试需要一条）")
+
+        // 1) 封面：必须是图片地址，且**不等于**可播放地址
+        let poster = try XCTUnwrap(video.url, "视频缺封面 URL（TwitterMedia.url 为空）")
+        XCTAssertFalse(poster.contains(".mp4"),
+                       "封面被填成了 mp4：\(poster)。界面会把它当图片解码 → 视频格子空白")
+        XCTAssertTrue(poster.contains("twimg.com"), "封面不像 CDN 地址：\(poster)")
+
+        // 2) 封面真的能当图片解码（这条是最接近"用户看到画面"的断言）
+        let thumb = try XCTUnwrap(ReplyMediaThumb.thumbnailURL(for: video), "生成缩略图 URL 失败")
+        let image = await ImageCache.shared.image(for: thumb, category: .mediaThumbnails, maxPixelSize: 600)
+        XCTAssertNotNil(image, "封面解码失败（界面会显示空白）：\(thumb)")
+
+        // 3) 可播放地址：来自 variants，且是 mp4
+        let playable = try XCTUnwrap(MediaViewerView.bestVideoURL(video), "拿不到可播放地址（variants 丢了？）")
+        XCTAssertTrue(playable.absoluteString.contains(".mp4"), "可播放地址不是 mp4：\(playable)")
+        XCTAssertNotEqual(playable.absoluteString, poster, "封面与播放地址不该是同一个")
+    }
+
     /// **下载路径的真实链路**：应用建任务 → 组件搬字节 → 应用验内容与记录。
     ///
     /// 这条是下载迁移的验收：`DownloadStore.launch` 现在只做"算好目录与文件名 → `dl.enqueue`"，
