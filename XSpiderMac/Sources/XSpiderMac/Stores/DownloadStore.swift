@@ -464,7 +464,9 @@ final class DownloadStore {
 
     // MARK: - 历史持久化（重启后恢复记录；进行中的任务恢复为等待态，用户手动继续）
 
-    private static let historyURL = AppDirectories.support
+    /// 下载历史文件。**故意不是 private**：live 测试要先备份再还原它——
+    /// 那是用户的真实数据（1500+ 条），测试在里面留下的条目指向临时目录，是纯垃圾。
+    static let historyURL = AppDirectories.support
         .appendingPathComponent("download-history.json")
 
     private struct PersistedTask: Codable {

@@ -24,6 +24,21 @@ final class ComponentLiveTests: XCTestCase {
         UserDefaults.standard.string(forKey: "app.cookieString") ?? ""
     }
 
+    /// 备份下载历史，返回一个"还原"动作（在 `defer` 里调）。
+    ///
+    /// 为什么需要：`download-history.json` 是**用户的真实数据**（1500+ 条），
+    /// 而会新建下载任务的测试指向临时目录、下面还会把目录删掉——留下的条目点开是空的，
+    /// 就是垃圾。我第一次跑 live 测试时就这么脏了用户的历史。
+    ///
+    /// 不需要额外等待：`tasks` 的 didSet 是**同步**落盘的，而 `defer` 的执行顺序
+    /// （后注册的先跑）保证"先摘任务、再还原文件"。
+    @MainActor
+    private func backupDownloadHistory() -> () -> Void {
+        let url = DownloadStore.historyURL
+        guard let backup = try? Data(contentsOf: url) else { return {} }
+        return { try? backup.write(to: url, options: .atomic) }
+    }
+
     func testComponentIsReachableAndReportsTransport() async throws {
         try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
 
@@ -204,6 +219,7 @@ final class ComponentLiveTests: XCTestCase {
         let outDir = NSTemporaryDirectory() + "xspider-live-crawl-\(UUID().uuidString)"
         SettingsStore.shared.settings.download.saveDirBase = outDir
         SettingsStore.shared.settings.download.sameFileSkip = false
+        let restoreHistory = backupDownloadHistory()
         defer {
             SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
             SettingsStore.shared.settings.download.sameFileSkip = originalSkip
@@ -275,10 +291,12 @@ final class ComponentLiveTests: XCTestCase {
         let outDir = NSTemporaryDirectory() + "xspider-live-\(UUID().uuidString)"
         SettingsStore.shared.settings.download.saveDirBase = outDir
         SettingsStore.shared.settings.download.sameFileSkip = false
+        let restoreHistory = backupDownloadHistory()
         defer {
             SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
             SettingsStore.shared.settings.download.sameFileSkip = originalSkip
             try? FileManager.default.removeItem(atPath: outDir)
+            restoreHistory()
         }
 
         // 挑一个**小**媒体（省配额与时间）：优先图片
@@ -292,8 +310,11 @@ final class ComponentLiveTests: XCTestCase {
             (lhs.1.type == .photo ? 0 : 1, lhs.1.width ?? 0) < (rhs.1.type == .photo ? 0 : 1, rhs.1.width ?? 0)
         }, "需要至少一条带媒体的推文")
 
-        let created = await DownloadStore.shared.createDownloadTask(post: post, media: media)
-        let task = try XCTUnwrap(created, "建任务失败（可能是重复判定）")
+        let createdTask = await DownloadStore.shared.createDownloadTask(post: post, media: media)
+        let task = try XCTUnwrap(createdTask, "建任务失败（可能是重复判定）")
+        // 摘掉它：任务会随 `tasks` 的 didSet 落进用户的下载历史
+        // （defer 后注册先跑，所以这一步在"还原历史"之前执行）
+        defer { DownloadStore.shared.remove(task.gid, alsoDeleteFiles: true) }
         XCTAssertEqual(task.status, .waiting, "建完任务应当排队等组件")
 
         DownloadStore.shared.start(task)
