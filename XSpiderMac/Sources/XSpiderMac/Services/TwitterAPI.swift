@@ -16,14 +16,82 @@ actor TwitterAPI {
     private var xclidReady = false
 
     /// 非持久状态：由 AppStore 每次 cookie 变更时推送
+    /// 非持久状态：由 AppStore 每次 cookie/代理变更时推送。
+    ///
+    /// 这里只做一件事：**把状态推给组件**。签名（x-client-transaction-id）、限流闸门、
+    /// 429 熔断、代理都在组件里，本应用不再自己实现一份——那样才会出现
+    /// "两套限流各说各话"（`docs/01-ARCHITECTURE.md` §1 的存在理由）。
+    ///
+    /// 凭据**只进不出**：组件不回显、不落盘、不打日志；这里也不打。
     func configure(cookie: String, proxy: ProxySettings) async {
         self.cookieString = cookie
-        // 先释放旧会话：仅替换引用不会关闭其连接池，旧连接可能仍指向失效的代理路径，
-        // 在超时前一直挂着 —— 表现为"代理恢复了但应用还卡着"
-        await client.invalidate()
-        self.client = NetworkClient(proxy: proxy)
-        await XClientTransaction.shared.updateClient(client)
-        xclidReady = false
+        let settings = await MainActor.run { SettingsStore.shared.settings }
+        do {
+            _ = try await XSpiderComponent.shared.ensureStarted()
+            if !cookie.isEmpty {
+                _ = try await XSpiderComponent.shared.call("auth.set_cookie", ["cookie": .string(cookie)])
+            }
+            // 代理三态与组件一致：关闭 → null；跟随系统 → 用系统解析出的 URL；
+            // 手填 → 原样。`null` 与"字段缺失"语义不同（契约 §4.3），所以这里显式给。
+            _ = try await XSpiderComponent.shared.call("net.set_proxy", ["url": Self.componentProxyValue(proxy)])
+            _ = try await XSpiderComponent.shared.call("net.set_limits", [
+                "api_rps": .double(max(0.1, Double(settings.gateRequestsPerWindow) / Double(max(1, settings.gateWindowSeconds)))),
+                "api_burst": .int(settings.gateRequestsPerWindow),
+                "cdn_concurrency": .int(settings.cdnMaxConcurrent),
+                "cooldown_s": .int(settings.cdnCooldownSeconds),
+            ])
+            AppLogger.info("组件已按设置更新", category: "CORE", [
+                "proxy": Self.proxyLabel(proxy),
+                "api_rps": String(format: "%.1f", Double(settings.gateRequestsPerWindow) / Double(max(1, settings.gateWindowSeconds))),
+                "cdn_concurrency": String(settings.cdnMaxConcurrent),
+            ])
+        } catch {
+            // 这里吞掉错误、留给后续调用报：configure 可能在任何时刻被设置改动触发，
+            // 而"代理暂时不可达"不该在设置界面弹错误（真要用时会立刻失败并提示）。
+            AppLogger.error("组件配置失败", category: "CORE", ["error": error.localizedDescription])
+        }
+    }
+
+    /// 代理设置的契约取值：`.null` = **明确关闭**，字符串 = 具体代理。
+    /// 两者语义不同（契约 §4.3）：字段必须存在，`null` 是"忽略环境变量"。
+    static func componentProxyValue(_ proxy: ProxySettings) -> JSONValue {
+        if proxy.enable, !proxy.useSystem, !proxy.url.isEmpty { return .string(proxy.url) }
+        if proxy.useSystem {
+            if let system = Aria2Engine.systemProxy() { return .string(system) }
+            return proxy.url.isEmpty ? .null : .string(proxy.url)
+        }
+        return .null
+    }
+
+    private static func proxyLabel(_ proxy: ProxySettings) -> String {
+        if proxy.enable, !proxy.useSystem, !proxy.url.isEmpty { return "手动:\(proxy.url)" }
+        if proxy.useSystem { return "系统" }
+        return "关闭"
+    }
+
+    /// 组件调用 + 错误语义映射。
+    ///
+    /// 组件报的是**结构化错误码**（契约禁止按文案判断），而应用上层
+    /// （`SyncStore.classify`）按 `TwitterAPIError` 的 case 决定给用户什么提示：
+    /// "账号不存在" / "登录失效" / "网络问题" 三者的处理完全不同。
+    /// 所以这里按**码**翻译，逐条对应。
+    private func componentCall(_ method: String, _ params: [String: JSONValue] = [:]) async throws -> [String: JSONValue] {
+        do {
+            return try await XSpiderComponent.shared.call(method, params)
+        } catch {
+            throw Self.translate(error)
+        }
+    }
+
+    static func translate(_ error: Error) -> Error {
+        guard let component = error as? XSpiderComponent.ComponentError else { return error }
+        switch component.code {
+        case "not_found": return TwitterAPIError.userNotFound
+        case "unauthorized": return TwitterAPIError.missingScreenName  // → SyncFailure.authExpired
+        case "parse": return TwitterAPIError.parseFailure
+        case "upstream": return TwitterAPIError.responseError(status: component.status ?? 0)
+        default: return error
+        }
     }
 
     // MARK: - Headers
@@ -61,24 +129,13 @@ actor TwitterAPI {
 
     /// 上游 op XMOz5h24KAZ86qKffKTLdQ/TweetDetail。返回 focal 推文（含媒体）。
     func getTweet(id: String) async throws -> TwitterPost {
-        let (json, _) = try await fetchTweetDetail(focalId: id)
-        // TweetDetail 的响应结构（2026-09 实测）：
-        //   只有 `data.threaded_conversation_with_injections_v2.instructions`，
-        //   **没有** `data.tweetResult`（旧假设，曾导致 focal 推文取不到）。
-        //   focal 推文是 entries 里 entryId 为 `tweet-<id>` 的那一条。
-        //
-        // 若直接用带 requireMedia 的解析（旧行为），**无媒体的 focal 会被过滤掉**，
-        // 于是退化分支返回"第一条有媒体的推文"——那往往是评论区的广告或带图评论，
-        // 表现为"详情弹出来的是别人的推文"。因此这里必须按 ID 直接取 focal。
-        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
+        let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
+        guard let focalJSON = result[object: "focal"],
+              let focal = XSpiderMapping.post(focalJSON) else {
             throw TwitterAPIError.parseFailure
         }
         return focal
     }
-
-    /// 从 TweetDetail 响应里按 ID 取出 focal 推文。
-    ///
-    /// 不经过 `extractPostsFromTweetEntries`：那条路径会按 `requireMedia` 过滤，
     /// 无媒体的 focal 会被丢弃，进而退化到评论区的推文（真实 bug）。
     static func extractFocalTweet(json: [String: Any], id: String) -> TwitterPost? {
         // 路径一（当前线上）：threaded_conversation_with_injections_v2
@@ -142,40 +199,14 @@ actor TwitterAPI {
     // MARK: - 用户查询
 
     func getUser(screenName: String, fast: Bool = false) async throws -> TwitterUser {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName"
-        let url = URL(string: "https://\(host)\(path)")!
-        let variables = """
-        {"screen_name":"\(screenName)","withSafetyModeUserFields":true}
-        """
-        let resp = try await (fast
-            ? client.requestFast(url: url, query: [
-                "features": Self.userByScreenNameFeatures,
-                "fieldToggles": #"{"withAuxiliaryUserLabels":false}"#,
-                "variables": variables,
-            ], headers: await commonHeaders(method: "GET", path: path))
-            : client.request(url: url, query: [
-                "features": Self.userByScreenNameFeatures,
-                "fieldToggles": #"{"withAuxiliaryUserLabels":false}"#,
-                "variables": variables,
-            ], headers: await commonHeaders(method: "GET", path: path)))
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any],
-              let user = (json["data"] as? [String: Any])?["user"] as? [String: Any],
-              let result = user["result"] as? [String: Any],
-              let legacy = result["legacy"] as? [String: Any] else {
+        let result = try await componentCall("fetch.get_user", ["screen_name": .string(screenName)])
+        guard let userJSON = result[object: "user"],
+              let user = XSpiderMapping.user(userJSON) else {
             throw TwitterAPIError.userNotFound
         }
-        let restId = result["rest_id"] as? String ?? ""
-        return TwitterUser(
-            screenName: legacy["screen_name"] as? String ?? screenName,
-            avatar: legacy["profile_image_url_https"] as? String ?? "",
-            name: legacy["name"] as? String ?? "",
-            id: restId,
-            mediaCount: legacy["media_count"] as? Int,
-            registerTime: TwitterDate.parse(legacy["created_at"] as? String)
-        )
+        return user
     }
+
 
     // MARK: - 推文互动（点赞/转推/书签）
 
@@ -240,47 +271,18 @@ actor TwitterAPI {
         )
     }
 
-    /// 关注列表(Following GraphQL;返回用户数组+cursor)
-    func getFollowing(userId: String, cursor: String? = nil, count: Int = 100) async throws -> (users: [TwitterUser], cursor: String?) {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/F42cDX8PDFxkbjjq6JrM2w/Following"
-        let url = URL(string: "https://\(host)\(path)")!
-        var vars: [String: Any] = ["userId": userId, "count": count, "includePromotedContent": false]
-        if let cursor { vars["cursor"] = cursor }
-        let resp = try await client.request(
-            url: url,
-            query: [
-                "variables": Self.encodeJSON(vars) ?? "{}",
-                "features": Self.userMediaFeatures,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else { throw TwitterAPIError.parseFailure }
-        let instructions = Self.path(json, ["data", "user", "result", "timeline", "timeline", "instructions"]) as? [[String: Any]]
-            ?? Self.path(json, ["data", "user", "result", "timeline", "instructions"]) as? [[String: Any]]
-            ?? []
-        var users: [TwitterUser] = []
-        if let addEntries = instructions.first(where: { $0["type"] as? String == "TimelineAddEntries" }),
-           let entries = addEntries["entries"] as? [[String: Any]] {
-            for entry in entries {
-                let entryId = entry["entryId"] as? String ?? ""
-                guard entryId.hasPrefix("user-") else { continue }
-                let content = entry["content"] as? [String: Any] ?? [:]
-                if let result = Self.path(content, ["itemContent", "user_results", "result"]) as? [String: Any] {
-                    if let u = Self.mapTwitterUser(result) { users.append(u) }
-                }
-            }
-        }
-        let bottom = Self.extractBottomCursor(instructions)
-        return (users, bottom)
-    }
-
-    /// 是否已关注（v1.1 friendships/show）
-    /// 关系结果做过期缓存：每张推文卡的关注按钮都会查一次，时间线上同名作者重复出现时
-    /// 会造成大量重复请求（实测一次首页加载并发多个 friendships/show），是限流的放大器。
+    /// 限制：关注态查询（v1.1 friendships/show）仍走本应用自己的 HTTP 客户端——
+    /// 组件目前没有对应 method（`fetch.mutate` 也还没实现），这部分不属于"已被替代"。
     private var followCache: [String: (value: Bool, at: Date)] = [:]
     private let followCacheTTL: TimeInterval = 300
+
+    /// 关注列表（Following）——已由组件接管（`fetch.following`）。
+    func getFollowing(userId: String, cursor: String? = nil, count: Int = 100) async throws -> (users: [TwitterUser], cursor: String?) {
+        var params: [String: JSONValue] = ["user_id": .string(userId), "count": .int(count)]
+        if let cursor { params["cursor"] = .string(cursor) }   // 首页**不要**传 cursor（契约 §3.3）
+        let result = try await componentCall("fetch.following", params)
+        return XSpiderMapping.userPage(result)
+    }
 
     func isFollowing(screenName: String, useCache: Bool = true) async throws -> Bool {
         if useCache, let hit = followCache[screenName], Date().timeIntervalSince(hit.at) < followCacheTTL {
@@ -391,46 +393,18 @@ actor TwitterAPI {
     /// 同一个请求（同样的 focalTweetId、同样的 features）打两遍，白白翻倍消耗
     /// X 配额——项目一直在对抗 429，这种重复请求是实打实的放大器。
     func getTweetDetailTree(id: String) async throws -> (focal: TwitterPost, replies: [ReplyNode]) {
-        let (json, instructions) = try await fetchTweetDetail(focalId: id)
-        guard let focal = Self.extractFocalTweet(json: json, id: id) else {
-            throw TwitterAPIError.parseFailure
-        }
-        let replies = Self.extractReplyNodes(instructions, focalId: id)
-        return (focal, replies)
+        let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
+        let parsed = XSpiderMapping.replyNodes(result, focalId: id)
+        guard let focal = parsed.focal else { throw TwitterAPIError.parseFailure }
+        return (focal, parsed.replies)
     }
-
-    /// TweetDetail 单次请求 → (原始 JSON, instructions)。
-    /// 两处 TweetDetail 调用（getTweet / getTweetDetailTree）曾各自拼接 variables，
     /// 容易漂移；统一到这里，改动只需一处。
-    private func fetchTweetDetail(focalId: String) async throws -> ([String: Any], [[String: Any]]) {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
-        let url = URL(string: "https://\(host)\(path)")!
-        let variables = Self.encodeJSON([
-            "focalTweetId": focalId,
-            "with_rux_injections": true,
-            "includePromotedContent": true,
-            "withCommunity": true,
-            "withQuickPromoteEligibilityTweetFields": true,
-            "withBirdwatchNotes": true,
-            "withVoice": true,
-            "withV2Timeline": true,
-        ] as [String: Any]) ?? "{}"
-        let resp = try await client.request(
-            url: url,
-            query: ["variables": variables, "features": Self.tweetDetailFeatures],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
-        let instructions = (Self.path(json, ["data", "threaded_conversation_with_injections_v2", "instructions"]) as? [[String: Any]])
-            ?? (Self.path(json, ["data", "tweetResult", "result", "timeline", "instructions"]) as? [[String: Any]])
-            ?? []
-        return (json, instructions)
+    /// 评论树不再在应用侧构建：组件返回 `focal` + `replies[]`（含 `parent_id`、
+    /// `is_partial_parent`），深度由 `XSpiderMapping` 按父链算。
+    static func currentComponentAvailability() async -> String {
+        guard let info = XSpiderComponent.shared.currentInfo else { return "未启动" }
+        return "\(info.transport) 契约\(info.contractVersion)"
     }
-
     // MARK: - 搜索时间线（SearchTimeline：服务端按时间范围过滤）
 
     /// 搜索端点对应的展示形态（对应网页的 `f=media` / `f=live`）。
@@ -495,91 +469,31 @@ actor TwitterAPI {
                         product: SearchProduct,
                         count: Int = 20,
                         cursor: String? = nil) async throws -> (posts: [TwitterPost], cursor: String?) {
-        try await ensureXClIdLoaded()
-        var variables: [String: Any] = [
-            "rawQuery": Self.searchRawQuery(screenName: screenName, range: range,
-                                            includeMediaOnly: product == .media),
-            "count": count,
-            "querySource": "typed_query",
-            "product": product.rawValue,
+        // queryId 失效的自愈（404 → 抓 /search 页面找新 queryId）现在在组件里，
+        // 锚定 operationName 做匹配；应用侧不再自己维护那份正则。
+        var params: [String: JSONValue] = [
+            "screen_name": .string(screenName),
+            "since": .string(Self.searchDateString(range.start)),
+            "until": .string(Self.searchDateString(range.end)),
+            // media 产品 = 服务端就按媒体筛（`filter:media`），比取回来再筛省请求也省配额
+            "media_only": .bool(product == .media),
+            "count": .int(count),
         ]
-        if let cursor { variables["cursor"] = cursor }
-
-        // 首次用默认 queryId；404（可能因 X 改版失效）→ 自愈后重试一次
-        do {
-            return try await performSearch(variables: variables)
-        } catch TwitterAPIError.responseError(let status) where status == 404 {
-            AppLogger.warn("SearchTimeline 404,尝试更新 queryId", category: "NET", ["status": "\(status)"])
-            guard await SearchQueryIdProvider.shared.refresh(session: client) != nil else { throw TwitterAPIError.parseFailure }
-            return try await performSearch(variables: variables)
-        }
+        if let cursor { params["cursor"] = .string(cursor) }
+        let result = try await componentCall("fetch.search_timeline", params)
+        return XSpiderMapping.postPage(result)
     }
-
-    /// 实际发请求（POST + JSON）
-    private func performSearch(variables: [String: Any]) async throws
-        -> (posts: [TwitterPost], cursor: String?) {
-        let queryId = await SearchQueryIdProvider.shared.current()
-        let path = "/i/api/graphql/\(queryId)/SearchTimeline"
-        let url = URL(string: "https://\(host)\(path)")!
-        let body = try JSONSerialization.data(withJSONObject: [
-            "variables": variables,
-            "features": Self.searchTimelineFeatures,
-        ])
-        var headers = await commonHeaders(method: "POST", path: path)
-        headers["Content-Type"] = "application/json"
-
-        let resp = try await client.request(method: "POST", url: url, headers: headers, body: body)
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
-        let instructions = Self.path(json, ["data", "search_by_raw_query",
-                                           "search_timeline", "timeline", "instructions"]) as? [[String: Any]] ?? []
-        // 搜索结果的条目结构与 UserMedia 一致（TimelineAddEntries + TimelineTimelineModule），
-        // 因此直接复用同一套解析——不需要为搜索写第二份。
-        let posts = Self.extractPostsFromModuleInstructions(instructions)
-        if posts.isEmpty { return ([], nil) }
-        return (posts, Self.extractBottomCursor(instructions))
-    }
-
-    /// SearchTimeline 的 features（从当前网页 bundle 的 featureSwitches 还原）
-    static let searchTimelineFeatures = #"{"rweb_video_screen_enabled":true,"rweb_cashtags_enabled":true,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":false,"rweb_tipjar_consumption_enabled":false,"verified_phone_label_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_exclude_directive_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":false,"responsive_web_enhance_cards_enabled":false}"#
-
     // MARK: - 主页时间线
 
     /// 主页 For You(推荐)/Following(关注) 时间线
     func getHomeTimeline(mode: HomeTimelineMode, cursor: String? = nil) async throws -> (posts: [TwitterPost], cursor: String?) {
-        try await ensureXClIdLoaded()
-        let queryId = mode == .forYou ? "7zlnp2TxC044W4C1ZUJMHw" : "0dateTVgvXjpkf7kyBZy0g"
-        let opName = mode == .forYou ? "HomeTimeline" : "HomeLatestTimeline"
-        let path = "/i/api/graphql/\(queryId)/\(opName)"
-        let url = URL(string: "https://\(host)\(path)")!
-        var vars: [String: Any] = [
-            "count": 20,
-            "includePromotedContent": true,
-            "latestControlAvailable": true,
-            "requestContext": "launch",
-        ]
-        if let cursor { vars["cursor"] = cursor }
-        let variables = Self.encodeJSON(vars) ?? "{}"
-        let resp = try await client.request(
-            url: url,
-            query: [
-                "variables": variables,
-                "features": Self.tweetDetailFeatures,
-            ],
-            headers: await commonHeaders(method: "GET", path: path)
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else { throw TwitterAPIError.parseFailure }
-        let instructions = Self.path(json, ["data", "home", "home_timeline_urt", "instructions"]) as? [[String: Any]] ?? []
-        // requireMedia:false —— 返回全部推文，由展示层区分：
-        // 「推文」分段显示全部（含纯文字），「媒体」分段从同一份数据里取有媒体的瀑布流。
-        // 若在此过滤，「推文」分段就只剩带媒体的推文，两个分段内容会完全一样。
-        // includeRetweets: true —— 主页时间线是展示路径，要显示「某某 转推」标签
-        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: false, includeRetweets: true)
-        let bottom = Self.extractBottomCursor(instructions)
-        return (posts, bottom)
+        // requireMedia:false / includeRetweets:true —— 返回全部推文，由展示层分段：
+        // 「推文」显示全部（含纯文字），「媒体」从同一份数据里取有媒体的（见视图层）。
+        // 组件这一侧不筛媒体，与旧行为一致。
+        var params: [String: JSONValue] = ["mode": .string(mode == .forYou ? "for_you" : "following")]
+        if let cursor { params["cursor"] = .string(cursor) }
+        let result = try await componentCall("fetch.home_timeline", params)
+        return XSpiderMapping.postPage(result)
     }
 
     // MARK: - 媒体时间线
@@ -587,43 +501,14 @@ actor TwitterAPI {
     /// 上游 UserMedia（queryId cEjpJXA15Ok78yO4TUQPeQ）。
     /// 返回推文数组 + 下一页 cursor（Bottom cursor value），无更多页时 cursor 为 nil。
     func getUserMedias(userId: String, cursor: String? = nil, count: Int = 20, fast: Bool = false) async throws -> (posts: [TwitterPost], cursor: String?) {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/cEjpJXA15Ok78yO4TUQPeQ/UserMedia"
-        let url = URL(string: "https://\(host)\(path)")!
-        // 上游 getUserMedias:variables.cursor = 传入的 cursor(首页为 undefined → 序列化时省略;
-        // 翻页时为真实 cursor 字符串)。此前这里硬编码 NSNull() 导致每页都请求第一页,
-        // 服务端永远返回相同内容+有效 cursor = 无限加载/无限检索的总根源。
-        var variablesDict: [String: Any] = [
-            "userId": userId,
-            "count": count,
-            "includePromotedContent": false,
-            "withClientEventToken": false,
-            "withBirdwatchNotes": false,
-            "withVoice": true,
-            "withV2Timeline": true,
-        ]
-        if let cursor { variablesDict["cursor"] = cursor }
-        let variables = Self.encodeJSON(variablesDict) ?? "{}"
-
-        let resp = try await (fast
-            ? client.requestFast(url: url, query: [
-                "features": Self.userMediaFeatures,
-                "variables": variables,
-            ], headers: await commonHeaders(method: "GET", path: path))
-            : client.request(url: url, query: [
-                "features": Self.userMediaFeatures,
-                "variables": variables,
-            ], headers: await commonHeaders(method: "GET", path: path), maxAttempts: 3))
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
-        let instructions = Self.path(json, ["data", "user", "result", "timeline_v2", "timeline", "instructions"]) as? [[String: Any]] ?? []
-        let posts = Self.extractPostsFromModuleInstructions(instructions)
-        // 上游语义:解析出 0 条 → 到底信号(cursor 置 null),防止翻页对着空页空转
-        if posts.isEmpty { return ([], nil) }
-        let cursor = Self.extractBottomCursor(instructions)
-        return (posts, cursor)
+        var params: [String: JSONValue] = ["user_id": .string(userId), "count": .int(count)]
+        // 首页省略 cursor 键：显式 null 会被服务端当成非法分页态（踩过的坑，见 git 历史）
+        if let cursor { params["cursor"] = .string(cursor) }
+        let result = try await componentCall("fetch.user_medias", params)
+        let page = XSpiderMapping.postPage(result)
+        // 上游语义：解析出 0 条 = 到底信号（cursor 置 nil），防止对着空页空转
+        if page.posts.isEmpty { return ([], nil) }
+        return page
     }
 
     // MARK: - 推文时间线
@@ -635,39 +520,16 @@ actor TwitterAPI {
     ///   爬虫路径保持默认 false（转推媒体与原创重复，避免重复下载）。
     func getUserTweets(userId: String, cursor: String? = nil, count: Int = 20,
                        requireMedia: Bool = true, includeRetweets: Bool = false) async throws -> (posts: [TwitterPost], cursor: String?) {
-        try await ensureXClIdLoaded()
-        let path = "/i/api/graphql/9zyyd1hebl7oNWIPdA8HRw/UserTweets"
-        let url = URL(string: "https://\(host)\(path)")!
-        var variablesDict: [String: Any] = [
-            "userId": userId,
-            "count": count,
-            "includePromotedContent": true,
-            "withQuickPromoteEligibilityTweetFields": true,
-            "withVoice": true,
-            "withV2Timeline": true,
+        var params: [String: JSONValue] = [
+            "user_id": .string(userId),
+            "count": .int(count),
+            "require_media": .bool(requireMedia),
+            "include_retweets": .bool(includeRetweets),
         ]
-        // 首页省略 cursor 键(上游 JSON.stringify 丢弃 undefined);显式 null 可能被服务端当非法分页态
-        if let cursor { variablesDict["cursor"] = cursor }
-
-        let resp = try await client.request(
-            url: url,
-            query: [
-                "features": Self.userTweetsFeatures,
-                "variables": Self.encodeJSON(variablesDict) ?? "{}",
-            ],
-            headers: await commonHeaders(method: "GET", path: path),
-            maxAttempts: 3
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any] else {
-            throw TwitterAPIError.parseFailure
-        }
-        let instructions = Self.path(json, ["data", "user", "result", "timeline_v2", "timeline", "instructions"]) as? [[String: Any]] ?? []
-        let posts = Self.extractPostsFromTweetEntries(instructions, requireMedia: requireMedia, includeRetweets: includeRetweets)
-        let cursor = Self.extractBottomCursor(instructions)
-        return (posts, cursor)
+        if let cursor { params["cursor"] = .string(cursor) }
+        let result = try await componentCall("fetch.user_tweets", params)
+        return XSpiderMapping.postPage(result)
     }
-
     // MARK: - JSON 解析（对应上游 ramda path 管线）
 
     /// UserMedia：上游取第一个 TimelineTimelineModule 的 items（或 TimelineAddToModule 的 moduleItems）。

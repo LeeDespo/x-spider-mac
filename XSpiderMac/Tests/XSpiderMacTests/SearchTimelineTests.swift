@@ -53,77 +53,15 @@ final class SearchTimelineTests: XCTestCase {
         XCTAssertTrue(q.contains("until:2025-02-10"))
     }
 
-    // MARK: - queryId 自愈解析
+    // MARK: - queryId 自愈
+    //
+    // 这一节原有的 5 条测试（解析 bundle 找 SearchTimeline 的 queryId、
+    // 锚定 operationName、抓 /search 页面找 main bundle）**已随实现一起移出本仓库**：
+    // queryId 失效的自愈现在在组件里（`xspider-fetch` 的 search_query_id），
+    // 那边的测试用的是**真实抓下来的页面/bundle fixture**，比这里的字符串样本更硬。
+    //
+    // 保留在这里的是"应用侧仍然活着的行为"：rawQuery 的拼法、日期语义。
 
-    /// 从 bundle 文本提取：**必须锚定 operationName:"SearchTimeline"**
-    func testExtractQueryIdAnchoredToOperationName() {
-        // bundle 里存在多个含 "SearchTimeline" 的操作，且它们**排在前面**（实测如此）：
-        // 只按名字搜会先命中 BookmarkSearchTimeline 的 queryId，取到错的。
-        let bundle = """
-        e.exports={queryId:"rbwiGBFqb93lmG7mw_OYZQ",operationName:"BookmarkSearchTimeline",operationType:"query"},\
-        e.exports={queryId:"tbfwt3lMoSiVODtsBmEFGQ",operationName:"GlobalCommunitiesPostSearchTimeline"},\
-        e.exports={queryId:"i4096Pm5N66WDAdjumVLrQ",operationName:"ListSearchTimeline"},\
-        e.exports={queryId:"auLkqtmHqYEpRvflfvLhyQ",operationName:"SearchTimeline",operationType:"query"}
-        """
-        let id = SearchQueryIdProvider.extractSearchTimelineQueryId(from: bundle)
-        XCTAssertEqual(id, "auLkqtmHqYEpRvflfvLhyQ",
-                       "必须取 SearchTimeline 自己的 queryId，不能取到 Bookmark/List 等变体")
-    }
-
-    /// bundle 里没有该操作 → 返回 nil（不抛异常，调用方据此放弃自愈）
-    func testExtractQueryIdReturnsNilWhenAbsent() {
-        XCTAssertNil(SearchQueryIdProvider.extractSearchTimelineQueryId(from: "nothing here"))
-        XCTAssertNil(SearchQueryIdProvider.extractSearchTimelineQueryId(from: ""))
-        // 有同名操作但没有 queryId 相邻
-        XCTAssertNil(SearchQueryIdProvider.extractSearchTimelineQueryId(
-            from: #"operationName:"SearchTimeline""#))
-    }
-
-    /// queryId 长度/字符集不合法时不误匹配（避免把别的标识当 queryId）
-    func testExtractQueryIdRejectsWrongShape() {
-        XCTAssertNil(SearchQueryIdProvider.extractSearchTimelineQueryId(
-            from: #"queryId:"short",operationName:"SearchTimeline""#),
-            "过短的字符串不是 queryId")
-    }
-
-    /// 从搜索页 HTML 提取 main bundle 地址
-    func testExtractMainBundleURL() {
-        let html = """
-        <script src="https://abs.twimg.com/responsive-web/client-web/vendor.02e04961c2b81e2ea.js"></script>
-        <script src="https://abs.twimg.com/responsive-web/client-web/main.059fecabedbff681a.js"></script>
-        """
-        let url = SearchQueryIdProvider.extractMainBundleURL(from: html)
-        XCTAssertEqual(url?.absoluteString,
-                       "https://abs.twimg.com/responsive-web/client-web/main.059fecabedbff681a.js",
-                       "必须取 main bundle（queryId 在里面），不是 vendor")
-    }
-
-    func testExtractMainBundleURLNilWhenAbsent() {
-        XCTAssertNil(SearchQueryIdProvider.extractMainBundleURL(from: "<html>no bundle</html>"))
-    }
-
-    /// provider 默认值可直接用（首次使用不必先抓 bundle）
-    func testProviderHasBuiltInFallback() async {
-        await SearchQueryIdProvider.shared.resetForTesting()
-        let id = await SearchQueryIdProvider.shared.current()
-        XCTAssertFalse(id.isEmpty, "必须有内置默认值，否则首次使用要先联网抓 bundle")
-        XCTAssertEqual(id.count, 22, "X 的 queryId 是 22 位")
-    }
-
-    /// **纠正一条曾被写错的结论**：openapi 里记录的 queryId **并未失效**。
-    ///
-    /// 实测（POST + JSON）：openapi 记录的 `Yw6L66Pw…` 与当前 bundle 的
-    /// `auLkqtmHq…` **都返回 200 与 42 条真实数据**；
-    /// GET 对两者**都** 404 —— 404 是 GET 造成的，与 queryId 无关。
-    ///
-    /// 这条测试锁住"默认值就是 openapi 记录的那个"，
-    /// 避免以后有人看到旧文档又把它当成"失效值"去改。
-    func testDefaultQueryIdIsTheOpenAPIValue() async {
-        await SearchQueryIdProvider.shared.resetForTesting()
-        let id = await SearchQueryIdProvider.shared.current()
-        XCTAssertEqual(id, "Yw6L66Pw54NHKuq4Dp7b4Q",
-                       "默认值取 openapi 记录值（实测有效）；404 是 GET 的假象，不是它失效")
-    }
 }
 
 /// 展示路径的**时间轴推进**终止判据（空窗期修复）。

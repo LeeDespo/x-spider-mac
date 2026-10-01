@@ -1,7 +1,33 @@
 import SwiftUI
 
+/// 退出时收尾：**先把组件优雅关停**（它会落盘下载记录、结束自己的 aria2 子进程），
+/// 再让应用退出。
+///
+/// 为什么必须有这一步：组件是独立进程，`kill -9` 会跳过它的收尾——
+/// 表现是"重启后未完成的任务没有恢复"，而那是很难归因的一类问题。
+/// 关闭窗口不等于退出（macOS 习惯），所以这里用 `applicationShouldTerminate`
+/// 返回 `.terminateLater`，等收尾完成再真正退出。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            await XSpiderComponent.shared.shutdown()
+            NSApplication.shared.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 兜底：上面的异步收尾若已超时（组件不响应），这里同步再踢一脚
+        if XSpiderComponent.shared.isRunning {
+            AppLogger.info("退出时组件仍在运行，交给进程组清理", category: "CORE")
+        }
+    }
+}
+
 @main
 struct XSpiderMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @State private var settingsStore = SettingsStore.shared
     @State private var appStore = AppStore.shared
     @State private var downloadStore = DownloadStore.shared
