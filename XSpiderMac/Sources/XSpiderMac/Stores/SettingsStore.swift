@@ -157,7 +157,9 @@ final class SettingsStore {
 
     /// 限流缓解设置 → 请求闸门（设置改动即时生效）
     private func applyRateLimit() {
-        Task { await NetworkClient.syncGateConfig(settings) }
+        // 限流参数现在推给组件（`net.set_limits`）；组件内部按配额域分桶治理，
+        // 外壳只是把用户设的值传下去。
+        Task { await TwitterAPI.shared.configure(cookie: AppStore.shared.cookieString, proxy: settings.proxy) }
     }
 
     /// 应用语言（应用内字符串表即时生效 + UserDefaults AppleLanguages 供系统级组件）

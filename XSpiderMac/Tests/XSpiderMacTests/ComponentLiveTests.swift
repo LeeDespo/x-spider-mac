@@ -55,6 +55,83 @@ final class ComponentLiveTests: XCTestCase {
 
 
 
+
+    /// 账户信息改由组件回答（`auth.whoami`）：拿得到 screen_name 与头像就是通的。
+    @MainActor
+    func testWhoamiThroughTheAppPath() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        let info = try await TwitterAPI.shared.getAccountInfo()
+        XCTAssertFalse(info.screenName.isEmpty, "whoami 没拿到 screen_name（cookie 失效？）")
+        XCTAssertTrue(info.avatar.hasPrefix("http"), "头像应当是绝对 URL：\(info.avatar)")
+    }
+
+    /// 关注态：拿得到布尔值即可（true/false 都算通过，我们不假设测试账号关注了谁）。
+    @MainActor
+    func testIsFollowingThroughTheAppPath() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        // `useCache: false` 强制走一次真实请求（缓存命中不能算验证）
+        _ = try await TwitterAPI.shared.isFollowing(screenName: "tesla", useCache: false)
+    }
+
+    /// **写操作的连线检查，但刻意不产生副作用**：用一个不存在的推文 id 调 `favorite`。
+    ///
+    /// 期望拿到结构化错误（`not_found` 或 `upstream`/`invalid_request`）——
+    /// 这已经证明：参数被正确组装、请求被签名并带上了凭据、X 真的处理了它。
+    /// **不拿真实推文试**：那会给作者发通知、在账号上留下痕迹，属于"测试不该做的事"。
+    @MainActor
+    func testMutateIsWiredWithoutSideEffects() async throws {
+        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        let cookie = storedCookie
+        try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
+
+        let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
+        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+
+        // 1) 参数校验：缺 tweet_id 必须在**发请求之前**就被挡住
+        do {
+            _ = try await XSpiderComponent.shared.call("fetch.mutate", ["action": .string("favorite")])
+            XCTFail("缺 tweet_id 应当报 invalid_request")
+        } catch let error as XSpiderComponent.ComponentError {
+            XCTAssertEqual(error.code, "invalid_request", "实际：\(error)")
+        }
+
+        // 2) 一个**不可能存在**的推文 id：链路是真的，但什么都没改。
+        //
+        // 用超长数字而不是小整数：我第一次写的是 `"1"`（以为它不存在），
+        // 结果 X **真的接受了那次点赞**——测试在用户的账号上留下了一个赞。
+        // 教训：验证写操作时，"不存在的目标"必须选**结构上不可能存在**的，
+        // 而不是"我觉得不存在"的。
+        do {
+            _ = try await XSpiderComponent.shared.call("fetch.mutate", [
+                "action": .string("favorite"), "tweet_id": .string("99999999999999999999999"),
+            ])
+            XCTFail("对不存在（且格式越界）的推文点赞不该成功")
+        } catch let error as XSpiderComponent.ComponentError {
+            // 要的是"X **收到了**并**拒绝了**"：不是 unauthorized（凭据/签名没走通），
+            // 也不是 transport（压根没连上）。
+            //
+            // 实测：越界的 id 会被 X 自己的 `strconv.ParseInt` 拒掉，返回 HTTP 200 +
+            // 一条**没有 code** 的错误（落到 upstream）。144（"No status found"）是
+            // "语法合法但不存在"的 id 才给的——那条映射由组件侧单测覆盖，
+            // **不在这里试**：猜一个"看起来不存在"的小 id 有可能真的存在
+            // （我第一次用 `"1"`，结果真的在账号上留下了一个赞）。
+            XCTAssertEqual(error.code, "upstream", "实际：\(error)")
+            XCTAssertFalse(error.isTransport, "连不上的话这条测试没有意义：\(error)")
+        }
+    }
+
     /// **视频这条路的回归测试**：封面必须是图片、可播放地址必须是 mp4，两者不能混。
     ///
     /// 用户实测报过"视频无法显示、图片正常"：原因是映射把 `TwitterMedia.url` 填成了

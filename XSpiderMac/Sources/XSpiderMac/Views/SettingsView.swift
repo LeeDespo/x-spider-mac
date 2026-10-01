@@ -345,11 +345,8 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                         Spacer()
-                        Button(L("立即恢复")) {
-                            Task {
-                                await RequestGate.shared.resetBreakers()
-                                statusStore.breakerOpen = false
-                            }
+                        Button(L("重新检测")) {
+                            Task { await statusStore.probeAndRecover() }
                         }
                         .compatGlassButton()
                     }

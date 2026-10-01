@@ -5,15 +5,12 @@ import Foundation
 actor TwitterAPI {
     static let shared = TwitterAPI()
 
-    private let host = "x.com"
-    /// twscrape/account.py TOKEN：X 轮换后的有效 Bearer（上游 2024 硬编码版已 401）
-    private let bearer = XClientTransaction.bearer
-    static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-
-    private var client = NetworkClient()
-    private var cookieString: String = ""
-    /// XClId 密钥是否就绪（首次 GraphQL 请求前需要 loadKeys）
-    private var xclidReady = false
+    /// 这个 actor 现在是**纯粹的映射层**：把契约的 JSON 变成应用模型，
+    /// 把应用的动作变成契约调用。签名、限流、凭据、重试全在组件里——
+    /// 外壳里没有任何一条自己发出的 X 请求了（ADR-040）。
+    ///
+    /// 旧的 HTTP 层（`NetworkClient` / `XClientTransaction` / `RequestGate`）
+    /// 已随这次迁移删除。
 
     /// 非持久状态：由 AppStore 每次 cookie 变更时推送
     /// 非持久状态：由 AppStore 每次 cookie/代理变更时推送。
@@ -24,14 +21,6 @@ actor TwitterAPI {
     ///
     /// 凭据**只进不出**：组件不回显、不落盘、不打日志；这里也不打。
     func configure(cookie: String, proxy: ProxySettings) async {
-        self.cookieString = cookie
-        // 取数虽然已经交给组件，但**还有两条路在用本机的 NetworkClient**：
-        // 关注态查询（v1.1 friendships/show）与账户信息探测（抓 x.com 首页）。
-        // 所以这里仍要重建它：只换引用不关连接池的话，旧连接会指向失效的代理路径，
-        // 在超时前一直挂着并持续占用请求闸门——表现是"代理恢复了但应用还卡着"，
-        // 而且会拖慢同一闸门下的其它请求（实测：一条后台重试把一次 4s 的请求拖到 31s）。
-        await client.invalidate()
-        self.client = NetworkClient(proxy: proxy)
         let settings = await MainActor.run { SettingsStore.shared.settings }
         do {
             _ = try await XSpiderComponent.shared.ensureStarted()
@@ -101,37 +90,6 @@ actor TwitterAPI {
         }
     }
 
-    // MARK: - Headers
-
-    /// twscrape/account.py make_client 的头集合 + X 2025 交易 ID
-    private func commonHeaders(withCredentials: Bool = true, method: String = "GET", path: String? = nil) async -> [String: String] {
-        var headers: [String: String] = [
-            "User-Agent": Self.userAgent,
-            "Referer": "https://\(host)",
-        ]
-        if withCredentials {
-            headers["Authorization"] = bearer
-            headers["Cookie"] = cookieString
-            headers["X-Csrf-Token"] = Cookie.parse(cookieString)["ct0"] ?? ""
-            // twscrape 头集合（2025 校验必需）
-            headers["x-twitter-active-user"] = "yes"
-            headers["x-twitter-client-language"] = "en"
-            // X 新防护：每个 /i/api/ 请求都要交易 ID
-            let apiPath = path ?? ""
-            if let txid = await XClientTransaction.shared.transactionId(method: method, path: apiPath) {
-                headers["x-client-transaction-id"] = txid
-            }
-        }
-        return headers
-    }
-
-    /// 确保 XClId 密钥已加载（cookie 有效后调用一次）
-    private func ensureXClIdLoaded() async throws {
-        guard !xclidReady else { return }
-        try await XClientTransaction.shared.loadKeys(cookieString: cookieString)
-        xclidReady = true
-    }
-
     // MARK: - 单条推文（TweetDetail，用于推文链接搜索）
 
     /// 上游 op XMOz5h24KAZ86qKffKTLdQ/TweetDetail。返回 focal 推文（含媒体）。
@@ -182,25 +140,22 @@ actor TwitterAPI {
 
     // MARK: - 账户信息（登录验证）
 
-    /// 抓取 x.com 首页 HTML，正则提取 screen_name 与头像。
-    /// 与上游一致：cookie 无效时页面不含这些字段 → 抛 missingScreenName。
-    /// - Parameter fast: true 时单次 15s 超时、最多 2 次（手动探测用，快速给出结论）
+    /// 账户信息：**由组件回答**（`auth.whoami`）。
+    ///
+    /// 这一条以前是"每个外壳自己写一遍"的：抓 x.com 首页、正则掏 `screen_name`。
+    /// 搬进组件还有个附带好处：**它和签名用的页面抓取走同一条路**，
+    /// 不会再各自处理"未登录会 307 到 onboarding"这类细节。
     func getAccountInfo(cookieStringOverride: String? = nil, fast: Bool = false) async throws -> TwitterAccountInfo {
-        let url = URL(string: "https://\(host)")!
-        var headers = await commonHeaders(withCredentials: false)
-        if let cookie = cookieStringOverride { headers["Cookie"] = cookie }
-        let resp = try await (fast
-            ? client.requestFast(url: url, headers: headers, bypassGate: true)
-            : client.request(url: url, headers: headers))
-        let html = resp.text()
-        guard let screenName = extract(pattern: #""screen_name":"(.*?)""#, from: html) else {
+        _ = (cookieStringOverride, fast)
+        let result = try await componentCall("auth.whoami")
+        guard let account = result[object: "account"],
+              let screenName = account[string: "screen_name"], !screenName.isEmpty else {
             throw TwitterAPIError.missingScreenName
         }
-        guard let avatar = extract(pattern: #""profile_image_url_https":"(.*?)""#, from: html) else {
-            throw TwitterAPIError.missingAvatar
-        }
-        let restId = extract(pattern: #""rest_id":"(\d+)""#, from: html)
-        return TwitterAccountInfo(screenName: screenName, avatar: avatar, id: restId)
+        return TwitterAccountInfo(
+            screenName: screenName,
+            avatar: account[string: "avatar"] ?? "",
+            id: account[string: "id"])
     }
 
     // MARK: - 用户查询
@@ -217,42 +172,108 @@ actor TwitterAPI {
 
     // MARK: - 推文互动（点赞/转推/书签）
 
-    /// POST GraphQL 突变操作的公共封装
-    private func mutate(path: String, variables: String, features: String? = nil) async throws {
-        try await ensureXClIdLoaded()
-        let url = URL(string: "https://\(host)\(path)")!
-        var query: [String: String] = ["variables": variables]
-        if let features { query["features"] = features }
-        let resp = try await client.request(
-            method: "POST",
-            url: url,
-            query: query,
-            headers: await commonHeaders(method: "POST", path: path)
-        )
-        try ensureResponse(resp)
+    /// 六条走同一个 method（`fetch.mutate` 的 `action`）：它们的差别只有
+    /// "哪个 queryId + 哪几个 variables"，那是组件的实现细节，不该漏进外壳。
+    private func mutate(_ action: String, tweetId: String) async throws {
+        _ = try await componentCall("fetch.mutate", [
+            "action": .string(action), "tweet_id": .string(tweetId),
+        ])
     }
 
-    /// 关注 / 取关（v1.1 friendships REST;走 api.twitter.com,X web 同款端点）
+    func favoriteTweet(id: String) async throws { try await mutate("favorite", tweetId: id) }
+    func unfavoriteTweet(id: String) async throws { try await mutate("unfavorite", tweetId: id) }
+    func createRetweet(id: String) async throws { try await mutate("retweet", tweetId: id) }
+    func deleteRetweet(id: String) async throws { try await mutate("unretweet", tweetId: id) }
+    func createBookmark(id: String) async throws { try await mutate("bookmark", tweetId: id) }
+    func deleteBookmark(id: String) async throws { try await mutate("unbookmark", tweetId: id) }
+
+    // MARK: - 搜索时间线（SearchTimeline：服务端按时间范围过滤）
+
+    /// 搜索端点对应的展示形态（对应网页的 `f=media` / `f=live`）。
+    enum SearchProduct: String, Sendable {
+        case media  = "Media"    // 网页 f=media
+        case latest = "Latest"   // 网页 f=live
+    }
+
+    /// 把 UI 的时间范围 + 数据源翻译成 X 搜索语法。
+    ///
+    /// **`until:` 是排他的**（X 语义：`until:2026-09-01` 不含 9 月 1 日当天）。
+    /// 用户界面的"至"是**含当日**的直觉，所以这里用 `inclusiveEnd`（当天 23:59:59）
+    /// 再 +1 天，得到次日日期——否则用户会发现"至"那天永远没有内容。
+    ///
+    /// **必须按本地日历取日期**：`DatePicker` 给的 `end` 是**本地**当天零点，
+    /// 若用 UTC 格式化，在东八区会得到一个"前一天"的日期字符串，
+    /// 导致范围整体偏移一天（实测：本地 2025-08-31 → UTC 写成 2025-08-30）。
+    ///
+    /// `filter:media` 对应媒体数据源：让服务端只返回带媒体的推文，
+    /// 比拉回来再本地筛更省配额。
+    /// 推文详情树（组件 `fetch.tweet_detail`）：focal + 已算好深度的回复。
+    ///
+    /// 深度由 `XSpiderMapping` 按 `parent_id` 的父链算——契约给父子关系不给深度，
+    /// 那是外壳按同一份数据推出来的（参考实现的树也是在这里构建的）。
+    func getTweetDetailTree(id: String) async throws -> (focal: TwitterPost, replies: [ReplyNode]) {
+        let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
+        let parsed = XSpiderMapping.replyNodes(result, focalId: id)
+        guard let focal = parsed.focal else { throw TwitterAPIError.parseFailure }
+        return (focal, parsed.replies)
+    }
+
+    /// 关注态缓存（300s）。组件那边也缓存了"我是谁"，但这条省掉的是**每次 show 请求**：
+    /// 同一页里同名作者会重复出现，不缓存就是十几个 1.1 请求（限流的放大器）。
+    private var followCache: [String: (value: Bool, at: Date)] = [:]
+    private let followCacheTTL: TimeInterval = 300
+
+    /// 关注列表（Following，组件 `fetch.following`）。
+    func getFollowing(userId: String, cursor: String? = nil, count: Int = 100) async throws -> (users: [TwitterUser], cursor: String?) {
+        var params: [String: JSONValue] = ["user_id": .string(userId), "count": .int(count)]
+        if let cursor { params["cursor"] = .string(cursor) }   // 首页**不要**传 cursor（契约 §3.3）
+        let result = try await componentCall("fetch.following", params)
+        return XSpiderMapping.userPage(result)
+    }
+
+    /// 我有没有关注它（组件 `fetch.is_following`）。
+    func isFollowing(screenName: String, useCache: Bool = true) async throws -> Bool {
+        if useCache, let hit = followCache[screenName], Date().timeIntervalSince(hit.at) < followCacheTTL {
+            return hit.value
+        }
+        let result = try await componentCall("fetch.is_following", ["screen_name": .string(screenName)])
+        let following = result[bool: "following"] ?? false
+        followCache[screenName] = (following, Date())
+        return following
+    }
+
+    /// 关注 / 取关（组件 `fetch.mutate`；v1.1 REST 那条路的形状差异在组件里处理）。
     func followUser(screenName: String) async throws {
-        try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/create.json",
-                           fields: ["screen_name": screenName, "skip_status": "true"])
+        _ = try await componentCall("fetch.mutate", [
+            "action": .string("follow"), "screen_name": .string(screenName),
+        ])
         invalidateFollowCache(screenName)
     }
 
     func unfollowUser(screenName: String) async throws {
-        try await formPost(baseHost: "api.twitter.com", path: "/1.1/friendships/destroy.json",
-                           fields: ["screen_name": screenName, "skip_status": "true"])
+        _ = try await componentCall("fetch.mutate", [
+            "action": .string("unfollow"), "screen_name": .string(screenName),
+        ])
         invalidateFollowCache(screenName)
     }
 
-    /// 当前账户 restId(账户信息缺 id 时用 UserByScreenName 补查)
+    /// 关注/取关后失效该用户的关系缓存（本方法与 isFollowing 同 actor 串行，无数据竞争）
+    private func invalidateFollowCache(_ screenName: String) {
+        followCache.removeValue(forKey: screenName)
+    }
+
+    /// 当前账户 restId（账户信息缺 id 时用 `fetch.get_user` 补查）。
     func currentUserId() async -> String? {
         if let id = await MainActor.run(body: { AppStore.shared.account?.id }), !id.isEmpty { return id }
         guard let sn = await MainActor.run(body: { AppStore.shared.account?.screenName }) else { return nil }
         return (try? await getUser(screenName: sn).id) ?? nil
     }
 
-    /// 用户 result dict → TwitterUser(兼容 legacy 与新版 core 结构)
+    /// 用户 result dict → TwitterUser（兼容 legacy 与新版 core 结构）。
+    ///
+    /// **取数已经不经它**（组件给的是已经归一化的 user）；留着是因为下面那组
+    /// 老解析函数（`extractPostsFrom*` / `mapTwitterPost`）仍然被测试覆盖着，
+    /// 而它们要它。等那批测试随解析函数一起退役，这里也能删。
     static func mapTwitterUser(_ result: [String: Any]) -> TwitterUser? {
         let legacy = result["legacy"] as? [String: Any] ?? [:]
         let core = result["core"] as? [String: Any] ?? [:]
@@ -278,160 +299,6 @@ actor TwitterAPI {
         )
     }
 
-    /// 限制：关注态查询（v1.1 friendships/show）仍走本应用自己的 HTTP 客户端——
-    /// 组件目前没有对应 method（`fetch.mutate` 也还没实现），这部分不属于"已被替代"。
-    private var followCache: [String: (value: Bool, at: Date)] = [:]
-    private let followCacheTTL: TimeInterval = 300
-
-    /// 关注列表（Following）——已由组件接管（`fetch.following`）。
-    func getFollowing(userId: String, cursor: String? = nil, count: Int = 100) async throws -> (users: [TwitterUser], cursor: String?) {
-        var params: [String: JSONValue] = ["user_id": .string(userId), "count": .int(count)]
-        if let cursor { params["cursor"] = .string(cursor) }   // 首页**不要**传 cursor（契约 §3.3）
-        let result = try await componentCall("fetch.following", params)
-        return XSpiderMapping.userPage(result)
-    }
-
-    func isFollowing(screenName: String, useCache: Bool = true) async throws -> Bool {
-        if useCache, let hit = followCache[screenName], Date().timeIntervalSince(hit.at) < followCacheTTL {
-            return hit.value
-        }
-        try await ensureXClIdLoaded()
-        // v1.1 friendships 系列须走 api.twitter.com(x.com 域名对该端点 401)
-        let url = URL(string: "https://api.twitter.com/1.1/friendships/show.json")!
-        let me = await MainActor.run { AppStore.shared.account?.screenName ?? "" }
-        let resp = try await client.request(
-            url: url,
-            query: ["source_screen_name": me, "target_screen_name": screenName],
-            headers: await commonHeaders(method: "GET", path: "/1.1/friendships/show.json")
-        )
-        try ensureResponse(resp)
-        guard let json = (try? resp.json()) as? [String: Any],
-              let rel = json["relationship"] as? [String: Any],
-              let source = rel["source"] as? [String: Any] else { return false }
-        // source.following = 我是否关注 target
-        let following = source["following"] as? Bool ?? false
-        followCache[screenName] = (following, Date())
-        return following
-    }
-
-    /// 关注/取关后失效该用户的关系缓存（本方法与 isFollowing 同 actor 串行，无数据竞争）
-    private func invalidateFollowCache(_ screenName: String) {
-        followCache.removeValue(forKey: screenName)
-    }
-
-    /// v1.1 form-urlencoded POST(baseHost 默认 x.com;v1.1 friendships 系列须走 api.twitter.com)
-    private func formPost(baseHost: String? = nil, path: String, fields: [String: String]) async throws {
-        try await ensureXClIdLoaded()
-        let url = URL(string: "https://\(baseHost ?? host)\(path)")!
-        let body = fields.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
-            .joined(separator: "&")
-        var headers = await commonHeaders(method: "POST", path: path)
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        let resp = try await client.request(
-            method: "POST",
-            url: url,
-            headers: headers,
-            body: Data(body.utf8)
-        )
-        try ensureResponse(resp)
-    }
-
-    /// 点赞 / 取消点赞
-    func favoriteTweet(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
-            variables: """
-            {"tweet_id":"\(id)"}
-            """
-        )
-    }
-
-    /// 取消点赞（UnfavoriteTweet）
-    func unfavoriteTweet(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/ZYKSe-w7KEslx3JhSIk5LA/UnfavoriteTweet",
-            variables: """
-            {"tweet_id":"\(id)","dark_request":false}
-            """
-        )
-    }
-
-    /// 转推 / 撤销转推
-    func createRetweet(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/mbRO74GrOvSfRcJnlMapnQ/CreateRetweet",
-            variables: """
-            {"tweet_id":"\(id)","dark_request":false}
-            """
-        )
-    }
-
-    func deleteRetweet(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/ZyZigVsNiFO6v1dEks1eWg/DeleteRetweet",
-            variables: """
-            {"source_tweet_id":"\(id)","dark_request":false}
-            """
-        )
-    }
-
-    /// 书签 / 移除书签
-    func createBookmark(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/aoDbu3RHznuiSkQ9aNM67Q/CreateBookmark",
-            variables: """
-            {"tweet_id":"\(id)"}
-            """
-        )
-    }
-
-    func deleteBookmark(id: String) async throws {
-        try await mutate(
-            path: "/i/api/graphql/Wlmlj2-xzyS1GN3a6cj-mQ/DeleteBookmark",
-            variables: """
-            {"tweet_id":"\(id)"}
-            """
-        )
-    }
-
-    /// 一次 TweetDetail 请求同时拿到 focal 推文与回复树。
-    ///
-    /// **详情卡只用这一个入口**：TweetDetail 是重端点，分别取 focal 与回复会把
-    /// 同一个请求（同样的 focalTweetId、同样的 features）打两遍，白白翻倍消耗
-    /// X 配额——项目一直在对抗 429，这种重复请求是实打实的放大器。
-    func getTweetDetailTree(id: String) async throws -> (focal: TwitterPost, replies: [ReplyNode]) {
-        let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
-        let parsed = XSpiderMapping.replyNodes(result, focalId: id)
-        guard let focal = parsed.focal else { throw TwitterAPIError.parseFailure }
-        return (focal, parsed.replies)
-    }
-    /// 容易漂移；统一到这里，改动只需一处。
-    /// 评论树不再在应用侧构建：组件返回 `focal` + `replies[]`（含 `parent_id`、
-    /// `is_partial_parent`），深度由 `XSpiderMapping` 按父链算。
-    static func currentComponentAvailability() async -> String {
-        guard let info = XSpiderComponent.shared.currentInfo else { return "未启动" }
-        return "\(info.transport) 契约\(info.contractVersion)"
-    }
-    // MARK: - 搜索时间线（SearchTimeline：服务端按时间范围过滤）
-
-    /// 搜索端点对应的展示形态（对应网页的 `f=media` / `f=live`）。
-    enum SearchProduct: String, Sendable {
-        case media  = "Media"    // 网页 f=media
-        case latest = "Latest"   // 网页 f=live
-    }
-
-    /// 把 UI 的时间范围 + 数据源翻译成 X 搜索语法。
-    ///
-    /// **`until:` 是排他的**（X 语义：`until:2026-09-01` 不含 9 月 1 日当天）。
-    /// 用户界面的"至"是**含当日**的直觉，所以这里用 `inclusiveEnd`（当天 23:59:59）
-    /// 再 +1 天，得到次日日期——否则用户会发现"至"那天永远没有内容。
-    ///
-    /// **必须按本地日历取日期**：`DatePicker` 给的 `end` 是**本地**当天零点，
-    /// 若用 UTC 格式化，在东八区会得到一个"前一天"的日期字符串，
-    /// 导致范围整体偏移一天（实测：本地 2025-08-31 → UTC 写成 2025-08-30）。
-    ///
-    /// `filter:media` 对应媒体数据源：让服务端只返回带媒体的推文，
-    /// 比拉回来再本地筛更省配额。
     static func searchRawQuery(screenName: String, range: DownloadFilter.DateRange,
                                includeMediaOnly: Bool) -> String {
         let since = Self.searchDateString(range.start)
@@ -960,12 +827,6 @@ actor TwitterAPI {
     }
 
     // MARK: - 工具
-
-    private func ensureResponse(_ resp: NetworkResponse) throws {
-        if resp.status >= 400 {
-            throw TwitterAPIError.responseError(status: resp.status)
-        }
-    }
 
     static func path(_ dict: [String: Any], _ keys: [String]) -> Any? {
         var current: Any? = dict

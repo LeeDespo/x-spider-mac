@@ -424,11 +424,20 @@ enum SyncFailure: LocalizedError {
             default: break
             }
         }
-        if let netErr = error as? NetworkError, case .httpStatus(let code) = netErr {
-            switch code {
-            case 403: return .userSuspended(screenName)   // X 封禁返回 403
-            case 401: return .authExpired
-            case 404: return .userNotFound(screenName)
+        // 组件给的是**结构化错误码**（契约只允许按 code 判断，不许匹配文案）。
+        // 这一层决定"账号被封 / 登录失效 / 用户不存在 / 网络问题"给用户看什么提示。
+        if let component = error as? XSpiderComponent.ComponentError {
+            if let status = component.status {
+                switch status {
+                case 403: return .userSuspended(screenName)   // X 封禁返回 403
+                case 401: return .authExpired
+                case 404: return .userNotFound(screenName)
+                default: break
+                }
+            }
+            switch component.code {
+            case "unauthorized": return .authExpired
+            case "not_found": return .userNotFound(screenName)
             default: break
             }
         }

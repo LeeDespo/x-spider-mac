@@ -274,8 +274,10 @@ final class AccountStatusStore {
         probing = true
         defer { probing = false }
 
-        // 1) 立即结束熔断，让探测请求真的能发出去
-        await RequestGate.shared.resetBreakers()
+        // 1) 熔断状态现在归组件（`net.status`）。这里只是把界面的显示对齐一次，
+        //    不再"清别人的熔断器"——组件的冷却按时间自然失效（契约 §4.4 的实测教训：
+        //    粘性标志位会在网络恢复后把应用一直卡住）。
+        await refreshFromComponentStatus()
         breakerOpen = false
 
         // 2) 真实探测（绕过闸门，避免被自己的限速拖住；短暂超时快速失败）
@@ -287,11 +289,26 @@ final class AccountStatusStore {
         } catch is CancellationError {
             return
         } catch {
-            // 失败状态由 NetworkClient 的被动上报写入；此处只补一个兜底分类
-            if effectiveHealth == .normal, !(error is RequestGate.GateError) {
+            // 失败分类兜底：组件已经把它自己的重试做完，这里只更新界面状态
+            if effectiveHealth == .normal {
                 noteNetworkFailure(error)
             }
             AppLogger.warn("手动探测:仍然异常", category: "NET", ["error": error.localizedDescription])
+        }
+    }
+
+    /// 从组件读限流状态（`net.status`）。**组件是权威**：它的冷却到期会自然失效，
+    /// 界面跟着它显示即可，不需要外壳自己维护一份粘性标志位。
+    func refreshFromComponentStatus() async {
+        guard let result = try? await XSpiderComponent.shared.call("net.status") else { return }
+        switch result[string: "state"] {
+        case "rate_limited":
+            let until = result[int: "rate_limited_until"].map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            noteRateLimited(until: until)
+        case "ok":
+            if case .rateLimited = health { reset() }
+        default:
+            break
         }
     }
 
