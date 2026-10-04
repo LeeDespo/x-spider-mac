@@ -3,14 +3,18 @@
 > 上游 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React，Windows 优先，
 > 已停止维护）到 **macOS / SwiftUI** 的移植。
 
-原生 macOS 应用，SwiftUI 重写界面，内置 aria2Next 下载引擎。
-用于简单浏览与批量下载 X（Twitter）用户的媒体。
+原生 macOS 应用，SwiftUI 重写界面，用于简单浏览与批量下载 X（Twitter）用户的媒体。
+
+取数、写操作、下载与爬取由 **Rust 组件 `x-spider-core`**（sidecar 可执行文件 `xspiderd`）提供，
+应用本体只负责界面与产品逻辑。组件怎么装、怎么更新见「[组件](#组件x-spider-core)」一节。
 
 ## 安装
 
 1. 下载 `XSpiderMac-x.x.x.dmg`（见 [Releases](../../releases)）；
 2. 打开 dmg，把 **X-Spider** 拖进「应用程序」；
 3. 首次打开若提示 **"已损坏，无法打开"** 或 **"无法验证开发者"**，见下一节。
+
+> 组件（`xspiderd` 与 `aria2next`）随 DMG 一起分发，**无需单独安装**；需要更新组件时见「组件」一节。
 
 ## ⚠️ 解除系统拦截（未签名应用，必读）
 
@@ -50,17 +54,52 @@ sudo xattr -dr com.apple.quarantine /Applications/X-Spider.app
   - 推文详情浮层：媒体查看、评论（层级 + 排序）、引用推文、翻译、点赞 / 书签、在浏览器打开
   - 独立媒体查看窗口：缩放、旋转、全屏、倍速播放、切换上下一个
 - **下载管理**
-  - 支持URLSession和 aria2Next（多连接、断点续传），默认按文件大小自动选择引擎
+  - 引擎由组件提供：内置引擎与 aria2Next（多连接、断点续传），按文件大小自动选择，也可在设置里指定
   - 「选择下载」支持全选 / 反选 / 多选。全选对应原项目全部下载。全选又取消几个媒体的选中，则视为下载时跳过这几个媒体。
-  - 自动跳过已下载（判定依据可选：文件名 / 下载记录文件）
+  - 自动跳过已下载（判定依据三选一：文件名 / 记录文件·分布式 / 记录文件·集中式，默认集中式）
   - 进度、暂停 / 恢复、重试、批量操作、系统通知
 - **同步**
   - 按关注清单批量补齐缺失媒体
-  - 同步记录文件加速二次同步（只检索上次之后的时间线）
+  - 记录文件与同步窗口语义已规范化（见 [MEDIA_RECORDS.md](MEDIA_RECORDS.md)）：二次同步只检索锚点前后一天窗口内、尚未记录的时间线
 - **其他**
   - Cookie 登录（多账户保存与切换）、代理（关闭 / 系统 / 手动）
-  - 限流缓解：请求闸门 + 429 熔断，以应对X的限流。X API 与媒体 CDN 分别治理
+  - 限流缓解由组件统一治理：请求闸门 + 429 熔断，X API 与媒体 CDN 分开
   - 文件名 / 目录模板引擎、液态玻璃外观（对不支持液态玻璃的系统，自动降级到普通材质）、三语界面（简中 / 繁中 / 英文）
+
+## 组件（x-spider-core）
+
+应用由两部分组成，职责分明：
+
+| 部分 | 语言 | 职责 |
+|---|---|---|
+| 外壳（本仓库） | SwiftUI | 界面、产品逻辑：文件名 / 目录模板、内容校验（"这是不是真的图 / mp4"）、记录文件与同文件跳过、通知、图片缓存、翻译、代理设置解析 |
+| 组件 `x-spider-core` | Rust（sidecar 可执行文件 `xspiderd`） | 取数、写操作、下载、爬取：请求签名、限流 / 429 熔断、queryId 自愈、内置与 aria2Next 引擎、断点续传、完整性校验、暂停 / 恢复 |
+
+**走组件的功能**：
+
+- **取数**：用户、媒体时间线、推文时间线、推文详情树、搜索、关注列表、主页时间线；
+- **写操作**：点赞 / 转推 / 书签 / 关注（含取消）；
+- **下载**：内置引擎 + aria2Next、断点续传、完整性校验、暂停 / 恢复 / 取消；
+- **爬取调度**：翻页、游标推进，以及"到底 / 连续空页 / 游标未推进"等终止判据。
+
+**刻意留在外壳里的**：界面、文件名 / 目录模板、内容校验、记录文件与同文件跳过、通知、图片缓存、翻译、代理设置解析。
+
+**组件放哪儿**（查找顺序，**外部目录优先**，app bundle 内那份只作兜底）：
+
+1. `~/Library/Application Support/moe.keli.xspider.mac/XSpiderCore/`（放 `xspiderd` 与 `aria2next` 两个文件）
+2. `~/Library/Application Support/XSpiderMac/XSpiderCore/`
+3. app bundle 内 `X-Spider.app/Contents/Resources/`（DMG 自带的兜底副本）
+4. `PATH`
+
+**更新组件 = 换掉文件即可**，不必重新构建应用。把新的 `xspiderd`（与 `aria2next`）放进上面的外部目录，然后**两件事都要做**，否则内核会以退出码 137 静默杀掉它——应用只写一行日志，表现是"组件整个不工作"：
+
+```bash
+xattr -cr "<组件目录>"
+codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
+```
+
+**核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本（当前 **1.5.1**）。
+应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用。
 
 ## 系统要求
 
@@ -85,6 +124,9 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 script/package_dmg.sh
 ```
 
+> `Resources/Binaries/` 里放的两个二进制（`aria2next`、`xspiderd`）是**随应用分发的兜底副本**，
+> 会一起打进 app bundle。改了 `project.yml`（版本号、内置文件等）后必须重新 `xcodegen generate`。
+
 ## 仓库结构
 
 | 路径 | 说明 |
@@ -92,11 +134,14 @@ script/package_dmg.sh
 | `XSpiderMac/` | **应用本体**（SwiftUI）；`project.yml` 由 xcodegen 生成 xcodeproj |
 | `script/` | 构建、运行、打包脚本 |
 | `docs/DEVELOPMENT.md` | 架构地图、与上游的语义对照、已知问题与设计取舍（**改代码前先读**） |
+| `MEDIA_RECORDS.md` | 记录体系规范：下载 / 同步记录、判定三选一、命名（**改记录前先读**） |
+| `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
 | `AGENTS.md` | 面向 AI agent 的开发约束 |
 | `src/`、`src-tauri/` | 上游源码，**只作行为参照**，不参与构建 |
 
-> `src/` 与 `src-tauri/` 是上游实现的唯一权威参照：X 的 GraphQL 端点对
-> queryId / features / variables 极其敏感，改动 API 或分页逻辑前应先对照上游实现。
+> **取数与下载的权威行为在组件仓库 `x-spider-core`**（本仓库只经契约调用它）。
+> 上游 `src/` / `src-tauri/` 对 X 的 GraphQL 端点仍有参照价值——queryId / features / variables
+> 极其敏感，需要核对上游实现时仍可对照。
 
 ## 已知限制
 

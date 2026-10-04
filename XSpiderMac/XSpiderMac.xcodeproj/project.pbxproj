@@ -104,6 +104,7 @@
 		F1A7C9493F8DCEDDE44BAD62 /* HomeTimelineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45CFD806B90195310DE91A6 /* HomeTimelineStoreTests.swift */; };
 		F49847C55B541F758E1F31AD /* FollowButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C685570A33E16C638B5293CD /* FollowButton.swift */; };
 		F4A53548E7E41010D8EDA2D7 /* ExpandableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FCBE1562C679131AF24E8A /* ExpandableText.swift */; };
+		F659D4AEC85A8A9BED9BDB5C /* xspiderd in Resources */ = {isa = PBXBuildFile; fileRef = FE95743AD5D2E7AAA23658A0 /* xspiderd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		F778B9F338A10C7A37EF1E8D /* FloatingDownloadBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D769C342F080744CE4324F /* FloatingDownloadBar.swift */; };
 		F98FD82ACF61FC76624DE912 /* SyncRecordWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14D95808FD7731FEC8515D90 /* SyncRecordWindowTests.swift */; };
 		FB7B6DC7ACB1882C83BEE29E /* ScrollWheelCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D228E87917E7C7C8CD9D1DB /* ScrollWheelCatcher.swift */; };
@@ -231,6 +232,7 @@
 		FB604A500CE60BCEC3672A98 /* CreationTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreationTaskStore.swift; sourceTree = "<group>"; };
 		FD0743F0DE27D18BB7A9CB7D /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		FD92DA949C8B8D465ABE0C09 /* SearchHistoryPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchHistoryPopover.swift; sourceTree = "<group>"; };
+		FE95743AD5D2E7AAA23658A0 /* xspiderd */ = {isa = PBXFileReference; path = xspiderd; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -331,6 +333,7 @@
 			isa = PBXGroup;
 			children = (
 				8DA00850E75F336A45F75713 /* aria2next */,
+				FE95743AD5D2E7AAA23658A0 /* xspiderd */,
 			);
 			name = Binaries;
 			path = Resources/Binaries;
@@ -527,6 +530,7 @@
 			files = (
 				E04E855AB238056433E1596E /* Assets.xcassets in Resources */,
 				DAE2BA28975D47562C0A956F /* aria2next in Resources */,
+				F659D4AEC85A8A9BED9BDB5C /* xspiderd in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -746,7 +750,7 @@
 				CODE_SIGN_ENTITLEMENTS = XSpiderMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -757,7 +761,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.2;
 				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;
@@ -791,7 +795,7 @@
 				CODE_SIGN_ENTITLEMENTS = XSpiderMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -802,7 +806,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.2;
 				OTHER_CODE_SIGN_FLAGS = "--deep";
 				PRODUCT_BUNDLE_IDENTIFIER = moe.keli.xspider.mac;
 				SDKROOT = macosx;

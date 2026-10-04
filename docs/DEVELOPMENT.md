@@ -3,8 +3,15 @@
 面向在本仓库工作的开发者 / agent。**按模块与主题组织**，不按改动时间——
 时间线的历史留在 `git log`，这里只留结论。
 
+**取数与下载已经不在本仓库里。** 自 2026-10-01 起，X 的请求（签名 / 限流 / 重试 /
+queryId 自愈）、写操作、下载引擎与爬取全部收进组件 **`x-spider-core`**
+（Rust sidecar `xspiderd` + 本地 JSON-RPC，契约版本 **1.5.1**）。本仓库只剩
+**契约 JSON ↔ 应用模型的映射、UI、记录体系与文件命名**。组件仓库：
+`github.com/LeeDespo/x-spider-core`。接口细节看它的 `docs/07-API-REFERENCE.md`。
+
 上游源码 vendor 在 `src/`（React + zustand）与 `src-tauri/`（Rust），
-**只作行为参照，不参与构建**。文中引用函数名而非行号（行号会漂移）。
+**只作行为参照，不参与构建**——它仍是 **X 端点行为**（请求形状、分页语义、解析路径）的参照；
+但**它已经不再回答"本仓库该怎么取数"**，那由组件负责。文中引用函数名而非行号（行号会漂移）。
 
 ---
 
@@ -13,25 +20,34 @@
 ## 0.1 项目是什么
 
 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React，Windows 优先，
-**已停止维护**）到 macOS / SwiftUI 的移植。原生 App，内置 aria2Next 下载引擎，
-用于浏览与批量下载 X（Twitter）用户的媒体。
+**已停止维护**）到 macOS / SwiftUI 的移植。原生 App，用于浏览与批量下载 X（Twitter）用户的媒体。
 
-因为上游已停维护，`src/` 是本仓库里**唯一**一份可对照的行为参照——这也是它被保留的原因。
+**取数与下载由组件 `x-spider-core` 承担**（见第 2 部分）：本进程不再自己发任何 X 请求，
+也不自己实现下载引擎——`XSpiderMac/Resources/Binaries/` 里随包带一份 `xspiderd` + `aria2next`
+作兜底（外部目录优先，见 §2.7）。
+
+因为上游已停维护，`src/` 是 **X 端点行为**的一份历史快照参照（请求与解析怎么写的）——
+这也是它被保留的原因；但"本仓库该怎么取数"已经不是它回答的问题了。
 
 ## 0.2 五分钟跑起来
 
-```bash
-# project.yml 变更后重新生成工程（需要 brew install xcodegen）
-cd XSpiderMac && xcodegen generate
+**前提**：装了 Xcode 与 [xcodegen](https://github.com/yonaskolb/XcodeGen)
+（`brew install xcodegen`）。`XSpiderMac/project.yml` 是工程的**唯一真源**，
+`XSpiderMac.xcodeproj`（入库）由它生成——**改了 `project.yml`（加文件、改设置、改 target）
+必须重跑 `xcodegen generate`**，否则新文件不进工程。
 
-# 构建 + 启动 Debug（arm64）
+```bash
+# 1) 生成工程（改了 project.yml 后必做）
+(cd XSpiderMac && xcodegen generate)
+
+# 2) 构建 + 启动 Debug（arm64）
 script/build_and_run.sh
 
-# 单元测试
-cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test
+# 3) 单元测试
+(cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
+  -destination 'platform=macOS,arch=arm64' test)
 
-# 打包 Release dmg
+# 4) 打包 Release dmg
 script/package_dmg.sh
 ```
 
@@ -53,7 +69,7 @@ script/package_dmg.sh
 |---|---|---|
 | UI | `Views/` | SwiftUI 视图。只放纯 UI 态（`@State`） |
 | 状态 | `Stores/` | `@Observable @MainActor`，单例 `*.shared`。**业务状态一律在这** |
-| 网络/服务 | `Services/` | X API、HTTP 客户端、下载引擎、RPC |
+| 网络/服务 | `Services/` | 组件客户端（JSON-RPC）、契约映射、记录层、命名与校验。**不含任何 X 请求或下载实现** |
 | 支撑 | `Support/` | 缓存、日志、本地化、导航、兼容层等无 UI 依赖的工具 |
 | 模型 | `Models/` | `Codable` 数据结构与设置 |
 
@@ -61,13 +77,18 @@ script/package_dmg.sh
 
 | 文件 | 职责 |
 |---|---|
-| `Services/TwitterAPI.swift` | 全部 X GraphQL 调用与 JSON 解析（上游 `src/twitter/api.ts`） |
-| `Services/NetworkClient.swift` | HTTP 重试/退避/代理/取消语义 |
-| `Services/RequestGate.swift` | 令牌桶 + 同端点串行 + 429 熔断 |
-| `Services/Aria2Engine.swift` / `Aria2RPCClient.swift` | 内置下载引擎与常驻 RPC |
+| `Services/XSpiderComponent.swift` | 组件进程与 JSON-RPC 客户端：查找、启动、握手、调用、崩溃自愈、优雅关停（第 2 部分的核心） |
+| `Services/TwitterAPI.swift` | 契约 method ↔ 应用模型的**映射层**（不再发 X 请求；旧的解析函数只剩测试引用） |
+| `Services/XSpiderMapping.swift` / `XSpiderJSON.swift` | 契约 JSON → `TwitterPost` / `TwitterUser` / `TwitterMedia` / `ReplyNode`；受限值类型 `JSONValue` |
+| `Services/MediaRecords.swift` | 下载 / 同步记录层（两种形态、缓存、原子写） |
+| `Services/MediaJudgement.swift` | 文件名（模板 + 唯一标识）、按文件名判定、断点后缀清单 |
+| `Services/RecordsIO.swift` / `FileIntegrity.swift` | 记录导入导出 / 按文件名重建；下载收尾的内容校验 |
+| `Services/SystemProxy.swift` | 系统代理探测（组件是独立进程，不继承系统代理，要先解析成 URL 再告诉它） |
+| `Support/AccountFolder.swift` | 账号文件夹命名 `昵称-用户名[数字id]`（记录落点，同一 id 永远同一文件夹） |
 | `Stores/HomepageStore.swift` | 搜索用户 → 媒体/推文网格（上游 `src/stores/homepage.ts`） |
-| `Stores/CreationTaskStore.swift` | 爬虫：翻页创建下载任务（上游 `src/stores/download.ts`） |
-| `Stores/DownloadStore.swift` | 下载队列、跳过判定、引擎调度 |
+| `Stores/CreationTaskStore.swift` | 爬取调度：分块调组件 `crawl.run`；产品语义（勾选/排除/精确日期）留在外壳 |
+| `Stores/DownloadStore.swift` | 下载队列、跳过判定、与组件 `dl.*` 对接（进度轮询、收尾、记录、通知） |
+| `Stores/SyncStore.swift` | 关注清单批量补齐（窗口语义在记录模式） |
 | `Support/ImageCache.swift` | 图片磁盘 + 内存双缓存（降采样解码） |
 
 
@@ -101,115 +122,191 @@ script/package_dmg.sh
 
 ## 1.3 端到端数据流
 
+**所有取数都经组件**（`call(method, json)` → 映射层 → 应用模型）：
+
 ```
 搜索用户
   HomeView.submitSearch
-    → HomepageStore.loadUser → TwitterAPI.getUser(UserByScreenName)
+    → HomepageStore.loadUser → TwitterAPI.getUser
+        → XSpiderComponent.call("fetch.get_user") → XSpiderMapping.user
     → HomepageStore.loadPostList → fetchPage
-         ├─（有日期范围 + 开关开）→ TwitterAPI.searchTimeline
-         └─（否则）→ getUserMedias / getUserTweets（首页省略 cursor）
-    → postList + postListCursor
+         ├─（有日期范围 + 开关开）→ TwitterAPI.searchTimeline → "fetch.search_timeline"
+         └─（否则）→ getUserMedias / getUserTweets
+                      → "fetch.user_medias" / "fetch.user_tweets"（首页省略 cursor 键）
+    → XSpiderMapping.postPage → postList + postListCursor
 
 滚动到底
   BottomSentinel 上报坐标 → HomepageStore.triggerFill → runFillLoop
-    → 视口未填满则 loadMorePostList（400ms 页间节流）
+    → 视口未填满则 loadMorePostList（页间节流在 store）
 
 下载
-  单张 / 选择下载 → CreationTaskStore.runCreationTask（爬虫逐页）
-    → DownloadStore.createDownloadTask（含跳过判定）→ 引擎
+  单张 / 选择下载 / 爬取 → CreationTaskStore.runCreationTask
+    → TwitterAPI.crawlPage("crawl.run")（分块驱动；组件给 done_reason / next_cursor）
+    → DownloadStore.createDownloadTask（外壳算目录/文件名 + 跳过判定）
+    → XSpiderComponent.call("dl.enqueue") → 组件（内置引擎 / aria2Next）
+    → DownloadStore 轮询 "dl.events" / "dl.list" → FileIntegrity 收尾校验 → 写记录
+
+组件配置
+  cookie / 代理 / 限流参数变更 → AppStore.cookieString.didSet 或 SettingsStore.save
+    → TwitterAPI.configure → auth.set_cookie / net.set_proxy / net.set_limits
 ```
 
 
-# 第 2 部分 · X API 层（项目最脆弱的部分）
+# 第 2 部分 · 组件边界（`x-spider-core`）
 
-## 2.1 为什么必须逐字对齐上游
+## 2.1 一句话：外壳不再直接打 X
 
-X 的 GraphQL 端点对 `queryId` / `features` / `variables` 的格式极其敏感，
-`features` 里少一个键就可能 400。**改动请求前，先读上游对应函数逐字对照。**
+本应用**没有任何一条自己发出的 X 请求**，也没有自己的下载实现。取数、写操作、下载、爬取
+全部在组件 `x-spider-core`（Rust sidecar `xspiderd`，本地 JSON-RPC，契约版本 **1.5.1**）里。
+外壳里承担这件事的只有四个文件：`XSpiderComponent`（进程与 RPC）、`TwitterAPI`
+（契约方法 ↔ 应用模型的映射）、`XSpiderMapping` / `XSpiderJSON`（JSON → 应用模型）。
 
-## 2.2 端点与上游对应
+**为什么抽出去**：签名（`x-client-transaction-id`）、请求闸门与 429 熔断、queryId 自愈、
+下载引擎与断点/完整性校验，这些若在两个外壳里各实现一遍必然漂移，而限流治理是这条链上
+最容易出事的地方。组件同时被 CLI（第一个真实消费方）与其它平台复用。
 
-| 用途 | 端点 | 上游参照 |
+> 权威来源：组件仓库 `github.com/LeeDespo/x-spider-core`。**接口细节看它的
+> `docs/07-API-REFERENCE.md`**（26 个 method 的入参/出参、数据形状、错误、可直接抄的时序），
+> 契约本身看它的 `docs/CONTRACT.md`。
+
+## 2.2 契约：一个入口、版本握手，内务不外泄
+
+- **唯一入口** `xspider_call(method, json) -> json`（sidecar 里是 `POST /` 加
+  `X-XSpider-Token` 头）；另有 `system.version` 做握手。**契约主版本不匹配就拒绝启动**，
+  不降级成"部分可用"（`XSpiderComponent.supportedContractMajor = "1"`）。
+- 契约里**不出**：端点路径、`queryId`、`features` 常量、HTTP 头、Rust 类型、签名细节。
+  所以本仓库里不该再看到它们——`TwitterAPI.swift` 底部那几个 `*Features` 常量与
+  `extractPostsFrom*` / `mapTwitterPost` 只剩测试引用，**不要再接线**。
+- 外壳持有的只有受限 JSON 值类型：`XSpiderJSON.JSONValue`（`Any` 不是 `Sendable`，
+  跨 actor 会被 Swift 6 拒）。参数与结果就是契约里的 JSON，没有中间类型。
+
+## 2.3 哪些在组件里，外壳只做什么
+
+| 能力 | 组件（契约 method） | 外壳 |
 |---|---|---|
-| 用户信息 | `UserByScreenName` | `src/twitter/api.ts getUser` |
-| 媒体时间线 | `UserMedia` | `getUserMedias` |
-| 推文时间线 | `UserTweets` | `getUserTweets` |
-| 推文详情 + 会话 | `TweetDetail` | （上游无，mac 版新增） |
-| 关注列表 | `Following` | `getFollowing` |
-| 搜索（时间范围） | `SearchTimeline` | （上游无，mac 版新增） |
+| 用户 / 时间线 / 详情 / 搜索 / 关注 | `fetch.*` | `TwitterAPI` + `XSpiderMapping` 映射成 `TwitterPost` 等 |
+| 写操作（赞 / 转推 / 书签 / 关注） | `fetch.mutate` | 映射 + 关注态缓存失效 |
+| 登录校验 / 当前账号 | `auth.whoami` / `auth.set_cookie` | 登录流程调用；凭据**只进不出** |
+| 限流 / 代理 / 探测 | `net.set_limits` / `net.set_proxy` / `net.status` / `net.probe_size` | 把设置推下去、读状态展示 |
+| 下载 | `dl.enqueue` / `pause` / `resume` / `cancel` / `list` / `events` | 算目录与文件名、跳过判定、进度展示、收尾校验、写记录 |
+| 爬取 | `crawl.run` | 分块驱动；产品语义（勾选/排除/精确日期/去重） |
 
-## 2.3 分页语义（改分页前必读）
+**外壳保留的只有三类**：① 契约 JSON ↔ 应用模型的映射；② 产品语义（怎么命名、放哪、
+勾了哪些、判断依据）；③ UI。**凡是"数据怎么取、请求长什么样"的问题，去看组件仓库**，
+不要在本仓库里发明默认值。
 
-1. **首页必须省略 `cursor` 键**，不能传 `null`。
-   上游 `JSON.stringify` 会丢弃 `undefined`；写死 `null` 会导致每页都请求第一页
-   ——这是"无限加载"与"爬虫重复检索同一页"的总根源。
-2. **空页即到底**：`getUserMedias` 解析出 0 条 → 返回 `cursor: nil`（上游同款信号）。
-   注意判据是**服务端原始条数**，不是客户端筛选后的条数。
-3. **游标不推进即判到底**：X 偶发回吐与上一页相同的 cursor。上游会原地空转刷爆配额，
-   本项目在两处（展示路径与爬虫）都加了检测后退出。**不设任何页数上限**。
-4. **补拉节奏**：复刻上游 `InfiniteScroll.tsx`——内容底部离视口下沿不足一屏才补拉，
-   **视口填满即停**，剩余靠滚动逐页触发。无停止条件的连发循环会触发 429 风暴。
+## 2.4 外壳会拿到哪些错误码（排障先看这个）
 
-## 2.4 响应解析的坑
+组件报的是**结构化错误码**，契约禁止按文案判断；`TwitterAPI.translate` 把 `code` 翻成
+`TwitterAPIError`，上层（`SyncStore.classify`、`DownloadStore.isRetryable`）再决定给用户
+什么提示。常见映射：
 
-- **focal 推文必须按 ID 精确取**，不能走"带媒体过滤"的解析：
-  无媒体的推文会被过滤掉，退化分支返回"第一条有媒体的推文"——
-  那往往是评论区的广告或带图评论，表现为**"详情弹出的是别人的推文"**。
-- **引用推文在 `result.quoted_status_result.result`**，是 `result` 的**直接子键**，
-  **不是** `result.legacy.quoted_status_result`。后者是常见误写，会让引用卡永远空白。
-- **转推有两种包裹键**：`retweeted_status_result.result` 与 `.tweet`。
-  只认一种会把另一种当普通推文放行，导致转推混入、媒体重复下载。
-- **用户字段有新老两种结构**：老的在 `legacy.screen_name`，
-  新的在 `core.core.screen_name`（`legacy` 可能为空字典）。只读一种会拿到空作者。
-- **推广内容（广告）** 判据是 `itemContent.promotedMetadata` 非空。
-  三个解析入口（UserMedia / UserTweets / TweetDetail）都要过滤，漏一个就在对应界面露出广告。
+| 组件的 `code` | 什么情况 | 外壳翻成 |
+|---|---|---|
+| `not_found` | 用户 / 推文不存在 | `userNotFound` 或按上下文 |
+| `unauthorized` | cookie 失效，或**账号被限制写操作**（上游 141） | `notAuthorized(原因)` → 提示"重新登录 / 换账号" |
+| `rate_limited` | X 返回 429（带 `retry_after_s`） | 状态行显示限流；下载侧降并发 |
+| `parse` | 响应结构与预期对不上——**"X 改版了"的信号** | `parseFailure` |
+| `upstream` | 其它上游错误（带 HTTP `status`） | `responseError(status:)` |
+| 传输 / 形状（无 `code`） | 组件没起来 / 超时 / 响应不是契约包络 | `transport` / `shape`；只有 `isTransport` 值得重试 |
 
-## 2.5 搜索端点（SearchTimeline）
+**判断一律用 `code`，不要匹配 `message`**——组件与外壳都遵守这条（第 5 部分里有因为
+按文案判断而全错的旧例）。
 
-用 X 的搜索接口按时间范围浏览，**时间由服务端过滤**，因此没有空窗期问题，
-且一页返回的条数远多于时间线（实测媒体 40+ 条/页 vs 时间线 10 条/页）。
+## 2.5 仍然有效的领域知识（现在由组件负责，外壳只需理解现象）
 
-三个必须记住的点：
+下面这些是移植时实测出来的坑，**照着做能省几周**。实现现在都在组件里，写在这里是因为：
+排障时你需要知道"什么现象对应什么根因"，以及"哪些是组件侧的事、不要去本仓库里改"。
 
-1. **必须 POST + JSON body**。GET 一律 404，POST 表单编码 400。
-   ⚠️ **这个 404 与 queryId 无关**——实测新旧两个 queryId 用 POST **都返回 200**，
-   只有乱写的才 404。曾用 GET 测试并误判成"queryId 失效"，白做了自愈。
-2. **queryId 可自愈**：404 时抓搜索页 HTML → `main.<hash>.js` → 正则提取 →
-   重试一次。抓 bundle 走 CDN，匿名且不消耗 X 配额。
-3. **提取正则必须锚定 `operationName:"SearchTimeline"`**，因为 bundle 里还有
-   `BookmarkSearchTimeline` / `ListSearchTimeline` 等含同名字串的操作，且**排在前面**。
+**分页语义**（组件实现；外壳只需保证传参正确）：
+1. **首页必须省略 `cursor` 键**（不是传 `null`）——否则每页都请求第一页，
+   这是"无限加载"与"爬虫重复检索同一页"的总根源。映射层保证首页不传该键。
+2. **空页即到底**：判据是**服务端原始条数**，不是客户端筛选后的条数。
+3. **游标不推进即判到底**：X 偶发回吐相同 cursor，原地空转刷爆配额。
+4. **补拉节奏**：视口填满即停（复刻上游 `InfiniteScroll`），无停止条件的连发会触发 429 风暴。
 
-**日期边界**：`DatePicker` 给的 `end` 是**当天零点**，比较必须用 `inclusiveEnd`
-（否则「至」那天被整天排除）；拼给 X 的日期串用**本地时区**格式化；
-`until:` 取**次日**（X 语义排他），不能再叠加 `inclusiveEnd` 的 +1 天。
+**响应解析的坑**（组件实现）：focal 推文按 ID 精确取（否则详情会弹成别人的推文）、
+引用在 `result.quoted_status_result.result`（**不是** `legacy.quoted_status_result`）、
+转推有两种包裹键、用户字段有新老两种结构、广告判据是 `promotedMetadata` 非空。
+这些出错时的症状是"空页 / 详情弹错推文 / 引用卡空白"，现在应在**组件侧**修。
 
-## 2.6 限流治理
+**搜索端点**（组件实现）：必须 POST + JSON body（GET 一律 404，且**这个 404 与 queryId 无关**）；
+queryId 失效时自愈（抓 `/search` 页，且抓页面**必须带凭据**，匿名会 307 到 onboarding）。
+外壳只传 `screen_name` / `since` / `until` / `media_only` / `cursor`。
+**日期语义**：契约里 `since` / `until` 是**用户本地日历日期、含当天**，组件内部按排他语义
+**+1 天**——**外壳不要再自己加一天**（旧 `searchRawQuery` 里的 `nextDay` 已是历史）。
 
-分三层，**X API 与媒体 CDN 分开治理**（不同域、不同配额）：
+**限流治理**（组件实现）：请求闸门（令牌桶 + 同端点串行）、429 熔断（记截止时间）、
+**X API 与媒体 CDN 分开治理**（不同域、不同配额）。外壳侧只需：
+- 被动读 `net.status` 展示；用户点「重试」时主动探一次（`AccountStatusStore`）；
+- 下载失败按结构化 `reason` / `status` 决定重试与 CDN 降并发（`DownloadStore.isRetryable`）；
+- **取消语义**由组件保证（取消必须抛取消、不重试）——旧实现曾把取消当可重试错误，
+  又因 `try? await Task.sleep` 在取消时立即返回，刷出**同一毫秒 5400 行**重试日志（见 §5.1）。
 
-| 层 | 做法 |
-|---|---|
-| 请求闸门 | 令牌桶 + 同端点串行（`RequestGate`） |
-| 429 熔断 | 记截止时间，期间挂起新工作；到期自动恢复 |
-| 状态采集 | **被动**：由真实请求遇阻推导；只有点「重试」或开启主动检测才主动探测 |
+## 2.6 排障：组件出问题时该看什么
 
-**取消语义**是这里的关键：被取消的请求必须抛 `CancellationError` 且**不重试**。
-曾把 `URLError.cancelled` 当可重试错误，加上 `try? await Task.sleep` 在任务已取消时
-立即返回不睡眠，导致**同一毫秒内 5400 行取消重试日志**——既是卡上限，也是被限流的主因。
+- **组件日志走 stderr**，被 `XSpiderComponent` 逐行转发到 `AppLogger`（分类 `CORE`）。
+  想看更细：设环境变量 `XSPIDER_LOG=debug` 再启动（默认 `warn`）。
+- **改动没生效**先确认加载的是哪一份组件：启动日志会打
+  `组件已就绪 … path=…`（外部目录优先，bundle 里的是兜底，见 §2.7）。
+- **代理**：组件是独立进程，**不继承 macOS 系统代理**。"跟随系统"那一档由
+  `SystemProxy.current()` 解析成具体 URL，经 `net.set_proxy` 告诉它；**改代理无需重启**
+  （`null` = 明确关闭，与"字段缺失"语义不同）。
+- **组件连不上 / 起不来**：`ComponentError.transport`；`notInstalled` = 没找到二进制；
+  `shape` = 响应对不上契约（版本不匹配或找错了文件）；`contract` = 组件返回了结构化错误。
+- **契约版本核对**：命令行跑 `xspiderd --version` 会打印
+  `xspiderd <build> (契约版本 <contract>)`。应用要求主版本 `1.x`。
+
+## 2.7 组件从哪来、怎么部署 / 更新
+
+**查找顺序**（`XSpiderComponent.searchDirectories()`，**外部目录优先**）：
+
+1. `~/Library/Application Support/moe.keli.xspider.mac/XSpiderCore/`
+2. `~/Library/Application Support/XSpiderMac/XSpiderCore/`
+3. `XSpiderMac.app/Contents/Resources/`（随包携带的兜底；仓库里是 `XSpiderMac/Resources/Binaries/`）
+4. `PATH`
+
+目录里放**两个文件**即可：`xspiderd` 与 `aria2next`。
+
+**更新组件 = 换掉那两个文件 + 重新签名，不必重新构建应用**（这正是分进程形态的意义）。
+两步都要做，漏了会被内核静默杀掉：
+
+```bash
+DIR=~/Library/Application\ Support/moe.keli.xspider.mac/XSpiderCore
+xattr -cr "$DIR"                                             # 清隔离属性（从浏览器下载来的必做）
+codesign --force --sign - "$DIR"/xspiderd "$DIR"/aria2next   # ad-hoc 签名
+```
+
+**漏签 / 带隔离属性的典型表现**：文件在、却以**退出码 137** 静默被杀——`ready` 行永远不出现，
+只有一行日志。因此设置页「组件状态」绿灯的判据是**进程真的起来并完成握手**，不是"文件存在"
+（文件在但被隔离会是假绿灯，所以刻意不这么判）。
+
+**为什么不用 cdylib**：本机 hardened runtime 打开时 `dlopen` 任何 dylib 都会被
+library validation 拒，所以主形态是 sidecar（换组件 = 换一个二进制）。
 
 
 # 第 3 部分 · 下载与同步
 
-## 3.1 两条下载路径
+## 3.1 外壳只剩文案与接线
 
-| | 单张 / 选择下载 | 爬虫（创建任务） |
-|---|---|---|
-| 媒体列表来源 | 前端已加载的 `flatMediaList` | **重新爬服务端**逐页翻到底 |
-| 网络开销 | 零请求（已在内存） | 每页一次 GraphQL |
-| 覆盖范围 | 仅已加载部分 | 该账号全部 |
+下载引擎、断点续传、并发调度与完整性校验都在组件里（`dl.*`，见 §2.3）。外壳负责的是：
+**算目录与文件名**（`DownloadStore.targetDir` + `MediaJudgement` + `AccountFolder`）、
+**跳过判定**、把任务交给组件（`dl.enqueue`）、轮询进度（`dl.events` / `dl.list`）、
+**收尾再验一遍内容**（`FileIntegrity`）、写记录与通知。
 
-**两条路径最终都走 `DownloadStore.createDownloadTask`**，因此
-"跳过已下载"的判定完全一致——这是有意设计，避免两套语义。
+- `dl.enqueue` 的 `job_id` 用任务的 `gid`（跨重启稳定），因此**重复入队是幂等的**——
+  但"继续 / 重试"**不是**"再入队一次"：对已在组件里的任务要调 `dl.resume`
+  （对 `paused` 与 `error` 都有效，只拒绝 `complete`）。只 re-enqueue 的话组件回
+  `already_known`、任务原地不动，症状是"界面显示下载中、进度停在断点处"。
+- **完整性要验两遍**：组件回答"落盘字节数与服务端声明一致"，而 CDN 出错时可能返回
+  HTML 错误页、字节数还可能是对的——所以"这是不是一张真图 / 真 mp4"留在外壳侧再判
+  （`FileIntegrity`）。`expect_size` 已知就传给组件，未知由组件自己探。
+
+> 两条下载路径（单张/选择 vs 爬虫）、引擎差异（内置 / aria2Next）、断点文件命名
+> （`.part.http` / `.part.aria2next`）等实现细节**已迁到组件**，见组件仓库
+> `docs/02-X-DOMAIN-NOTES.md` 与 `docs/07-API-REFERENCE.md` §4.4。外壳只保留一份后缀清单
+> （`MediaJudgement.enginePartialSuffixes`），用于**跳过**这些临时文件（它们名字里也带媒体 id，
+> 被解析出来会把没下完的媒体记成"已下载"，而记录模式只信记录、不回查文件）。
 
 ## 3.2 「全选」为什么用排除法
 
@@ -226,32 +323,43 @@ X 的 GraphQL 端点对 `queryId` / `features` / `variables` 的格式极其敏�
 
 ## 3.3 下载判定依据（改这块前必读）
 
-设置里可选的两种依据，**语义有意不同**：
+三选一（设置项，规范 `MEDIA_RECORDS.md` §6.1），**默认集中式**：
 
-- **按文件名**：解析模板后在扩展名前**强制追加资源索引**，再查文件是否存在。
+- **按文件名**：解析模板（可在扩展名前追加媒体 id 作唯一标识）后查文件是否存在。
   索引让文件名本身成为可靠判据（即使模板不含唯一变量，同推文多张媒体也不互相覆盖）。
-  代价：改名或移动文件后会被视为未下载。
-- **按下载记录文件**：在保存路径维护 `.downloaded.json`，**只查记录、不回查文件**。
-  这正是它存在的意义：改文件名模板、重命名、移动文件、整目录搬家，记录都依然有效。
+  代价：改名或移动文件后会被视为**未下载**。
+- **记录文件·分布式**：记录文件（`.downloadedrecord.json`）落在**账号文件夹**里，跟随保存路径。
+- **记录文件·集中式**（默认）：记录文件在应用数据目录
+  （`~/Library/Application Support/XSpiderMac/records/downloads/<user id>.json`），
+  与媒体文件分离——判定与「保存路径」解耦。
+
+两种记录模式都是**只查记录、不回查文件**。这正是它存在的意义：改文件名模板、重命名、
+移动文件、整目录搬家，记录都依然有效。历史默认文件名 `.downloaded.json` 视为"未设置"，
+改用 `.downloadedrecord.json`。
 
 ⚠️ **不要给记录模式加"记录 ↔ 文件"双向校验**——那会把"用户改过文件名"误判成
-"没下载过"而重复下载，恰好抵消它唯一优于文件名模式的地方。
+"没下载过"而重复下载，恰好抵消它唯一优于"按文件名"的地方。
 
-## 3.4 aria2Next 与标准 aria2 的差异
+记录文件带版本号（`version` + `kind`，不合法整份丢弃、不迁移）且**原子写**
+（同目录临时文件写入后 rename 覆盖）。**记录体系的完整规范——数据形状、命名、同步窗口、
+导入导出、按文件名重建——见仓库根 `MEDIA_RECORDS.md`**；本节只讲取舍，不再抄一份。
 
-| 项 | 说明 |
+## 3.4 同步
+
+`SyncStore` 按关注清单批量补齐缺失媒体。同步判定与下载判定**独立**（各自三选一）。
+记录模式下同步走**窗口语义**（规范 `MEDIA_RECORDS.md` §6.3）：只看锚点 `anchor_day`
+前后一天窗口内的内容，二次同步因此快得多；`anchor_day` 与窗口内已确认存在的 id 写回记录。
+单用户总闸 150s（`AsyncTimeout.withTimeout`）。
+
+## 3.5 记录层与收尾校验的实现落点
+
+| 文件 | 职责 |
 |---|---|
-| `--split` / `--max-connection-per-server` | **已废弃**，改用 `stream-max-connections` |
-| `--min-split-size` | 完全不支持，不要传 |
-| `.aria2` 控制文件 | **不再生成**；续传状态在 `--state-dir/stream/state.db`（SQLite） |
-| 进程模型 | 常驻 RPC 进程（`--conf-path=/dev/null` + 随机 `--rpc-secret`） |
-
-⚠️ **不要写"检查 `.aria2` 文件"的续传判断**——它永远不存在，会导致每次续传都从头下载。
-
-## 3.5 同步
-
-`SyncStore` 按关注清单批量补齐缺失媒体。记录文件（`.synced.json`）只检索上次之后的
-时间线，因此二次同步快得多。同步判定与下载判定**独立**，不要混用。
+| `Services/MediaRecords.swift` | 下载 / 同步记录的读写、缓存、原子写、两种形态（分布式 / 集中式） |
+| `Services/MediaJudgement.swift` | 文件名（模板 + 唯一标识后缀）、按文件名判定、断点后缀清单 |
+| `Services/RecordsIO.swift` | 导入 / 导出 / 按文件名重建（规范 §7 / §8） |
+| `Services/FileIntegrity.swift` | 下载收尾的内容校验（大小 + 魔数 + 错误页特征） |
+| `Support/AccountFolder.swift` | 账号文件夹命名 `昵称-用户名[数字id]`（记录落点，同一 id 永远同一文件夹） |
 
 
 # 第 4 部分 · UI 实现要点
@@ -402,13 +510,21 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 ## 5.1 分页与限流
 
+**外壳侧（仍然适用）**：
+
 | 现象 | 根因 | 解法 |
 |---|---|---|
 | 列表停在约 20 帖 / 27 媒体，且随用户变化 | 视图侧 `.task(id:)` 的 id 随翻页变化 → 自我取消，while 只推进一页 | 填充循环由 store 持有（`fillTask`），视图只调 `triggerFill()` |
-| 同一毫秒 5400 行取消重试 | 取消被当可重试错误 + `try? await Task.sleep` 在取消时立即返回 | 抛出 `CancellationError` 不重试；取消感知睡眠 |
-| 每页都请求第一页 | `variables.cursor` 硬编码 `null`（应为省略键） | 首页省略 cursor 键 |
+
+**组件侧（现象照旧，但改的位置在组件）**：下面这些是分页与限流的老坑，
+现在由组件负责，本仓库只需认识现象——出问题去组件仓库修，不要在映射层打补丁。
+
+| 现象 | 根因 | 解法（组件里） |
+|---|---|---|
+| 同一毫秒 5400 行取消重试 | 取消被当可重试错误 + `try? await Task.sleep` 在取消时立即返回 | 取消抛取消错误、不重试；取消感知睡眠 |
+| 每页都请求第一页 | `variables.cursor` 写死 `null`（应为省略键） | 首页省略 cursor 键 |
 | 爬虫反复检索同一页 | `continue` 前没推进 cursor | cursor 推进紧跟 fetch，早于一切过滤 |
-| 429 风暴 | 无停止条件的连发循环 | 复刻上游"视口填满即停" + 页间节流 + 令牌桶 |
+| 429 风暴 | 无停止条件的连发循环 | 视口填满即停 + 页间节流 + 令牌桶闸门 |
 | 翻页偶发卡死 | X 回吐相同 cursor，原地空转 | 游标未推进即判到底 |
 
 ## 5.2 时间范围
@@ -418,16 +534,21 @@ Bundle.main.localizations  == ["en"]         ← 原因
 | 点「确定」没反应 | `dateRange` 只有爬虫读，浏览路径没读 | 展示路径加客户端筛选（与爬虫同语义） |
 | 账号有空窗期就加载不出内容 | 用"连续空页计数"判到底，而空窗期只是时间轴的空隙 | 改判据为**时间轴推进**（`oldestSeenAt < since`） |
 | 某页全被筛掉后列表提前结束 | 同上 | 判定"到底"只看**服务端原始条数** |
-| 「至」那天没有内容 | `DatePicker` 的 `end` 是当天零点 | 比较用 `inclusiveEnd`（当天 23:59:59） |
-| 范围整体偏移一天 | 拼给 X 的日期串用了 UTC 格式化 | 用**本地时区** |
+| 「至」那天没有内容 | `DatePicker` 的 `end` 是当天零点 | 展示路径把范围交给组件（`fetch.search_timeline` 的 `since`/`until` 含当天），**外壳不再自己 +1 天** |
+| 范围整体偏移一天 | 拼给 X 的日期串用了 UTC 格式化 | 契约按**本地日历**理解日期；爬取的精确边界在 `CreationTaskStore.decide` |
+
+> 时间范围现在是**两段式**：组件按 UTC 天做**粗筛**（省请求），外壳的 `decide`
+> 再按**本地日历**做精确边界——所以 `crawlStrategy` 里 `since` 会故意各放宽一天（±1 天），
+> 时区偏移最大 ±14h < 24h，±1 天足够覆盖。这是有意的分工，不是 bug。
 
 ## 5.3 评论与引用
 
+**组件侧（现象照旧，实现已迁走）**：详情弹出别人的推文（focal 未按 ID 精确取）、
+引用卡永远空白（路径写成 `legacy.quoted_status_result`）、评论区混进广告
+（未过滤 `promotedMetadata`）——这些解析都在组件里，症状出现时去组件仓库修。
+
 | 现象 | 根因 | 解法 |
 |---|---|---|
-| 详情弹出的是别人的推文 | focal 走了带媒体过滤的解析，无媒体 focal 被丢弃后退化到评论区 | focal 按 ID 精确取 |
-| 引用卡永远空白 | 引用路径写成了 `legacy.quoted_status_result` | 真实路径是 `result.quoted_status_result.result` |
-| 评论区混进广告 | 未过滤 `promotedMetadata` | 三个解析入口都过滤 |
 | 评论的评论只显示贴主的 | **X 服务端行为**（实测：以评论为 focal 也只返回贴主那条，且无"更多回复"游标） | 不改——按服务端给的展示即正确 |
 
 ## 5.3.1 连转同一条推文 → 卡片后面一片空白
@@ -502,12 +623,15 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 ## 6.1 改代码前自检
 
-1. **要动 X API 请求或分页逻辑** → 先读 `src/twitter/api.ts` 对应函数逐字对齐；
-2. **要改解析** → 同时检查两个解析函数（UserMedia 用 `extractPostsFromModuleInstructions`，
-   UserTweets/TweetDetail 用 `extractPostsFromTweetEntries`），两者影响面不同、要分别验证；
-3. **要加客户端筛选** → 必须同时想好**停止条件**，否则会翻到服务端尽头吃限流；
+1. **要动"数据怎么取 / 请求长什么样"** → 去组件仓库
+   （`github.com/LeeDespo/x-spider-core`），本仓库只写映射与产品语义。
+   要改的是**契约本身**（加 method / 改出参）→ 先改契约，再改组件与外壳；
+2. **要改解析** → 映射在 `XSpiderMapping` / `XSpiderJSON`（契约 JSON → 应用模型）。
+   旧的 `extractPostsFrom*` / `mapTwitterPost` 只剩测试引用，**不要接线**；
+3. **要加客户端筛选** → 必须同时想好**停止条件**，否则会翻到服务端尽头吃限流
+   （爬取侧的精确筛选见 `CreationTaskStore.decide`）；
 4. **要动 UI 层级或悬停** → 记住 §4.7 的三个 AppKit 陷阱；
-5. **要删/改下载判定** → 先读 §3.3 的取舍说明；
+5. **要删/改下载判定** → 先读 §3.3 的取舍说明，规范见 `MEDIA_RECORDS.md`；
 6. **不要写版本降级分支**（支持 15.0+，直接用满足该版本的 API）。
 
 ## 6.2 验证清单
@@ -515,13 +639,14 @@ Bundle.main.localizations  == ["en"]         ← 原因
 | 改动 | 必须实测 |
 |---|---|
 | 分页 / 爬虫 | ① 媒体量大的用户滑到底，总数持续增长超过 40 条且不重复；② 同用户同条件「下载全部」执行两遍，第二遍应全部 skip |
+| 组件对接 | 设置页「组件状态」绿灯（进程真起来并握手）；改代理后取数/下载恢复；换一份组件后启动日志的 `path=` 指向新目录 |
 | 图片管线 | 快速来回滚动不掉帧；滚回顶部不重新闪载 |
 | 时间范围 | 取一个已知有长空窗期的账号，设跨越空窗期的范围，确认能持续翻页并显示内容 |
 | UI 层级 | 详情浮层打开时，底层卡片的悬停提示不出现 |
-| 任何改动 | `xcodebuild test` 全绿（当前 242 项） |
+| 任何改动 | `xcodebuild test` 全绿 |
 
-日志观察：`log stream --predicate 'process == "XSpiderMac"'`，
-或读 `~/Library/Logs/XSpiderMac/xspider.log`（按天滚动）。
+日志观察：`log stream --predicate 'process == "XSpiderMac"'`（组件日志以
+`组件: …` 出现在分类 `CORE` 下），或读 `~/Library/Logs/XSpiderMac/xspider.log`（按天滚动）。
 
 ## 6.3 已知限制（不是 bug）
 
@@ -535,6 +660,8 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 | 已删 | 原因 |
 |---|---|
+| `NetworkClient` / `RequestGate` / `XClientTransaction` | HTTP 重试/退避、限流闸门、请求签名——**已收进组件**（第 2 部分） |
+| `Aria2Engine` / `Aria2RPCClient` / `SearchQueryIdProvider` | 下载引擎与 queryId 自愈——**已收进组件**；`SystemProxy` / `AsyncTimeout` 从它们里留下（与引擎无关） |
 | 评论发布输入框 | 从未实现（常量绑定打不进字 + 空实现），且全仓库无 `CreateTweet` 端点 |
 | `SelectiveDownloadSheet.swift` | 从未被引用（选择模式一直是内联的），留着会让人以为"选择页面"是那个弹窗 |
 | 字幕选择 | 那是"视频内嵌字幕轨"，与需求（实时翻译字幕）不是一回事 |

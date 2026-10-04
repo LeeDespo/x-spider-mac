@@ -223,6 +223,67 @@ final class XSpiderComponent: @unchecked Sendable {
         return nil
     }
 
+    // MARK: - 组件清单（设置页的「组件」区用）
+
+    /// 外部组件目录（**优先**的那份）：
+    /// `~/Library/Application Support/<bundle id>/XSpiderCore/`。更新组件就是换这里面的文件。
+    static var externalDirectory: URL? {
+        guard let support = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        return support
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "moe.keli.xspider.mac", isDirectory: true)
+            .appendingPathComponent(componentDirectoryName, isDirectory: true)
+    }
+
+    /// 这个可执行文件是从哪找到的——决定"换了的文件到底有没有生效"。
+    enum BinaryOrigin: Sendable {
+        /// 外部目录里的：优先使用，可脱离应用单独更新。
+        case external
+        /// 应用包内随应用分发的那份（兜底）。
+        case bundled
+        /// PATH 里找到的（开发机上常见）。
+        case path
+    }
+
+    static func origin(of url: URL) -> BinaryOrigin {
+        if let external = externalDirectory, url.path.hasPrefix(external.path) { return .external }
+        if let resources = Bundle.main.resourceURL, url.path.hasPrefix(resources.path) { return .bundled }
+        if let exe = Bundle.main.executableURL?.deletingLastPathComponent(), url.path.hasPrefix(exe.path) {
+            return .bundled
+        }
+        return .path
+    }
+
+    /// 跑一次 `<binary> --version` 取版本串（设置页显示用）。
+    ///
+    /// 这个调用只打印后退出，**不会留下常驻进程**，所以组件没启动时也能问出版本。
+    /// 找不到二进制、执行失败或 5 秒没退，一律返回 `nil`。
+    static func binaryVersion(_ name: String) async -> String? {
+        guard let binary = locate(name) else { return nil }
+        return await Task.detached(priority: .utility) { () -> String? in
+            let proc = Process()
+            proc.executableURL = binary
+            proc.arguments = ["--version"]
+            let out = Pipe()
+            proc.standardOutput = out
+            proc.standardError = Pipe()
+            guard (try? proc.run()) != nil else { return nil }
+
+            let deadline = Date().addingTimeInterval(5)
+            while proc.isRunning && Date() < deadline { usleep(50_000) }
+            if proc.isRunning {
+                proc.terminate()
+                return nil
+            }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            let text = String(decoding: data, as: UTF8.self)
+            let line = text.split(separator: "\n").first.map(String.init) ?? ""
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }.value
+    }
+
     private func launchProcess() async throws -> Info {
         guard let binary = Self.locate("xspiderd") else {
             throw ComponentError.notInstalled("""

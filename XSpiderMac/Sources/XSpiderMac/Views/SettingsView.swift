@@ -12,6 +12,13 @@ struct SettingsView: View {
     @State private var showSyncListManager = false
     /// 自动翻译语言清单窗口
     @State private var showTranslationLanguages = false
+    /// 组件区：两个二进制各自的版本与来源
+    @State private var components: [ComponentEntry] = []
+    /// 重启组件失败时的原文（成功或未尝试时为空）
+    @State private var componentRestartError: String?
+    @State private var componentBusy = false
+    /// 组件更新指引弹窗
+    @State private var showUpdateGuide = false
 
     var body: some View {
         // **排序原则**（需求：常用的摆前面）：按"普通用户的使用频率"从高到低，
@@ -25,6 +32,7 @@ struct SettingsView: View {
             homeSection
             downloadSection
             engineSection
+            componentSection
             appearanceSection
             uiSection
             translationSection
@@ -260,27 +268,7 @@ struct SettingsView: View {
                 }
             }
 
-            // 组件状态：整个下载与取数都由它承担，所以这一行的含义是"组件在不在、什么形态"。
-            // 绿灯的判据是**进程真的起来了并完成了握手**（不是"文件存在"）——
-            // 文件在但被隔离/未签名时会以 137 静默死掉，那种情况下"文件存在"是假绿灯。
-            HStack {
-                Circle()
-                    .fill(componentState.isReady ? Color.green : Color.red)
-                    .frame(width: 8, height: 8)
-                Text(componentState.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(L("重启组件")) {
-                    Task {
-                        _ = try? await XSpiderComponent.shared.restart()
-                        await refreshComponentState()
-                    }
-                }
-                .compatGlassButton()
-            }
-            .padding(.leading, 16)
-            .task { await refreshComponentState() }
+            // 组件状态与更新入口都移到下面的「组件」区（`componentSection`）。
 
             // 同时并发下载数（− 数字 +，数字可点击输入）
             NumberStepperField(
@@ -317,6 +305,148 @@ struct SettingsView: View {
         } header: {
             Label(L("引擎"), systemImage: "cpu")
         }
+    }
+
+    // MARK: - 组件
+
+    /// 组件区的一行：一个二进制文件 + 它的版本与来源。
+    struct ComponentEntry: Identifiable {
+        var name: String
+        var role: String
+        var version: String?
+        var origin: XSpiderComponent.BinaryOrigin?
+        var running: Bool?
+        var id: String { name }
+    }
+
+    /// 来源文案：它决定"换了文件到底有没有生效"。
+    private func originLabel(_ origin: XSpiderComponent.BinaryOrigin) -> String {
+        switch origin {
+        case .external: return L("外部目录（优先）")
+        case .bundled: return L("应用内置（兜底）")
+        case .path: return "PATH"
+        }
+    }
+
+    /// `xspiderd 0.1.0 (契约版本 1.5.1)` → `版本 0.1.0 · 契约 1.5.1`
+    static func sidecarVersionLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let numbers = raw
+            .split(whereSeparator: { !$0.isNumber && $0 != "." })
+            .map(String.init)
+            .filter { $0.contains(".") && $0.allSatisfy { $0.isNumber || $0 == "." } }
+        guard let build = numbers.first else { return raw }
+        if numbers.count >= 2 { return L("版本") + " \(build) · " + L("契约") + " \(numbers[1])" }
+        return L("版本") + " \(build)"
+    }
+
+    /// `Aria2 Next version 2.7.5` → `版本 2.7.5`
+    static func ariaVersionLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        guard let range = raw.range(of: #"[0-9]+(\.[0-9]+)+"#, options: .regularExpression) else { return raw }
+        return L("版本") + " " + String(raw[range])
+    }
+
+    /// 探一次两个组件的版本与来源：只跑 `--version`，不拉起常驻进程。
+    private func refreshComponents() async {
+        await refreshComponentState()
+        let sidecar = XSpiderComponent.locate("xspiderd")
+        let aria = XSpiderComponent.locate("aria2next")
+        let sidecarVersion = await XSpiderComponent.binaryVersion("xspiderd")
+        let ariaVersion = await XSpiderComponent.binaryVersion("aria2next")
+        components = [
+            ComponentEntry(
+                name: "xspiderd",
+                role: L("取数 / 写操作 / 下载 / 爬取——应用的网络请求全部经它"),
+                version: Self.sidecarVersionLabel(sidecarVersion),
+                origin: sidecar.map { XSpiderComponent.origin(of: $0) },
+                running: XSpiderComponent.shared.isRunning
+            ),
+            ComponentEntry(
+                name: "aria2next",
+                role: L("下载引擎（多连接、断点续传）"),
+                version: Self.ariaVersionLabel(ariaVersion),
+                origin: aria.map { XSpiderComponent.origin(of: $0) },
+                running: nil
+            ),
+        ]
+    }
+
+    private var componentSection: some View {
+        Section {
+            // 状态行的判据是**进程真的起来并完成了握手**，不是"文件存在"——
+            // 文件在但被隔离/未签名时会以 137 静默死掉，那种情况下"文件存在"是假绿灯。
+            HStack {
+                Circle()
+                    .fill(componentState.isReady ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(componentState.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            ForEach(components) { entry in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(entry.name)
+                            .font(.callout.monospaced())
+                        if let running = entry.running {
+                            Text(running ? L("运行中") : L("未启动"))
+                                .font(.caption2)
+                                .foregroundStyle(running ? Color.green : Color.secondary)
+                        }
+                        Spacer()
+                        if let origin = entry.origin {
+                            Text(originLabel(origin))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Text(entry.role)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(entry.version ?? L("未找到——组件目录里没有这个文件"))
+                        .font(.caption)
+                        .foregroundStyle(entry.version == nil ? Color.orange : Color.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(.vertical, 2)
+            }
+
+            if let componentRestartError {
+                Text(componentRestartError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            HStack(spacing: 8) {
+                Button(L("重新检查")) {
+                    Task { await refreshComponents() }
+                }
+                Button(L("重启组件")) {
+                    Task {
+                        componentBusy = true
+                        componentRestartError = nil
+                        do {
+                            _ = try await XSpiderComponent.shared.restart()
+                        } catch {
+                            componentRestartError = error.localizedDescription
+                        }
+                        await refreshComponents()
+                        componentBusy = false
+                    }
+                }
+                .disabled(componentBusy)
+                Button(L("更新组件")) { showUpdateGuide = true }
+                Spacer()
+            }
+            .compatGlassButton()
+        } header: {
+            Label(L("组件"), systemImage: "shippingbox")
+        }
+        .task { await refreshComponents() }
+        .sheet(isPresented: $showUpdateGuide) { ComponentUpdateGuideSheet() }
     }
 
     // MARK: - 限流缓解
@@ -1329,6 +1459,91 @@ struct TemplateVariablePicker: View {
 // MARK: - 同步清单管理（设置页入口：检索 / 按添加顺序倒序 / 液态玻璃删除）
 
 /// 列表式清单管理：最新添加排最前；可按用户名、昵称检索；液态玻璃删除按钮
+/// 组件更新指引（设置 → 组件 → 更新组件）。
+///
+/// 组件与应用**分开更新**：换掉外部目录里的文件即可，不必重新构建应用。
+/// 这里只讲怎么做，不替用户执行——替换可执行文件是要用户自己确认的动作。
+struct ComponentUpdateGuideSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    /// 外部组件目录的**绝对路径**。
+    /// 命令里不能写 `~`：它在引号内不会被 shell 展开，抄进去会找不到文件。
+    private var directory: String {
+        XSpiderComponent.externalDirectory?.path
+            ?? "\(NSHomeDirectory())/Library/Application Support/"
+            + "\(Bundle.main.bundleIdentifier ?? "moe.keli.xspider.mac")/XSpiderCore"
+    }
+
+    private var commands: String {
+        """
+        xattr -cr "\(directory)"
+        codesign --force --sign - "\(directory)"/xspiderd "\(directory)"/aria2next
+        """
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L("更新组件"))
+                .font(.title3.weight(.semibold))
+
+            Text(L("组件与应用分开更新：换掉下面目录里的文件即可，不必重新构建应用。"))
+                .font(.callout)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L("1. 拿到最新的 xspiderd 与 aria2next（来自 x-spider-core 项目）。"))
+
+                Text(L("2. 把两个文件放进："))
+                Text(directory)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(.leading, 14)
+                Text(L("应用优先用外部目录里的这份，bundle 内的只作兜底。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 14)
+
+                Text(L("3. 清掉隔离属性并重新签名，两件都要做："))
+            }
+            .font(.callout)
+
+            Text(commands)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+
+            Text(L("第 3 步不能省：从浏览器下载来的文件带隔离属性，带它的可执行文件会被系统直接杀掉（退出码 137，没有任何输出），而应用只会写一行日志——表现是「组件整个不工作」。只清属性仍会被杀，所以要再补一次签名。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(L("放好之后点「重新检查」，上面的版本号应当随之更新。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button(copied ? L("已复制") : L("复制命令")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(commands, forType: .string)
+                    copied = true
+                }
+                Button(L("打开组件目录")) {
+                    if let url = XSpiderComponent.externalDirectory {
+                        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Spacer()
+                Button(L("关闭")) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+    }
+}
+
 struct SyncListManagerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var store = SyncStore.shared
