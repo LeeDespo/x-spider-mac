@@ -11,7 +11,44 @@ final class DownloadStore {
     // MARK: - 状态
 
     var tasks: [DownloadTask] = [] {
-        didSet { persistTasks() }
+        didSet {
+            // **节流**落盘，不是每次改动都写：进度事件按片到达，1000 个任务时
+            // 每个事件都全量重编码会把主线程顶死（见 `markHistoryDirty` 的说明）。
+            markHistoryDirty()
+            rebuildTaskIndex()
+            filteredCache.removeAll(keepingCapacity: true)
+            knownUsersCache = nil
+        }
+    }
+
+    /// `gid → tasks 下标`。
+    ///
+    /// 为什么需要：轮询的 `reconcile` 对**每个** job 调一次 `update(gid:)`，
+    /// 而它原来是 `tasks.firstIndex(where:)` 线性扫描——几千条任务 × 每轮上千个 job，
+    /// 每 400ms 就是几百万次字符串比较（实测下载页滚动卡到吃不掉手势）。
+    /// 索引在 `tasks` 的 didSet 里重建：一次 O(n)，换掉每次 O(n) 的查找。
+    private var taskIndex: [String: Int] = [:]
+
+    /// 当前 Tab + 用户筛选的结果缓存。
+    ///
+    /// 为什么需要：`tasksForCurrentTab` 原来在**每次 body 求值**时全量 filter
+    /// （几千条），滚动时 SwiftUI 每帧重算一次，等于每帧都扫一遍全表——
+    /// 这才是"滑动卡到被吃掉"的主因。缓存只在 `tasks` / Tab / 用户筛选变化时失效。
+    private var filteredCache: [String: [DownloadTask]] = [:]
+    private var knownUsersCache: [KnownUser]?
+
+    /// 筛选栏里的一行：账号 + 它在历史里的记录条数。
+    struct KnownUser: Identifiable, Sendable {
+        var name: String
+        var screenName: String
+        var avatar: String
+        /// 该账号在历史里的记录条数（筛选栏右侧的小字）。
+        var count: Int
+        var id: String { screenName }
+    }
+
+    private func rebuildTaskIndex() {
+        taskIndex = Dictionary(uniqueKeysWithValues: tasks.enumerated().map { ($0.element.gid, $0.offset) })
     }
     var currentTab: String = "下载中"
     var creationTasks: [CreationTask] = []
@@ -20,62 +57,62 @@ final class DownloadStore {
     /// 用户筛选小窗是否弹出（DownloadsView 用）
     var userFilterPickerVisible = false
 
-    /// 出现过的账号（昵称 + screenName + 头像），按最近任务时间排序
-    var knownUsers: [(name: String, screenName: String, avatar: String)] {
-        var seen: [String: (String, Date)] = [:]  // screenName -> (name, latestUpdated)
+    /// 出现过的账号（昵称 + screenName + 头像），按最近任务时间排序。
+    ///
+    /// **带缓存**：它遍历全部任务（几千条）并排序，而筛选栏每次 body 求值都会读它
+    /// （`DownloadsView` 的 `store.knownUsers`）——不缓存就是每帧扫全表 + 全排序。
+    var knownUsers: [KnownUser] {
+        if let cached = knownUsersCache { return cached }
+        var seen: [String: (name: String, latest: Date, count: Int)] = [:]
         var avatars: [String: String] = [:]
         for task in tasks {
             let sn = task.post.user.screenName
             let prev = seen[sn]
-            if prev == nil || task.updatedAt > prev!.1 {
-                seen[sn] = (task.post.user.name, task.updatedAt)
+            if prev == nil || task.updatedAt > prev!.latest {
+                seen[sn] = (task.post.user.name, task.updatedAt, (prev?.count ?? 0) + 1)
+            } else {
+                seen[sn] = (prev!.name, prev!.latest, prev!.count + 1)
             }
             if avatars[sn] == nil { avatars[sn] = task.post.user.avatar }
         }
-        return seen
-            .sorted { $0.value.1 > $1.value.1 }
-            .map { (name: $0.value.0, screenName: $0.key, avatar: avatars[$0.key] ?? "") }
+        let result = seen
+            .sorted { $0.value.latest > $1.value.latest }
+            .map { KnownUser(name: $0.value.name, screenName: $0.key,
+                             avatar: avatars[$0.key] ?? "", count: $0.value.count) }
+        knownUsersCache = result
+        return result
     }
 
-    /// 按当前 Tab + 用户筛选后的任务
+    /// 按当前 Tab + 用户筛选后的任务（**带缓存**，见 `filteredCache`）。
+    ///
+    /// 结果按状态排序（下载中 → 暂停 → 等待 → 失败 → 完成），
+    /// 排序键是常量表——原实现在比较闭包里**每次比较**都新建一个字典，
+    /// 几千条排序就是几万次字典分配。
     func tasksForCurrentTab(statuses: [DownloadStatus]) -> [DownloadTask] {
-        tasks.filter { task in
-            statuses.contains(task.status) &&
-            (userFilterScreenName == nil || task.post.user.screenName == userFilterScreenName)
-        }
+        let key = "\(userFilterScreenName ?? "*")|\(statuses.map(\.rawValue).joined(separator: ","))"
+        if let cached = filteredCache[key] { return cached }
+        let filterName = userFilterScreenName
+        let filtered = tasks
+            .filter { task in
+                statuses.contains(task.status) &&
+                    (filterName == nil || task.post.user.screenName == filterName)
+            }
+            .sorted { Self.statusOrder[$0.status, default: 9] < Self.statusOrder[$1.status, default: 9] }
+        filteredCache[key] = filtered
+        return filtered
     }
+
+    /// 排序键表（常量，避免在排序闭包里反复分配字典）。
+    private static let statusOrder: [DownloadStatus: Int] = [
+        .active: 0, .paused: 1, .waiting: 2, .error: 3, .complete: 4, .removed: 5,
+    ]
 
     /// 删除当前 Tab + 用户筛选范围内的记录；alsoDeleteFiles = 同时删除源文件与未完成临时文件。
     /// 文件删除在后台线程批量执行（UI 不卡顿）：先同步摘除记录与引擎任务，再异步清盘。
     func removeVisibleRecords(statuses: [DownloadStatus], alsoDeleteFiles: Bool = false) {
-        let targets = tasksForCurrentTab(statuses: statuses).map(\.gid)
-        // 先摘记录/停引擎（同步,快）,收集要删的文件路径
-        var pathsToDelete: [String] = []
-        if alsoDeleteFiles {
-            for gid in targets {
-                if let task = tasks.first(where: { $0.gid == gid }) {
-                    let dest = (task.dir as NSString).appendingPathComponent(task.fileName)
-                    pathsToDelete.append(dest)
-                    // 组件的断点文件（名字带引擎标识，见 docs/02 §E3：两个引擎的断点物理隔开）
-                    for suffix in [".part.http", ".part.aria2next",
-                                   ".part.http.aria2", ".part.aria2next.aria2"] {
-                        pathsToDelete.append(dest + suffix)
-                    }
-                }
-            }
-        }
-        for gid in targets { remove(gid, alsoDeleteFiles: false) }
-        if alsoDeleteFiles && !pathsToDelete.isEmpty {
-            let paths = pathsToDelete
-            Task.detached(priority: .utility) {
-                let fm = FileManager.default
-                var removed = 0
-                for p in paths {
-                    if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p); removed += 1 }
-                }
-                AppLogger.info("已删除记录和源文件", category: "DL", ["files": "\(removed)"])
-            }
-        }
+        let targets = Set(tasksForCurrentTab(statuses: statuses).map(\.gid))
+        guard !targets.isEmpty else { return }
+        removeBatch(targets, alsoDeleteFiles: alsoDeleteFiles)
         AppLogger.info("删除历史记录", category: "DL", [
             "count": "\(targets.count)", "files": alsoDeleteFiles ? "yes" : "no",
             "user": userFilterScreenName ?? "all",
@@ -83,8 +120,8 @@ final class DownloadStore {
     }
 
     /// 下载执行现在全部归组件（`dl.*`）。应用侧只留：
-    /// 目录与文件名的计算（`targetDir` / `fileNameWithIndex`）、
-    /// 收尾的内容校验（`FileIntegrity`）、下载记录（`.downloaded.json`）、通知。
+    /// 目录与文件名的计算（`targetDir` / `MediaJudgement`）、
+    /// 收尾的内容校验（`FileIntegrity`）、下载记录（`MediaRecords`）、通知。
     ///
     /// 为什么不留一份 URLSession 实现：断点续传与完整性校验一旦有两份实现，
     /// 就会出现"内置引擎好好的、外派引擎拼出损坏文件"这类只在部分用户那里复现的问题
@@ -99,12 +136,17 @@ final class DownloadStore {
     /// 已经做完应用侧收尾（内容校验 + 记录）的任务，避免事件与列表两条路重复收尾。
     private var finalized: Set<String> = []
 
+    /// 下载历史是否已脏（有改动还没落盘）。与 `historySaveScheduled` 一起做节流，见 `markHistoryDirty`。
+    private var historyDirty = false
+    private var historySaveScheduled = false
+    /// 历史落盘的最小间隔：进度事件按片到达，这个粒度对"重启后能看到进度"完全够用。
+    private static let historySaveIntervalNanos: UInt64 = 1_000_000_000
+
     private var settings: Settings { SettingsStore.shared.settings }
     private let fm = FileManager.default
 
     private init() {
         restoreTasks()
-        loadRecordCaches()
         syncWithComponentOnLaunch()
         // CDN 限流解除（到期 / 用户点重试 / 某任务成功后确认恢复）时唤醒等待队列。
         // 没有这条回调，限流期间被压住的 waiting 任务在恢复后不会自动启动——
@@ -122,59 +164,32 @@ final class DownloadStore {
 
     /// 「已下载」判定结果的版本号。
     ///
-    /// 为什么需要：判定结果由 `hasDownloaded` 即时算出，它读的是两个 **static** 缓存
-    /// （recordCache / completedFileNameCache）与文件系统 —— 这些都**不参与
-    /// `@Observable` 的依赖追踪**。于是切换判定依据、换保存路径、清缓存之后，
-    /// 判定结果其实变了，但 SwiftUI 不知道要重绘，媒体卡上的下载/已下载按钮状态
-    /// 会停在旧结果（用户报告的现象）。
+    /// 为什么需要：判定结果由 `hasDownloaded` 即时算出，它读的是文件系统与记录层缓存
+    /// （`MediaRecords`）——这些都**不参与 `@Observable` 的依赖追踪**。于是切换判定依据、
+    /// 换保存路径、清缓存之后，判定结果其实变了，但 SwiftUI 不知道要重绘，
+    /// 媒体卡上的下载/已下载按钮状态会停在旧结果（用户报告的现象）。
     ///
     /// 视图读取本属性即建立观察依赖；影响判定的操作自增它即可触发刷新。
     private(set) var judgementVersion = 0
 
-    /// 判定依据变化后调用：清掉派生缓存并通知视图重算判定
+    /// 判定依据变化后调用：失效记录层缓存并通知视图重算判定
     func invalidateJudgements() {
         refreshDownloadedCaches()
-        judgementVersion += 1
         AppLogger.info("判定依据已变更,刷新已下载状态", category: "DL", [
             "mode": settings.sameFileCheckModeValue.rawValue,
+            "syncMode": settings.syncCheckModeValue.rawValue,
         ])
     }
 
-    /// 启动时扫描各用户文件夹的记录文件到内存缓存（避免覆盖旧记录）
-    /// 保存路径/子文件夹设置变更时调用:重载记录缓存 + 清完成文件名缓存(判定立即刷新)
+    /// 失效记录层缓存 + 自增判定版本号（视图重算）。
+    ///
+    /// 保存路径 / 子文件夹设置变更、导入导出之后都要调用它。
+    /// 语义变更（记录体系重构）：不再预扫全目录——记录层按需加载，
+    /// 失效即可；`judgementVersion++` 让 SwiftUI 重绘「已下载」按钮状态。
     func refreshDownloadedCaches() {
-        Self.recordCache.removeAll()
-        Self.completedFileNameCache.removeAll()
-        loadRecordCaches()
+        MediaRecords.shared.invalidate()
+        AccountFolder.invalidateIndex()
         judgementVersion += 1
-    }
-
-    private func loadRecordCaches() {
-        let base = settings.download.saveDirBase
-        guard !base.isEmpty, fm.fileExists(atPath: base) else { return }
-        let recordName = settings.recordFileNameValue
-        let enumerator = fm.enumerator(atPath: base)
-        var loaded = 0
-        while let sub = enumerator?.nextObject() as? String {
-            guard sub.hasSuffix(recordName) || sub.contains("/" + recordName) || sub == recordName else { continue }
-            let full = (base as NSString).appendingPathComponent(sub)
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: full)),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                // v2: { downloaded: [...], files: { id: name } }
-                // v1: { downloaded: [...] }；更旧: { anchorDay, dayIds }
-                let names = (obj["files"] as? [String: String]) ?? [:]
-                if let list = obj["downloaded"] as? [String] {
-                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list, fileNames: names)
-                    loaded += 1
-                } else if let list = obj["dayIds"] as? [String] {
-                    Self.recordCache[full] = RecordEntry(anchorDay: "", dayIds: list, fileNames: names)
-                    loaded += 1
-                }
-            }
-        }
-        if loaded > 0 {
-            AppLogger.info("已载入下载记录", category: "DL", ["files": "\(loaded)"])
-        }
     }
 
     /// 隐私开关：离开下载页时清空下载历史（仅记录，不删文件）
@@ -195,36 +210,42 @@ final class DownloadStore {
             return nil
         }
 
-        let templateData = FileNameTemplateData(post: post, media: media)
         let dir = targetDir(for: post)
-        let rawName = FileNameTemplate.resolve(template: settings.download.fileNameTemplate, data: templateData)
-        // 「按文件名」模式：落盘名末尾带资源索引（判据与去重都基于它）。
-        // 「按下载记录文件」模式：保持用户模板原样——判定不依赖文件名，
-        // 改文件名也不会让记录失效，无需为此改变既有用户的命名。
-        var fileName = settings.sameFileCheckModeValue == .fileName
-            ? fileNameWithIndex(rawName, media: media, post: post, template: settings.download.fileNameTemplate)
-            : rawName
+        // 落盘名：模板解析 + （设置允许时）`_媒体id` 唯一标识后缀，再过一遍重名消解。
+        // 不再按判定依据分叉文件名——命名是**素材本身**的属性，判定是**另一件事**；
+        // 旧实现让两者互相决定（记录模式保持模板原样、文件名模式自动追加序号），
+        // 于是"换个判定依据"会连带改变已下文件的命名。
+        //
+        // **判据与落盘名一致**：带唯一标识（媒体 id）时 `landingFileName` 不做重命名，
+        // 于是"判定查的名字"与"文件将落在的名字"是同一个；
+        // 没有唯一标识时才可能出现 `… (2)`，此时判定看的仍是模板算出的那个名字
+        // （记录模式判定不看文件名；文件名模式下唯一标识被强制打开，走的是前一个分支）。
+        let judgedName = MediaJudgement.fileName(
+            post: post, media: media,
+            template: settings.download.fileNameTemplate,
+            appendUniqueId: settings.appendUniqueIdEnabled)
+        let landingName = resolvedLandingFileName(judgedName, media: media, dir: dir)
 
-        // sameFileSkip：按当前判定依据决定跳过
+        // sameFileSkip：按当前判定依据决定跳过。
+        // 「按文件名」判据用的是 `landingName`——与将要落盘的名字**是同一个**
+        // （带唯一标识时 `landingFileName` 不改名，两者恒等；没有唯一标识时
+        // 判定看的确实该是最后落下去的那个名字）。记录模式的判据与文件名无关，
+        // 传哪个都不影响。
         if settings.download.sameFileSkip {
-            if isDuplicate(media: media, post: post, fileName: rawName, dir: dir) {
+            if isDuplicate(fileName: landingName, media: media, post: post, dir: dir) {
                 // 单媒体点击下载被跳过时给可见反馈（否则用户以为按钮失灵）；批量路径静默
                 if !silent {
-                    notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + fileName)
+                    notify(title: L("任务已跳过"), body: L("该媒体已下载过：") + landingName)
                 }
                 return nil
             }
         }
 
-        // 文件名重复消解：目标位置已存在同名文件、或任务列表里有同路径未完成任务
-        // → 追加「 (2)」「 (3)」序号（索引已保证同推文内唯一，这里兜跨推文的同名）
-        fileName = uniquedFileName(fileName, dir: dir)
-
         let task = DownloadTask(
             gid: UUID().uuidString,
             post: post,
             media: media,
-            fileName: fileName,
+            fileName: landingName,
             dir: dir,
             totalSize: 0,
             completeSize: 0,
@@ -235,7 +256,7 @@ final class DownloadStore {
             retryCountRemains: 5
         )
 
-        AppLogger.info("创建下载任务", category: "DL", ["file": fileName, "dir": dir, "url": downloadUrl, "mediaId": media.id ?? "?"])
+        AppLogger.info("创建下载任务", category: "DL", ["file": landingName, "dir": dir, "url": downloadUrl, "mediaId": media.id ?? "?"])
         tasks.append(task)
         start(task)
         SleepPreventer.shared.update(activeDownloadCount: tasks.count { $0.status == .active || $0.status == .waiting })
@@ -280,145 +301,148 @@ final class DownloadStore {
 
     // MARK: - 跳过相同文件判定
 
-    /// 判定依据（设置里可选）——两者语义**有意不同**，理由见 docs/DEVELOPMENT.md：
+    /// 该媒体最终的落盘文件名：模板解析 + 唯一标识后缀 + 重名消解。
     ///
-    /// - **recordFile（按下载记录文件）**：只查记录文件里是否已有该媒体 ID，
+    /// **判定与落盘必须用同一个名字**（都走这里）。以前判定查模板算出的名字、
+    /// 落盘却可能改成「 (2)」，于是文件明明在、判定永远说没有——
+    /// 用户每点一次就多一份副本（隔离复现：三次点击得到 (2)/(3)/(4)，`hasDownloaded` 恒 false）。
+    ///
+    /// 重名消解规则见 `MediaJudgement.landingFileName`：**带唯一标识时不改名**
+    /// （媒体 id 全局唯一，撞名只可能是同一个媒体）。没有唯一标识时保留保护
+    /// （只可能出现在记录模式，判定不看文件名）。
+    func resolvedFileName(post: TwitterPost, media: TwitterMedia, dir: String) -> String {
+        resolvedLandingFileName(
+            MediaJudgement.fileName(post: post, media: media,
+                                    template: settings.download.fileNameTemplate,
+                                    appendUniqueId: settings.appendUniqueIdEnabled),
+            media: media, dir: dir)
+    }
+
+    /// 已算好的模板名 → 最终落盘名（重名消解只作用于没有唯一标识的名字）
+    private func resolvedLandingFileName(_ raw: String, media: TwitterMedia, dir: String) -> String {
+        MediaJudgement.landingFileName(
+            raw,
+            hasUniqueId: settings.appendUniqueIdEnabled && !(media.id ?? "").isEmpty,
+            dir: dir,
+            extraTaken: { [tasks] name in
+                tasks.contains {
+                    $0.dir == dir && $0.fileName == name &&
+                    $0.status != .error && $0.status != .removed
+                }
+            })
+    }
+
+    /// 判定依据（设置三选一，契约 `MEDIA_RECORDS.md` §6.1）——三者语义**有意不同**：
+    ///
+    /// - **distributed / centralized（记录文件）**：只查记录里是否已有该媒体 id，
     ///   命中即信任，**不回头校验文件是否存在/完整**。
     ///   这正是该依据存在的意义：改文件名模板、重命名或移动文件、整目录搬家，
     ///   记录都依然有效。若额外做"记录 ↔ 文件"双向校验，会把"用户改过文件名"
     ///   误判成"没下载过"而重复下载，恰好抵消掉它唯一优于"按文件名"的地方。
+    ///   两种记录形态的差别只在**记录文件放哪**（账号文件夹 / 应用数据目录）。
     ///
-    /// - **fileName（按文件名）**：解析模板后**在扩展名前强制追加资源索引**
-    ///   （见 fileNameWithIndex），再查该文件是否存在。索引让文件名本身成为
-    ///   可靠判据：即使模板不含任何唯一变量，同一推文的多张媒体也不会互相覆盖。
-    private func isDuplicate(media: TwitterMedia, post: TwitterPost?, fileName: String, dir: String) -> Bool {
+    /// - **fileName（按文件名）**：查目标文件夹里 `resolvedFileName` 是否存在。
+    ///   唯一标识让文件名本身成为可靠判据：即使模板不含任何唯一变量，
+    ///   同一推文的多张媒体也不会互相覆盖。
+    private func isDuplicate(fileName: String, media: TwitterMedia,
+                             post: TwitterPost?, dir: String) -> Bool {
         switch settings.sameFileCheckModeValue {
-        case .recordFile:
-            guard let mediaId = media.id, !mediaId.isEmpty else { return false }
-            let recordURL = recordFileURL(dir: dir)
-            if Self.recordCache[recordURL.path]?.dayIds.contains(mediaId) == true {
-                AppLogger.info("下载记录命中，跳过", category: "DL", ["mediaId": mediaId, "dir": dir])
-                return true
-            }
-            return false
         case .fileName:
-            let judged = fileNameWithIndex(fileName, media: media, post: post, template: settings.download.fileNameTemplate)
-            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(judged)) {
-                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": judged])
+            if MediaJudgement.isDownloaded(fileName: fileName, in: dir) {
+                AppLogger.info("sameFileSkip 跳过已存在文件", category: "DL", ["file": fileName])
                 return true
             }
-            // 兼容升级前未追加索引的旧文件，避免改名后把整库重下一遍
-            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(fileName)) {
-                AppLogger.info("sameFileSkip 命中旧命名文件", category: "DL", ["file": fileName])
+            return false
+        case .distributed:
+            guard let mediaId = media.id, !mediaId.isEmpty else { return false }
+            let url = distributedRecordURL(dir: dir)
+            if MediaRecords.shared.isDownloaded(mediaId: mediaId, fileURL: url) {
+                AppLogger.info("下载记录命中，跳过", category: "DL", [
+                    "mediaId": mediaId, "form": "distributed", "file": url.path,
+                ])
+                return true
+            }
+            return false
+        case .centralized:
+            guard let mediaId = media.id, !mediaId.isEmpty, let post,
+                  let userId = accountIdForRecord(post: post, media: media, dir: dir) else { return false }
+            if MediaRecords.shared.isDownloaded(mediaId: mediaId, userId: userId) {
+                AppLogger.info("下载记录命中，跳过", category: "DL", [
+                    "mediaId": mediaId, "form": "centralized", "userId": userId,
+                ])
                 return true
             }
             return false
         }
     }
 
-    /// 在扩展名前追加资源索引，如默认模板 `… %POST_ID% %EXT%` 解析出
-    /// `… 123 .jpg` → `… 123 1.jpg`。
+    /// 媒体作者的数字 id（记录的账号身份）。
     ///
-    /// 为什么必须加：判定依据是"文件名"时，用户模板可能不含任何唯一变量
-    /// （如 `%USER_SCREEN_NAME%%EXT%`），同一用户的多张媒体会解析成同名 →
-    /// 判定永远只认第一个文件，其余被误判为"已下载"。索引让每张媒体获得
-    /// 稳定且唯一的文件名，判据才成立。
+    /// `post.user.id` 缺失时回落到 `%USER_ID%` 模板解析——与用户配置的取数口径一致
+    /// （契约 §2：账号一律用数字 id，不能用用户名兜底）。
+    private func mediaAuthorId(post: TwitterPost, media: TwitterMedia) -> String? {
+        if !post.user.id.isEmpty { return post.user.id }
+        let resolved = FileNameTemplate.resolve(template: "%USER_ID%",
+                                                data: FileNameTemplateData(post: post, media: media))
+        return resolved.isEmpty ? nil : resolved
+    }
+
+    /// 账号身份的**兜底**：作者 id 取不到时，用目标文件夹名里的 `[数字id]`
+    /// （分布式场景本就有这个信息——文件夹名就是账号身份的唯一依据）。
     ///
-    /// 三个细节：
-    /// - **分隔符按需补**：模板自带分隔时直接用（默认模板在 `%EXT%` 前留了空格，
-    ///   解析后 stem 已以空格结尾）；没有分隔则补一个空格，避免拼出 `1231.jpg`
-    ///   这种歧义名。已有分隔符时不重复补，否则会出现双空格。
-    /// - **模板已含 `%MEDIA_INDEX%` 时不追加**：尊重用户显式选择，
-    ///   也保证既有用户的已下载文件仍能被正确判定（不会误判成未下载而重下）。
-    /// - 只在**按文件名**模式使用；记录文件模式判定不依赖文件名，保持模板原样。
-    func fileNameWithIndex(_ fileName: String, media: TwitterMedia, post: TwitterPost?, template: String) -> String {
-        guard !template.uppercased().contains("%MEDIA_INDEX%") else { return fileName }
-        let idx = mediaIndexInPost(media: media, post: post)
-        let stem = (fileName as NSString).deletingPathExtension
-        let ext = (fileName as NSString).pathExtension
-        // 已有分隔符（空格/连字符/下划线/点）则不补，避免双分隔
-        let separators = [" ", "-", "_", "."]
-        let needsSeparator = !separators.contains { stem.hasSuffix($0) }
-        let joined = needsSeparator ? "\(stem) \(idx)" : "\(stem)\(idx)"
-        return ext.isEmpty ? joined : "\(joined).\(ext)"
+    /// 为什么需要：`post.user.id` 缺失（响应形态变化 / 解析漏字段）时，
+    /// 记录里的 `user_id` 会写成空串；而"从保存路径扫描导入"与导出都要求
+    /// `user_id` 非空才收，于是这些 id **无声消失**（用户只看到"导入完成 0 条"）。
+    ///
+    /// - Returns: nil = 账号无法确定 → 调用方**不写记录**，改告警（F7）。
+    func accountIdForRecord(post: TwitterPost, media: TwitterMedia, dir: String) -> String? {
+        if let direct = mediaAuthorId(post: post, media: media) { return direct }
+        let folder = (dir as NSString).lastPathComponent
+        if let fromFolder = AccountFolder.accountId(fromFolderName: folder) { return fromFolder }
+        return nil
     }
 
-    /// 媒体在其推文内的序号（1 起）。无推文上下文时退化为 1
-    /// （此时模板通常已含唯一变量，不需要靠索引区分）
-    private func mediaIndexInPost(media: TwitterMedia, post: TwitterPost?) -> Int {
-        guard let post, let list = post.medias,
-              let i = list.firstIndex(where: { $0.id == media.id }) else { return 1 }
-        return i + 1
+    /// 分布式下载记录文件路径（账号文件夹里一份；关闭子文件夹时落在保存路径根下）
+    private func distributedRecordURL(dir: String) -> URL {
+        URL(fileURLWithPath: dir)
+            .appendingPathComponent(settings.recordFileNameValue)
     }
 
-    /// 记录文件路径（每用户文件夹一份）
-    private func recordFileURL(dir: String) -> URL {
-        URL(fileURLWithPath: dir).appendingPathComponent(settings.recordFileNameValue)
-    }
-
-    /// 下载记录条目。
-    /// v1：只有媒体 ID 列表（`{"downloaded":[...]}`）。
-    /// v2：额外记录「媒体 ID → 文件名」（`{"downloaded":[...],"files":{...}}`），
-    ///     用于**双向校验**——记录说已下载但文件不存在/为 0 字节时以文件系统为准并清除该条目。
-    ///     这能自愈历史遗留的坏记录（早期版本把 0 字节文件当成功写入了记录）。
-    struct RecordEntry: Codable, Sendable {
-        var anchorDay: String        // "yyyy-MM-dd"
-        var dayIds: [String]
-        /// 媒体 ID → 下载后的文件名（v2 起写入；旧记录为空）
-        var fileNames: [String: String]
-
-        init(anchorDay: String, dayIds: [String], fileNames: [String: String] = [:]) {
-            self.anchorDay = anchorDay
-            self.dayIds = dayIds
-            self.fileNames = fileNames
-        }
-    }
-
-    /// 各记录文件的缓存（内存态，进程内有效）
-    private static var recordCache: [String: RecordEntry] = [:]
-
-    private static func todayString(_ date: Date = Date()) -> String {
-        DateFormatter.fallback.string(from: date)
-    }
-
-    /// 下载成功后写入记录文件（媒体 ID + 文件名）。
-    /// 每完成一个任务异步落盘（后台队列串行写，不阻塞下载回调）。
-    private func recordDownloaded(mediaId: String?, created: Date?, dir: String, fileName: String?) {
-        guard settings.sameFileCheckModeValue == .recordFile,
-              let mediaId, !mediaId.isEmpty else { return }
-        let url = recordFileURL(dir: dir)
-        var entry = Self.recordCache[url.path] ?? RecordEntry(anchorDay: "", dayIds: [])
-        guard !entry.dayIds.contains(mediaId) else { return }
-        entry.dayIds.append(mediaId)
-        if let fileName { entry.fileNames[mediaId] = fileName }
-        Self.recordCache[url.path] = entry
-        let snapshot = entry.dayIds.sorted()
-        let names = entry.fileNames
-        Self.recordWriteQueue.async { [weak self] in
-            let fm = FileManager.default
-            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil)
-            }
-            do {
-                let data = try JSONSerialization.data(withJSONObject: [
-                    "downloaded": snapshot,
-                    "files": names,
+    /// 下载成功后按当前形态写入下载记录（媒体 id）。
+    ///
+    /// 只在**记录模式**下写：选「按文件名」时文件名本身就是判据，不需要记录文件
+    /// （写了反而是第三种判据，正是这次重构要消除的东西）。
+    /// 同步发生在主线程（记录文件很小），保证任务标完成的那一刻记录已经落盘——
+    /// 否则紧接着的 `hasDownloaded` 查询会读到旧值。
+    ///
+    /// **账号无法确定时不写**：记录只写"能定位账号"的——空 `user_id` 的下载记录
+    /// 在扫描/导入/导出时会被当成无法定位而丢弃（`RecordsIO` 要求非空），
+    /// 写下去等于让这条 id 无声消失。宁可少一条记录、留一条告警。
+    ///
+    /// 非 private：`MediaRecordsTests` 直接断言"账号判不出来时不落盘"这条行为。
+    func recordDownloaded(mediaId: String?, post: TwitterPost, media: TwitterMedia, dir: String) {
+        guard let mediaId, !mediaId.isEmpty else { return }
+        switch settings.sameFileCheckModeValue {
+        case .fileName:
+            return
+        case .distributed:
+            guard let userId = accountIdForRecord(post: post, media: media, dir: dir) else {
+                AppLogger.warn("下载记录无法定位账号,未写入", category: "DL", [
+                    "mediaId": mediaId, "dir": dir,
                 ])
-                try data.write(to: url, options: .atomic)
-            } catch {
-                AppLogger.warn("下载记录写入失败", category: "DL", ["dir": dir, "error": error.localizedDescription])
+                return
             }
-            _ = self
+            _ = MediaRecords.shared.appendDownloadId(
+                mediaId, userId: userId, fileURL: distributedRecordURL(dir: dir))
+        case .centralized:
+            guard let userId = accountIdForRecord(post: post, media: media, dir: dir) else {
+                AppLogger.warn("下载记录无法定位账号,未写入", category: "DL", [
+                    "mediaId": mediaId, "dir": dir,
+                ])
+                return
+            }
+            _ = MediaRecords.shared.appendCentralDownloadId(mediaId, userId: userId)
         }
-    }
-
-    /// 记录文件异步写入队列（串行,避免并发写互相覆盖）
-    private static let recordWriteQueue = DispatchQueue(label: "xspider.recordfile", qos: .utility)
-
-    private static func parseAnchorDay(_ s: String) -> Date? {
-        guard !s.isEmpty else { return nil }
-        return DateFormatter.dayOnly.date(from: s)
     }
 
     /// 某推文媒体应保存的目标目录（主页"已下载"判定用）。
@@ -430,37 +454,16 @@ final class DownloadStore {
             dir = downloads.path
         }
         if let post, settings.accountSubfolderEnabled {
-            let folderName = "\(post.user.name)-@\(post.user.screenName)".safePathComponent()
-            dir = (dir as NSString).appendingPathComponent(folderName)
+            // 同一 user id 永远指向同一个文件夹：已有文件夹优先（见 `AccountFolder.directory`）。
+            // 直接拿当前昵称拼名字的话，改一次昵称就会出现第二个文件夹、
+            // 记录写进新的空文件，旧记录读不到 → 整个账号的媒体被当成没下过（整库重下）。
+            dir = AccountFolder.directory(saveDir: dir,
+                                          name: post.user.name,
+                                          screenName: post.user.screenName,
+                                          userId: post.user.id)
         }
         return dir
     }
-
-    /// 文件名是否已包含 %MEDIA_ID% 模板变量
-    private func templateHasMediaId() -> Bool {
-        settings.download.fileNameTemplate.contains("%MEDIA_ID%")
-    }
-
-    /// 文件名重复消解：同路径冲突时追加「 (n)」序号（(2) 起）；检查文件系统与未完成任务表
-    private func uniquedFileName(_ fileName: String, dir: String) -> String {
-        func taken(_ name: String) -> Bool {
-            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(name)) { return true }
-            return tasks.contains {
-                $0.dir == dir && $0.fileName == name &&
-                $0.status != .error && $0.status != .removed
-            }
-        }
-        guard taken(fileName) else { return fileName }
-        let stem = (fileName as NSString).deletingPathExtension
-        let ext = (fileName as NSString).pathExtension
-        var n = 2
-        while true {
-            let candidate = ext.isEmpty ? "\(stem) (\(n))" : "\(stem) (\(n)).\(ext)"
-            if !taken(candidate) { return candidate }
-            n += 1
-        }
-    }
-
 
     // MARK: - 历史持久化（重启后恢复记录；进行中的任务恢复为等待态，用户手动继续）
 
@@ -487,6 +490,52 @@ final class DownloadStore {
     }
 
     private func persistTasks() {
+        let items = tasks.map {
+            PersistedTask(gid: $0.gid, post: $0.post, media: $0.media, fileName: $0.fileName,
+                          dir: $0.dir, totalSize: $0.totalSize, completeSize: $0.completeSize,
+                          statusRaw: $0.status.rawValue, error: $0.error, updatedAt: $0.updatedAt,
+                          downloadUrl: $0.downloadUrl, retryCountRemains: $0.retryCountRemains,
+                          engineRaw: $0.engine?.rawValue)
+        }
+        // 编码与写盘挪到后台：1000 个任务（每条内嵌完整推文）编码一次要几十毫秒，
+        // 放主线程会直接顶住界面。路径先取出来——`historyURL` 是 MainActor 隔离的，
+        // 后台任务里碰不到。
+        let url = Self.historyURL
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(items) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// 标记历史需要落盘（**节流**：最多每 `historySaveIntervalNanos` 写一次，多次改动合并成一次）。
+    ///
+    /// 为什么必须节流：`tasks` 的任何改动都走 didSet，而进度是按片高频到达的——
+    /// 1000 个任务并发时，一轮 400ms 轮询可能带来上百个进度事件。
+    /// 之前每个事件都把**全部任务**重新编码写盘，实测主线程 94% CPU 全在
+    /// `JSONEncoder.encode` 上，下载页卡到动不了（`sample` 抓到的调用栈）。
+    private func markHistoryDirty() {
+        historyDirty = true
+        guard !historySaveScheduled else { return }   // 已排期 → 那次写盘会覆盖本次改动
+        historySaveScheduled = true
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.historySaveIntervalNanos)
+            guard let self else { return }
+            self.historySaveScheduled = false
+            self.flushHistory()
+        }
+    }
+
+    /// 异步落盘（若确实脏了）。
+    func flushHistory() {
+        guard historyDirty else { return }
+        historyDirty = false
+        persistTasks()
+    }
+
+    /// **同步**落盘，给退出路径用：那里必须确定写完，不能等异步任务。
+    func flushHistoryNow() {
+        guard historyDirty else { return }
+        historyDirty = false
         let items = tasks.map {
             PersistedTask(gid: $0.gid, post: $0.post, media: $0.media, fileName: $0.fileName,
                           dir: $0.dir, totalSize: $0.totalSize, completeSize: $0.completeSize,
@@ -712,7 +761,8 @@ final class DownloadStore {
     }
 
     func unpause(_ gid: String) {
-        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
+        guard let index = taskIndex[gid], tasks.indices.contains(index),
+              tasks[index].gid == gid else { return }
         start(tasks[index])
     }
 
@@ -720,14 +770,15 @@ final class DownloadStore {
         // 取消 = 丢弃断点并清掉临时文件（组件负责），目标目录保持干净
         componentCall("dl.cancel", gid)
         componentJobs.remove(gid)
-        if let index = tasks.firstIndex(where: { $0.gid == gid }) {
+        if let index = taskIndex[gid], tasks.indices.contains(index),
+           tasks[index].gid == gid {
             let task = tasks[index]
             if alsoDeleteFiles {
                 // 源文件 + 目标目录内引擎临时文件 + 旧 staging 残留
                 let destURL = URL(fileURLWithPath: (task.dir as NSString).appendingPathComponent(task.fileName))
                 try? fm.removeItem(at: destURL)
                 // 组件可能把断点留在目标目录（文件名带引擎标识），一并清掉
-                for suffix in [".part.http", ".part.aria2next", ".part.http.aria2", ".part.aria2next.aria2"] {
+                for suffix in MediaJudgement.enginePartialSuffixes {
                     try? fm.removeItem(atPath: (task.dir as NSString)
                         .appendingPathComponent(task.fileName + suffix))
                 }
@@ -752,46 +803,68 @@ final class DownloadStore {
     }
 
     func removeAll(status: DownloadStatus? = nil, alsoDeleteFiles: Bool = false) {
-        let toRemove = tasks.filter { status == nil || $0.status == status }
-        for task in toRemove { remove(task.gid, alsoDeleteFiles: alsoDeleteFiles) }
+        // 走批量路径：逐个 `remove(gid:)` 会让 didSet 跑 N 次（每次重建索引 + 清缓存），
+        // 删几千条时主线程会卡死一小段时间（用户实测报过）。
+        let toRemove = tasks.filter { status == nil || $0.status == status }.map(\.gid)
+        guard !toRemove.isEmpty else { return }
+        removeBatch(Set(toRemove), alsoDeleteFiles: alsoDeleteFiles)
     }
 
-    /// 是否已下载过同一媒体——用于主页网格「已下载」禁用态。
-    /// recordFile 模式：查目标文件夹记录文件里的媒体 ID；
-    /// fileName 模式：下载历史里有同 URL 且完成的任务。
-    /// 是否已下载过同一媒体——主页「已下载」判定。
-    /// recordFile 模式：目标文件夹记录文件里的媒体 ID（内存缓存,异步落盘同步命中）；
-    /// fileName 模式：目标路径真实文件存在性（保存路径 + 用户名子文件夹）,不依赖下载历史。
+    /// 批量摘除（一次数组赋值 + 一次 pump）。文件删除在后台。
+    private func removeBatch(_ gids: Set<String>, alsoDeleteFiles: Bool) {
+        var pathsToDelete: [String] = []
+        if alsoDeleteFiles {
+            for task in tasks where gids.contains(task.gid) {
+                let dest = (task.dir as NSString).appendingPathComponent(task.fileName)
+                pathsToDelete.append(dest)
+                for suffix in MediaJudgement.enginePartialSuffixes {
+                    pathsToDelete.append(dest + suffix)
+                }
+            }
+        }
+        for gid in gids { componentCall("dl.cancel", gid); componentJobs.remove(gid) }
+        tasks.removeAll { gids.contains($0.gid) }
+        pump()
+        refreshSleepAssertion()
+        if alsoDeleteFiles && !pathsToDelete.isEmpty {
+            let paths = pathsToDelete
+            Task.detached(priority: .utility) {
+                let fm = FileManager.default
+                var removed = 0
+                for p in paths {
+                    if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p); removed += 1 }
+                }
+                AppLogger.info("已删除记录和源文件", category: "DL", ["files": "\(removed)"])
+            }
+        }
+    }
+
+    /// 是否已下载过同一媒体——主页网格「已下载」禁用态（与 `isDuplicate` 同一套判据）。
+    ///
+    /// - 记录模式（分布式 / 集中式）：查记录里的媒体 id；**只信记录、不回查文件**
+    ///   （改文件名 / 移动文件后依然算已下载 —— 见 `isDuplicate` 说明）。
+    /// - 文件名模式：按 `resolvedFileName`（与落盘名同一个函数）算名字，查目标文件夹里
+    ///   是否存在。`post` 缺失时无法算名（模板依赖推文数据）→ 返回 false。
     func hasDownloaded(media: TwitterMedia, dir: String? = nil, post: TwitterPost? = nil) -> Bool {
-        if settings.sameFileCheckModeValue == .recordFile {
+        let targetDir = dir ?? settings.download.saveDirBase
+        switch settings.sameFileCheckModeValue {
+        case .fileName:
+            guard let post else { return false }
+            // 判定与落盘用同一个名字（`resolvedFileName`）——带唯一标识时它不做重名消解，
+            // 于是"文件在不在"与"下载会落在哪个名字"恒等（F9 的核心）。
+            return MediaJudgement.isDownloaded(
+                fileName: resolvedFileName(post: post, media: media, dir: targetDir),
+                in: targetDir)
+        case .distributed:
             guard let mediaId = media.id, !mediaId.isEmpty else { return false }
-            let targetDir = dir ?? settings.download.saveDirBase
-            let recordPath = recordFileURL(dir: targetDir).path
-            // 只信记录，不回查文件（改文件名/移动文件后依然算已下载 —— 见 isDuplicate 说明）
-            return Self.recordCache[recordPath]?.dayIds.contains(mediaId) ?? false
+            return MediaRecords.shared.isDownloaded(
+                mediaId: mediaId, fileURL: distributedRecordURL(dir: targetDir))
+        case .centralized:
+            guard let mediaId = media.id, !mediaId.isEmpty, let post,
+                  let userId = accountIdForRecord(post: post, media: media, dir: targetDir) else { return false }
+            return MediaRecords.shared.isDownloaded(mediaId: mediaId, userId: userId)
         }
-        guard let downloadUrl = downloadURL(for: media) else { return false }
-        // 文件名模式:在目标目录找同 URL 派生不出文件名(模板依赖 post/media 数据),
-        // 调用方传 dir;这里用任务里最近一次的同 URL 文件名(完成任务携带),再查文件系统
-        if let fileName = Self.completedFileNameCache[downloadUrl] {
-            let targetDir = dir ?? settings.download.saveDirBase
-            return fm.fileExists(atPath: (targetDir as NSString).appendingPathComponent(fileName))
-        }
-        // 本会话尚未下载过它：按当前模板算出带索引的名字，直接查一次文件系统
-        // （否则网格里的按钮状态在"以前已下载"时不会显示为已下载）
-        if let post, let dir {
-            let raw = FileNameTemplate.resolve(template: settings.download.fileNameTemplate,
-                                               data: FileNameTemplateData(post: post, media: media))
-            let judged = fileNameWithIndex(raw, media: media, post: post, template: settings.download.fileNameTemplate)
-            if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(judged)) { return true }
-            // 兼容升级前的旧命名
-            return fm.fileExists(atPath: (dir as NSString).appendingPathComponent(raw))
-        }
-        return false
     }
-
-    /// URL → 最近完成文件名缓存（fileName 模式的文件存在判定需要）
-    private static var completedFileNameCache: [String: String] = [:]
 
     func redownload(_ gid: String) async {
         guard let task = tasks.first(where: { $0.gid == gid }) else { return }
@@ -808,10 +881,26 @@ final class DownloadStore {
     // MARK: - 任务更新
 
     func update(gid: String, now: Date = Date(), _ mutation: (inout DownloadTask) -> Void) {
-        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
+        guard let index = taskIndex[gid], tasks.indices.contains(index),
+              tasks[index].gid == gid else { return }   // 索引过期就当作没找到（didSet 会重建）
         var task = tasks[index]
         if task.updatedAt > now { return }
+        let before = task
         mutation(&task)
+        // **内容没变就不写**：`tasks[index] = task` 会触发 @Observable 通知 →
+        // 视图重算 body → 全量 filter/sort。轮询里大多数 job 的进度在同一秒内
+        // 没有变化，无条件写等于每轮都给界面标一次脏（实测就是滚动卡顿的放大器）。
+        //
+        // 只比轮询/收尾会改的字段（不是整个 struct 的相等）：这些类型都没有
+        // `Equatable`，为这一处给整条模型链加 conformance 不划算，也没必要。
+        guard task.status != before.status
+            || task.completeSize != before.completeSize
+            || task.totalSize != before.totalSize
+            || task.error != before.error
+            || task.retryCountRemains != before.retryCountRemains
+            || task.fileName != before.fileName
+            || task.engine != before.engine
+        else { return }
         task.updatedAt = now
         tasks[index] = task
     }
@@ -942,7 +1031,8 @@ final class DownloadStore {
     /// 而 CDN 出错时可能返回一个 HTML 错误页、字节数还可能是对的。
     /// 所以"这是不是一张真的图/真的 mp4"留在应用侧判（`docs/06` §5.4 的分工）。
     private func finalizeComponentDownload(gid: String, reportedBytes: Int64) {
-        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
+        guard let index = taskIndex[gid], tasks.indices.contains(index),
+              tasks[index].gid == gid else { return }
         let task = tasks[index]
         finalized.insert(gid)
         defer {
@@ -973,9 +1063,7 @@ final class DownloadStore {
                 "user": task.post.user.screenName,
                 "engine": task.engine?.rawValue ?? settings.engine.rawValue,
             ])
-            Self.completedFileNameCache[task.downloadUrl] = task.fileName
-            recordDownloaded(mediaId: task.media.id, created: task.media.createdTime,
-                             dir: task.dir, fileName: task.fileName)
+            recordDownloaded(mediaId: task.media.id, post: task.post, media: task.media, dir: task.dir)
             AccountStatusStore.shared.noteCDNSuccess()
         }
     }
@@ -1029,7 +1117,8 @@ final class DownloadStore {
     }
 
     private func handleTaskError(gid: String, error: Error) {
-        guard let index = tasks.firstIndex(where: { $0.gid == gid }) else { return }
+        guard let index = taskIndex[gid], tasks.indices.contains(index),
+              tasks[index].gid == gid else { return }
         let task = tasks[index]
         let retryable = isRetryable(error)
 
@@ -1110,7 +1199,7 @@ final class DownloadStore {
     /// 这是参考实现里验证过的一条（`docs/02` §E4）。
     private func cleanupFailedArtifacts(task: DownloadTask, path: String) {
         try? fm.removeItem(atPath: path)
-        for suffix in [".part.http", ".part.aria2next", ".part.http.aria2", ".part.aria2next.aria2"] {
+        for suffix in MediaJudgement.enginePartialSuffixes {
             try? fm.removeItem(atPath: path + suffix)
         }
     }

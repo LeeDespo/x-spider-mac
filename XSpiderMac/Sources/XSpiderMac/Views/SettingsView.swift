@@ -6,6 +6,8 @@ struct SettingsView: View {
     @State private var statusStore = AccountStatusStore.shared
     @State private var exportMessage: String?
     @State private var showCleanupDialog = false
+    /// 模板输入框的插入器（点「可用变量」时把 `%XXX%` 插到光标处）
+    @State private var templateInserter: TemplateTextField.Inserter?
     /// 同步清单管理弹窗
     @State private var showSyncListManager = false
     /// 自动翻译语言清单窗口
@@ -75,7 +77,7 @@ struct SettingsView: View {
             )) {
                 HStack(spacing: 6) {
                     Text(L("按账号创建子文件夹"))
-                    InfoHint(text: L("开启后，资源将保存到「保存路径/昵称-@用户名」文件夹中。"))
+                    InfoHint(text: L("开启后，资源将保存到「保存路径/昵称-用户名[数字id]」文件夹中，例如：Tesla-Tesla[13298072]。"))
                 }
             }
 
@@ -91,10 +93,18 @@ struct SettingsView: View {
             }
 
             // 文件名模板（单一输入 + 实时预览）
-            TextField(L("文件名模板"), text: Binding(
-                get: { settingsStore.settings.download.fileNameTemplate },
-                set: { settingsStore.settings.download.fileNameTemplate = $0 }
-            ))
+            // 用 AppKit 包一层：点下面的「可用变量」要插到**光标处**（见 TemplateTextField）
+            TemplateTextField(
+                text: Binding(
+                    get: { settingsStore.settings.download.fileNameTemplate },
+                    set: {
+                        settingsStore.settings.download.fileNameTemplate = $0
+                        DownloadStore.shared.refreshDownloadedCaches()
+                    }
+                ),
+                onReady: { templateInserter = $0 }
+            )
+            .frame(height: 22)
 
             LabeledContent(L("预览")) {
                 Text(FileNameTemplate.resolve(
@@ -105,8 +115,10 @@ struct SettingsView: View {
                 .textSelection(.enabled)
             }
 
-            // 变量选择器（默认展开）
-            TemplateVariablePicker()
+            // 变量选择器（默认展开）：点击插入到光标处（输入框未聚焦则无事发生）
+            TemplateVariablePicker { snippet in
+                templateInserter?.insert(snippet)
+            }
 
             // 跳过相同文件
             Toggle(L("跳过已存在的相同文件"), isOn: Binding(
@@ -118,7 +130,10 @@ struct SettingsView: View {
             if settingsStore.settings.download.sameFileSkip {
                 Picker(L("判定依据"), selection: Binding(
                     get: { settingsStore.settings.sameFileCheckModeValue },
-                    set: { settingsStore.settings.download.sameFileCheckMode = $0.rawValue }
+                    set: {
+                        settingsStore.settings.download.sameFileCheckMode = $0.rawValue
+                        DownloadStore.shared.refreshDownloadedCaches()
+                    }
                 )) {
                     ForEach(SameFileCheckMode.allCases, id: \.self) { mode in
                         Text(mode.displayName).tag(mode)
@@ -126,8 +141,44 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .padding(.leading, 16)
-                .infoHint(L("按文件名：下载时在文件名末尾追加资源索引（如「… 2.jpg」），判定即查找该文件是否存在。改名或移动文件后会被视为未下载。\n按下载记录文件：在保存路径维护 .downloaded.json，记录已下载媒体的资源索引；只查记录、不回查文件，因此改文件名模板、重命名或移动文件都不会让记录失效。"))
+                .infoHint(L("按文件名：用文件名模板算出文件名（含下方唯一标识后缀），目标文件夹里存在即算已下载。改名或移动文件后会被视为未下载。\n记录文件·分布式：读账号文件夹里的记录文件，媒体 id 命中即算。\n记录文件·集中式：读应用数据目录里的记录，媒体 id 命中即算。\n两种记录模式都只查记录、不回查文件，因此改文件名模板、重命名或移动文件都不会让记录失效。"))
             }
+
+            // 文件名追加唯一标识（契约 §6.2 联动：任一判定选「按文件名」→ 强制打开且不可改）
+            Toggle(isOn: Binding(
+                get: { settingsStore.settings.appendUniqueIdEnabled },
+                set: {
+                    settingsStore.settings.appendUniqueIdUserEnabled = $0
+                    DownloadStore.shared.refreshDownloadedCaches()
+                }
+            )) {
+                HStack(spacing: 6) {
+                    Text(L("文件名追加唯一标识"))
+                    InfoHint(text: L("在扩展名前用「[媒体ID]」追加资源唯一标识，例如：\n2026-09-12 18-37-48 Tesla 2098843535730725124[2098843532463411200].jpg\n\n判定依据或同步判定依据选「按文件名」时强制打开（此时文件名就是判据），其余情况可自行开关。"))
+                }
+            }
+            .disabled(settingsStore.settings.appendUniqueIdLocked)
+
+            // 记录文件名（仅分布式形态创建在每个账号文件夹里）
+            //
+            // 可编辑条件 = **判定依据选分布式 或 记录形态选分布式**：
+            // 这个名字有两个消费方——下载判定（`DownloadStore.distributedRecordURL`）
+            // 与三个记录入口（`RecordsIO`，形态由上一行的「记录形态」决定）。
+            // 只按判定依据禁用，会让"判定集中式 + 形态分布式"的用户改不了
+            // 那三个入口正在用的文件名。
+            TextField(L("记录文件名"), text: Binding(
+                get: { settingsStore.settings.recordFileNameRaw },
+                set: {
+                    settingsStore.settings.recordFileNameRaw = $0
+                    DownloadStore.shared.refreshDownloadedCaches()
+                }
+            ))
+            .disabled(settingsStore.settings.sameFileCheckModeValue != .distributed
+                      && settingsStore.settings.recordsFormValue != .distributed)
+            .infoHint(L("分布式记录的文件名（默认 .downloadedrecord.json），创建在每个账号文件夹里。\n判定依据或记录形态选「分布式」时可改；集中式记录固定放在应用数据目录、不用这个名字。"))
+
+            // 记录导入导出 / 按文件名重建（契约 §7/§8）
+            recordButtons
         } header: {
             Label(L("下载"), systemImage: "arrow.down.circle")
         }
@@ -662,7 +713,10 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             Picker(L("同步判定依据"), selection: Binding(
                 get: { settingsStore.settings.syncCheckModeValue },
-                set: { settingsStore.settings.sync.syncCheckMode = $0.rawValue }
+                set: {
+                    settingsStore.settings.sync.syncCheckMode = $0.rawValue
+                    DownloadStore.shared.refreshDownloadedCaches()
+                }
             )) {
                 ForEach(SyncCheckMode.allCases, id: \.self) { mode in
                     Text(mode.displayName).tag(mode)
@@ -670,7 +724,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.radioGroup)
             .padding(.leading, 16)
-            .infoHint(L("按文件名：与下载判定依据的「按文件名」一致。\n按同步记录文件：在保存路径维护 .synced.json（记录每用户最新媒体日期与当天全部媒体 ID），同步只检索该日期之后的时间线，当天媒体按资源索引排除，可显著加快同步速度。"))
+            .infoHint(L("按文件名：与下载判定依据的「按文件名」一致（同一个实现）。\n记录文件·分布式：读账号文件夹里的同步记录（每个被同步账号一个条目：最新媒体日期 + 窗口内媒体 id），只检索该日期之后的时间线，可显著加快同步速度。\n记录文件·集中式：同上，记录放在应用数据目录，与媒体文件分离。"))
         } header: {
             Label(L("同步"), systemImage: "arrow.triangle.2.circlepath")
         }
@@ -742,6 +796,203 @@ struct SettingsView: View {
     }
 
     @State private var cacheUsageText: String?
+
+    // MARK: - 记录导入 / 导出 / 重建（契约 `MEDIA_RECORDS.md` §7/§8）
+
+    /// 待导入的来源（选中文件/目录后先弹「覆盖 / 追加 / 取消」，选定才真的写）
+    @State private var pendingImport: RecordImportSource?
+    @State private var showImportStrategyDialog = false
+    /// 待重建的保存路径（同一套「覆盖 / 追加」选择）
+    @State private var pendingRebuildDir: String?
+    @State private var showRebuildStrategyDialog = false
+    /// 结果文案（成功/失败/报告都走这里，短暂显示在按钮下方）
+    @State private var recordMessage: String?
+
+    private var recordButtons: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // 这三个入口读写哪一份记录，由**独立的形态设置**决定，不再从下载判定推断
+            // （此前判定选「按文件名」时一律按分布式走，于是集中式记录既导不出也写不回）。
+            Picker(L("记录形态"), selection: Binding(
+                get: { settingsStore.settings.recordsFormValue },
+                set: {
+                    settingsStore.settings.recordsFormValue = $0
+                    DownloadStore.shared.refreshDownloadedCaches()
+                }
+            )) {
+                ForEach(RecordForm.allCases, id: \.self) { form in
+                    Text(SettingsView.recordFormName(form)).tag(form)
+                }
+            }
+            .pickerStyle(.segmented)
+            .infoHint(L("导出记录… / 导入记录… / 按文件名重建记录… 读写哪一份记录。\n分布式：读账号文件夹里的记录文件（跟随保存路径）。\n集中式：读应用数据目录里的记录（默认，与媒体文件分离，搬走媒体文件夹也不丢判定）。\n与「判定依据」无关——判定决定怎么算已下载，这里决定记录读写在哪。"))
+
+            HStack(spacing: 8) {
+                Button(L("导出记录…")) { exportRecords() }
+                    .compatGlassButton()
+                Menu(L("导入记录…")) {
+                    Button(L("从文件…")) { importFromFile() }
+                    Button(L("从保存路径扫描…")) { importFromSavePath() }
+                }
+                .compatGlassButton()
+                Button(L("按文件名重建记录…")) { rebuildRecords() }
+                    .compatGlassButton()
+            }
+            if let recordMessage {
+                Text(recordMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .confirmationDialog(
+            L("导入方式"),
+            isPresented: $showImportStrategyDialog,
+            titleVisibility: .visible
+        ) {
+            Button(L("追加（合并）")) { runPendingImport(strategy: .merge) }
+            Button(L("覆盖"), role: .destructive) { runPendingImport(strategy: .overwrite) }
+            Button(L("取消"), role: .cancel) { pendingImport = nil }
+        } message: {
+            Text(L("追加：id 合并去重，重复导入同一份文件不会重复计数。\n覆盖：导入包里出现的账号，其记录被导入内容整体替换（其余账号不动）。"))
+        }
+        .confirmationDialog(
+            L("重建方式"),
+            isPresented: $showRebuildStrategyDialog,
+            titleVisibility: .visible
+        ) {
+            Button(L("追加（合并）")) { runPendingRebuild(strategy: .merge) }
+            Button(L("覆盖"), role: .destructive) { runPendingRebuild(strategy: .overwrite) }
+            Button(L("取消"), role: .cancel) { pendingRebuildDir = nil }
+        } message: {
+            Text(L("按文件名解析出的媒体 id 写入记录。\n追加：与现有记录合并去重。\n覆盖：识别到媒体 id 的账号，其记录被整体替换（其余账号不动）。"))
+        }
+    }
+
+    /// 导出到用户选的 `.json` 文件
+    private func exportRecords() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "xspider-records.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let export = try RecordsIO.exportRecords(
+                form: currentForm, saveDir: saveDirForRecords,
+                recordFileName: settingsStore.settings.recordFileNameValue)
+            let data = try MediaRecordJSON.encode(export)
+            try MediaRecordJSON.writeAtomically(data, to: url)
+            recordMessage = String(format: L("已导出 %d 个账号的下载记录、%d 个账号的同步记录"),
+                                   export.downloads.count, export.sync.count)
+            AppLogger.info("记录已导出", category: "REC", [
+                "file": url.path, "form": currentForm.rawValue,
+                "downloads": "\(export.downloads.count)", "sync": "\(export.sync.count)",
+            ])
+        } catch {
+            recordMessage = String(format: L("导出失败：%@"), error.localizedDescription)
+            AppLogger.warn("导出记录失败", category: "REC", ["error": error.localizedDescription])
+        }
+    }
+
+    private func importFromFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        pendingImport = .exportFile(url)
+        showImportStrategyDialog = true
+    }
+
+    private func importFromSavePath() {
+        guard !saveDirForRecords.isEmpty else {
+            recordMessage = L("保存路径为空，无法扫描")
+            return
+        }
+        pendingImport = .distributedRecords(saveDir: saveDirForRecords)
+        showImportStrategyDialog = true
+    }
+
+    private func runPendingImport(strategy: RecordImportStrategy) {
+        guard let source = pendingImport else { return }
+        pendingImport = nil
+        runImport(source: source, strategy: strategy)
+    }
+
+    private func runImport(source: RecordImportSource, strategy: RecordImportStrategy) {
+        do {
+            let report = try RecordsIO.importRecords(
+                from: source, into: currentForm, strategy: strategy,
+                saveDir: saveDirForRecords,
+                recordFileName: settingsStore.settings.recordFileNameValue)
+            DownloadStore.shared.refreshDownloadedCaches()   // 判定立即跟着刷新
+            recordMessage = String(format: L("导入完成：识别 %d 个账号，新增 %d 条，无法识别 %d 条"),
+                                   report.recognizedAccounts, report.addedEntries,
+                                   report.unrecognizedEntries)
+            AppLogger.info("记录已导入", category: "REC", [
+                "form": currentForm.rawValue, "strategy": "\(strategy)",
+                "accounts": "\(report.recognizedAccounts)", "added": "\(report.addedEntries)",
+                "unrecognized": "\(report.unrecognizedEntries)",
+            ])
+        } catch {
+            recordMessage = String(format: L("导入失败：%@"), error.localizedDescription)
+            AppLogger.warn("导入记录失败", category: "REC", ["error": error.localizedDescription])
+        }
+    }
+
+    private func rebuildRecords() {
+        guard !saveDirForRecords.isEmpty else {
+            recordMessage = L("保存路径为空，无法扫描")
+            return
+        }
+        pendingRebuildDir = saveDirForRecords
+        showRebuildStrategyDialog = true
+    }
+
+    private func runPendingRebuild(strategy: RecordImportStrategy) {
+        guard let dir = pendingRebuildDir else { return }
+        pendingRebuildDir = nil
+        do {
+            let report = try RecordsIO.rebuildFromFileNames(
+                saveDir: dir, into: currentForm, strategy: strategy,
+                recordFileName: settingsStore.settings.recordFileNameValue)
+            DownloadStore.shared.refreshDownloadedCaches()
+            recordMessage = String(format: L("重建完成：识别 %d 个，新增 %d 条，无法识别 %d 个"),
+                                   report.recognized, report.added, report.unrecognized)
+            AppLogger.info("按文件名重建记录", category: "REC", [
+                "form": currentForm.rawValue, "strategy": "\(strategy)",
+                "recognized": "\(report.recognized)", "added": "\(report.added)",
+                "unrecognized": "\(report.unrecognized)",
+            ])
+        } catch {
+            recordMessage = String(format: L("重建失败：%@"), error.localizedDescription)
+            AppLogger.warn("按文件名重建记录失败", category: "REC", ["error": error.localizedDescription])
+        }
+    }
+
+    /// 导入导出写哪个形态：由「记录形态」设置显式决定（默认集中式）。
+    ///
+    /// **不再从下载判定推断**——旧实现里判定选「按文件名」时一律返回 `.distributed`，
+    /// 于是集中式记录（`~/Library/Application Support/XSpiderMac/records/downloads/*.json`）
+    /// 既导不出（导出包 downloads 为空）也写不回（导入/重建写进了账号文件夹）。
+    private var currentForm: RecordForm {
+        settingsStore.settings.recordsFormValue
+    }
+
+    /// 记录形态的显示名（复用判定依据那两个已有译文，两种说法指的是同一件事）。
+    static func recordFormName(_ form: RecordForm) -> String {
+        switch form {
+        case .distributed: return L("记录文件·分布式")
+        case .centralized: return L("记录文件·集中式")
+        }
+    }
+
+    /// 记录文件的保存路径（与下载一致；空则回落到 ~/Downloads）
+    private var saveDirForRecords: String {
+        let base = settingsStore.settings.download.saveDirBase
+        if !base.isEmpty { return base }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
+            .first?.path ?? ""
+    }
 
     // MARK: - 数据（清理）
 
@@ -1025,28 +1276,33 @@ struct SettingsView: View {
 // MARK: - 模板变量选择器（默认展开）
 
 struct TemplateVariablePicker: View {
-    @State private var copiedVariable: String?
+    /// 点某个变量时收到 `%XXX%`；父视图把它插到模板输入框的光标处。
+    var onPick: (String) -> Void
+
+    @State private var flashVariable: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L("可用变量（点击复制）"))
+            Text(L("可用变量（点击插入到光标处）"))
                 .font(.subheadline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 6) {
                 ForEach(FileNameTemplate.variableDescriptions, id: \.name) { variable in
                     Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString("%\(variable.name)%", forType: .string)
-                        copiedVariable = variable.name
+                        // 插到光标处；输入框没聚焦时 `insert` 返回 false、什么都不做
+                        let snippet = "%\(variable.name)%"
+                        onPick(snippet)
+                        // 无论插没插进去都给一下反馈（点了没反应会让人以为按钮坏了）
+                        flashVariable = variable.name
                         Task {
                             try? await Task.sleep(nanoseconds: 1_500_000_000)
-                            copiedVariable = nil
+                            flashVariable = nil
                         }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
                                 Text("%\(variable.name)%")
                                     .font(.system(.caption, design: .monospaced))
-                                if copiedVariable == variable.name {
+                                if flashVariable == variable.name {
                                     Image(systemName: "checkmark")
                                         .font(.caption2)
                                         .foregroundStyle(.green)

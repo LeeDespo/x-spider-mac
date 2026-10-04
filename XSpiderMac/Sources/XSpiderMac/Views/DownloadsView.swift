@@ -158,11 +158,22 @@ struct DownloadsView: View {
 
     // MARK: - 任务列表（上游 DownloadList：缩略图 + 文件名 + 用户 + 进度 + 速度 + 操作）
 
+    /// 一页显示多少条。滚动到列表末尾附近时再追加一页。
+    ///
+    /// 为什么分页：历史动辄几千条，一次性交给 `List` 会让每次重绘都构造几千个
+    /// 行视图（即使 List 是懒加载，diff 与高度估算仍要过一遍全部数据）。
+    /// 60 条一页在"看得见的变化"与"每次重绘的工作量"之间取平衡。
+    private static let pageSize = 60
+
     private func taskList(statuses: [DownloadStatus]) -> some View {
-        let filtered = store.tasksForCurrentTab(statuses: statuses).sorted { a, b in
-            let order: [DownloadStatus: Int] = [.active: 0, .paused: 1, .waiting: 2, .error: 3, .complete: 4, .removed: 5]
-            return (order[a.status] ?? 9) < (order[b.status] ?? 9)
-        }
+        // 排序已在 `DownloadStore.tasksForCurrentTab` 里做（结果带缓存）。
+        // 这里再排一次的话，每帧都要重来一遍 O(n log n) + 每次比较分配一个字典——
+        // 那是滚动卡顿的元凶之一，别再把它加回来。
+        let filtered = store.tasksForCurrentTab(statuses: statuses)
+        let shown = Array(filtered.prefix(visibleCount))
+        let hasMore = filtered.count > shown.count
+        // Tab / 用户筛选变化时回到第一页（否则换到"已完成"会停在上一个 Tab 的页数）
+        let pageKey = "\(statuses.map(\.rawValue).joined(separator: ","))|\(store.userFilterScreenName ?? "*")"
 
         return Group {
             if filtered.isEmpty {
@@ -175,11 +186,27 @@ struct DownloadsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(filtered) { task in
-                    DownloadTaskRow(task: task)
+                List {
+                    ForEach(shown) { task in
+                        DownloadTaskRow(task: task)
+                    }
+                    if hasMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L("正在加载更多…"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                        .onAppear { visibleCount += Self.pageSize }
+                    }
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
+                .onChange(of: pageKey) { _, _ in visibleCount = Self.pageSize }
             }
         }
     }
@@ -192,21 +219,24 @@ struct DownloadsView: View {
             case L("下载中"):
                 Button(L("全部暂停")) { store.pauseAll() }
                 Button(L("全部恢复")) { store.unpauseAll() }
-                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
+                Button(L("全部删除"), role: .destructive) { showDeleteConfirm = true }
             case L("已完成"):
-                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
+                Button(L("全部删除"), role: .destructive) { showDeleteConfirm = true }
             case L("失败"):
                 Button(L("全部重试")) { Task { await store.batchRedownload(store.tasksForCurrentTab(statuses: currentStatuses).map(\.gid)) } }
-                Button(L("删除当前记录"), role: .destructive) { showDeleteConfirm = true }
+                Button(L("全部删除"), role: .destructive) { showDeleteConfirm = true }
             default:
                 EmptyView()
             }
+            // 作用范围说明：这三个按钮作用于**当前视图**（当前 Tab + 当前用户筛选）
+            InfoHint(text: L("这些按钮作用于当前视图：如果选择了某个用户，只对该用户的记录生效；选择「显示全部」时才对全部记录生效。"))
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .confirmationDialog(
-            L("删除 \(store.tasksForCurrentTab(statuses: currentStatuses).count) 条记录？"),
+            L("删除 \(store.tasksForCurrentTab(statuses: currentStatuses).count) 条记录？")
+                + (store.userFilterScreenName.map { L("（仅该用户）") + "@\($0)" } ?? L("（全部用户）")),
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
@@ -234,6 +264,8 @@ struct DownloadsView: View {
     }
 
     @State private var showDeleteConfirm = false
+    /// 当前 Tab 下已加载的条数（分页，见 `taskList`）
+    @State private var visibleCount = Self.pageSize
     @State private var pendingFilesDelete = false
 }
 
@@ -275,6 +307,10 @@ struct UserFilterPicker: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
+                                    // 该账号在历史里的记录条数（小字，右对齐）
+                                    Text("\(user.count)")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
                                     if store.userFilterScreenName == user.screenName {
                                         Image(systemName: "checkmark")
                                             .foregroundStyle(Color.accentColor)

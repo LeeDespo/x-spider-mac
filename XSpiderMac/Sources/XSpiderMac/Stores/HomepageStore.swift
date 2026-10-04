@@ -154,7 +154,9 @@ final class HomepageStore {
     /// 从输入中提取推文 ID：完整链接（含 ?query 后缀）、纯数字 ID
     static func extractTweetID(from input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty, trimmed.allSatisfy({ $0.isNumber }), trimmed.count >= 10 {
+        // 只认 ASCII 0-9：`Character.isNumber` 会把全角（１２３）与圈号（①）判成数字，
+        // 于是 `①②③④⑤⑥⑦⑧⑨⑩` 这种输入会被当成推文 id 去取数（X 只会回 not_found）。
+        if !trimmed.isEmpty, trimmed.allSatisfy({ $0.isASCII && $0.isNumber }), trimmed.count >= 10 {
             return trimmed
         }
         if let range = trimmed.range(of: "status(?:es)?/([0-9]{10,})", options: .regularExpression) {

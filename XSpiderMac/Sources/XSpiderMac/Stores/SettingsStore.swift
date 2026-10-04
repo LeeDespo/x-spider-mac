@@ -16,6 +16,16 @@ final class SettingsStore {
         }
     }
 
+    /// 构造是否已经完成。
+    ///
+    /// `init` 里 `settings = decoded` 会触发 didSet → `save()`（`@Observable` 宏会把
+    /// 属性观察器搬进 setter，实测 init 内赋值同样触发；不带宏的普通类则不会——
+    /// 所以这条守卫不能靠"Swift 会在 init 里跳过 didSet"的直觉省掉）。
+    /// 此时 `SettingsStore.shared` 还没构造完，触碰 `DownloadStore.shared` 会构成
+    /// 单例构造重入（DownloadStore.init 读 SettingsStore.shared）→ SIGTRAP。
+    /// 因此判定的自动失效**只在 isLoaded 之后生效**。
+    private var isLoaded = false
+
     /// 需要重启才能完全生效的修改提示（设置页弹窗）
     var pendingRestartNotice: String?
 
@@ -34,10 +44,38 @@ final class SettingsStore {
     private let storage = UserDefaults.standard
     private let key = "settings.v2"
 
-    init() {
-        if let data = storage.data(forKey: key),
-           let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
+    /// 从持久化字节载入设置：解码 → **一次性覆盖**（见 `Settings.currentSchemaVersion`）。
+    ///
+    /// 纯函数（不读 UserDefaults、不碰任何单例，`nonisolated` 因此可被测试直接调用），
+    /// 可以整体在测试里跑：喂一段"磁盘上的旧配置"字节，断言 4 个键被覆盖成新默认值、
+    /// 标记被写上；再喂一段"已打标记且用户选了别的值"的字节，断言用户值原样保留。
+    ///
+    /// 解码失败（文件损坏 / 形状对不上）→ 用全新默认值，同样走覆盖逻辑（打上标记）。
+    /// 这里**不做旧值语义映射**（`recordFile` / `syncRecordFile` 不映射成任何东西）——
+    /// 直接由覆盖顶掉，这是本轮用户拍板的预期结果。
+    nonisolated static func load(from data: Data?) -> (settings: Settings, didOverride: Bool) {
+        var settings = Settings()
+        if let data, let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
             settings = decoded
+        }
+        let didOverride = settings.applySchemaDefaultsOnce()
+        return (settings, didOverride)
+    }
+
+    init() {
+        // 一次性覆盖**发生在写回 UserDefaults 之前**：`settings = ...` 会触发
+        // didSet → save()，在局部变量上覆盖再赋值，落盘的第一版就已经是新默认值，
+        // 不存在"先写旧值再改"的窗口。
+        let (loaded, didOverride) = Self.load(from: storage.data(forKey: key))
+        settings = loaded
+        if didOverride {
+            AppLogger.info("设置已应用本轮新默认值（一次性覆盖）", category: "APP", [
+                "schema": "\(Settings.currentSchemaVersion)",
+                "sameFileCheckMode": loaded.sameFileCheckModeValue.rawValue,
+                "syncCheckMode": loaded.syncCheckModeValue.rawValue,
+                "appendUniqueId": loaded.appendUniqueIdUserEnabled ? "1" : "0",
+                "recordsForm": loaded.recordsFormValue.rawValue,
+            ])
         }
         // 迁移：旧版字号存 UserDefaults，搬进 settings
         if settings.app.fontSize == nil,
@@ -63,6 +101,12 @@ final class SettingsStore {
         // 启动时不在这里 configure：SettingsStore 是第一个构造的 store，
         // 其 init 内触碰 AppStore 会形成构造重入。
         // 启动路径已由 AppStore.cookieString.didSet（restoreSession → login 内的赋值）覆盖。
+        //
+        // 判定的基线指纹在这里定死：init 期间 save() 不会（也不能）触碰 DownloadStore.shared，
+        // 首次记录层加载由 DownloadStore 自己按需完成（`MediaRecords` 是懒加载的）。
+        lastAppliedJudgementFingerprint = currentJudgementFingerprint()
+        // 构造完成：此后的设置变更才允许走自动失效（见 `isLoaded` 的说明）
+        isLoaded = true
     }
 
     /// 一次性迁移：早期默认值过于保守（每窗口 10 请求 / 熔断暂停 900 秒），
@@ -100,15 +144,21 @@ final class SettingsStore {
         applyLanguage()
         applyRateLimit()
         applyProxyIfChanged()
-        // 启动时**不**调用 applyJudgementIfChanged：它会触碰 DownloadStore.shared，
-        // 而 DownloadStore.init 又要读 SettingsStore.shared → 单例构造重入 → SIGTRAP。
-        // 首帧的缓存加载由 DownloadStore.init 里的 loadRecordCaches() 完成；
-        // 这里只处理之后的设置变更（此时两个 store 都已构造完毕）。
-        lastAppliedJudgementFingerprint = currentJudgementFingerprint()
+        // 判定指纹自动失效：保存后比较指纹，变了就让「已下载」判定立即重算
+        // （改判定依据 / 保存路径 / 账号子目录 / 唯一标识任何一项都会改变判定结果）。
+        // 两条安全线：
+        // 1. 构造期间（!isLoaded）一律不触碰 DownloadStore.shared —— 那会构成单例构造重入
+        //    （DownloadStore.init 读 SettingsStore.shared）→ SIGTRAP；基线指纹在 init 末尾定好。
+        // 2. 指纹幂等：设置页每次按键都会走 save()，值没变就不重复失效。
+        if isLoaded { applyJudgementIfChanged() }
     }
 
     private func currentJudgementFingerprint() -> String {
-        "\(settings.download.sameFileCheckMode ?? "")|\(settings.download.saveDirBase)|\(settings.download.accountSubfolder ?? true)|\(settings.download.sameFileSkip)"
+        // 三值判定 + 保存路径 + 子目录开关 + 唯一标识开关都要参与：
+        // 它们里的任何一个变化都会改变「已下载」判定结果。
+        "\(settings.download.sameFileCheckMode ?? "")|\(settings.sync.syncCheckMode ?? "")"
+            + "|\(settings.download.saveDirBase)|\(settings.download.accountSubfolder ?? true)"
+            + "|\(settings.download.sameFileSkip)|\(settings.download.appendUniqueId.map(String.init) ?? "nil")"
     }
 
     /// 判定依据（或保存路径）变化 → 让"已下载"判定立即刷新。

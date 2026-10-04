@@ -48,7 +48,7 @@ final class FileNameTemplateTests: XCTestCase {
         XCTAssertEqual(result, "2024-01-20 15-15-36 userscreenname 1145141919810-1.jpg")
     }
 
-    // MARK: - 全部 13 个变量
+    // MARK: - 全部变量（不含 %MEDIA_ID%，见 MEDIA_RECORDS.md §5.3）
 
     func testAllVariables() {
         let data = makeData()
@@ -57,12 +57,19 @@ final class FileNameTemplateTests: XCTestCase {
         XCTAssertEqual(FileNameTemplate.resolve(template: "%USER_ID%", data: data), "1145141919")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%USER_NAME%", data: data), "这是用户昵称")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%USER_SCREEN_NAME%", data: data), "userscreenname")
-        XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_ID%", data: data), "1748695771262889984")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_WIDTH%", data: data), "1323")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_HEIGHT%", data: data), "1136")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_INDEX%", data: data), "1")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_TYPE%", data: data), "photo")
         XCTAssertEqual(FileNameTemplate.resolve(template: "%TAGS%", data: data), "标签1,标签2")
+    }
+
+    /// `%MEDIA_ID%` 已从变量表删除：媒体 id 的落点固定在「唯一标识后缀」上。
+    /// 残留的 token 不再被替换（加载设置时会清理掉，见 Settings）。
+    func testMediaIdVariableIsRemoved() {
+        XCTAssertFalse(FileNameTemplate.variableDescriptions.map(\.name).contains("MEDIA_ID"))
+        XCTAssertEqual(FileNameTemplate.resolve(template: "%MEDIA_ID%", data: makeData()),
+                       "%MEDIA_ID%", "变量表里没有它 → 原样保留（由设置清理兜底）")
     }
 
     // MARK: - 参数语法（上游 %VAR,k=v%）

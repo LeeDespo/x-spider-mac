@@ -47,6 +47,17 @@ enum AppDirectories {
         supportRoot.appendingPathComponent("Cache", isDirectory: true)
     }
 
+    /// 集中式媒体记录目录（`MEDIA_RECORDS.md` §3）：
+    ///   records/downloads/<账号 id>.json   下载记录（一账号一文件）
+    ///   records/sync.json                  同步记录（所有账号一个文件）
+    ///
+    /// **"清理数据"不删这里**：记录是"重启后能不能对账"的依据，
+    /// 一键清理把用户媒体文件留下了、却把判定用的记录清空，比不清理更坏
+    /// （表现为整库重下）。见 `cleanupTargets` 的排除说明。
+    static var recordsRoot: URL {
+        supportRoot.appendingPathComponent("records", isDirectory: true)
+    }
+
     static var logs: URL {
         let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("Logs/XSpiderMac", isDirectory: true)
@@ -54,13 +65,16 @@ enum AppDirectories {
 
     /// 确保目录存在（应用启动时调用）
     static func ensureAll() {
-        for dir in [supportRoot, staging, aria2, aria2State, cacheRoot] {
+        for dir in [supportRoot, staging, aria2, aria2State, cacheRoot, recordsRoot] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }
 
     /// 清理目标清单（供确认弹窗展示 + 执行删除）
-    /// 只包含应用自己创建的目录，绝不含用户媒体保存位置和系统目录
+    /// 只包含应用自己创建的目录，绝不含用户媒体保存位置和系统目录。
+    ///
+    /// 注意 `supportRoot` 是**逐个删除子目录**而不是整目录删除：
+    /// `records/` 必须留下（见 `recordsRoot` 的说明）。
     static var cleanupTargets: [(url: URL, label: String)] {
         [
             (supportRoot, "应用数据（下载暂存、aria2 会话、图片缓存）"),
@@ -73,7 +87,21 @@ enum AppDirectories {
     static func cleanupAll() {
         let fm = FileManager.default
         for (dir, _) in cleanupTargets {
-            try? fm.removeItem(at: dir)
+            if dir == supportRoot {
+                // 记录目录不能被一键清理带走：只删 supportRoot 下的其它子目录，
+                // 最后再尝试删空后 supportRoot 本身（有 records 时它非空，自然失败）。
+                // 按 **path** 比较而不是 URL 相等：`contentsOfDirectory` 给出的子项 URL
+                // 不带目录尾斜杠，而 `appendingPathComponent(_:isDirectory:)` 带。
+                let keep = recordsRoot.standardizedFileURL.path
+                let children = (try? fm.contentsOfDirectory(at: supportRoot,
+                                                            includingPropertiesForKeys: nil)) ?? []
+                for child in children where child.standardizedFileURL.path != keep {
+                    try? fm.removeItem(at: child)
+                }
+                try? fm.removeItem(at: supportRoot)
+            } else {
+                try? fm.removeItem(at: dir)
+            }
         }
         // 同步清掉 UserDefaults（偏好设置也属于应用数据；媒体文件不受影响）
         if let bundleID = Bundle.main.bundleIdentifier {

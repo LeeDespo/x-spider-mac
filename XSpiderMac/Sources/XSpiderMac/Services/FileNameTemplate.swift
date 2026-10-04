@@ -5,6 +5,10 @@ import Foundation
 /// 变量语法：`%VARIABLE%` 或带参数 `%VARIABLE,k=v,k2=v2%`（参数大小写敏感 key，值任意）。
 /// 每个替换值经 unicodeFilenamify：保留字符不动；保留字符 `[<>:"/\\|?*\\u0000-\\u001F]` 替换为 `!`；
 /// Windows 保留名（con/prn/aux/nul/com1-9/lpt1-9）尾部加 `!`。
+///
+/// **与上游的差异（有意）**：`%MEDIA_ID%` 已删除——媒体 id 的落点固定在
+/// 「文件名追加唯一标识」后缀上（契约 `MEDIA_RECORDS.md` §5.2/§5.3），
+/// 不再作为模板变量；已存模板加载时会被清理掉该 token。
 enum FileNameTemplate {
 
     struct VariableInfo: Sendable {
@@ -20,7 +24,7 @@ enum FileNameTemplate {
         let defaultValue: String
     }
 
-    /// 上游 13 个变量的完整定义（顺序与上游 REPLACER_MAP 一致）
+    /// 变量定义（相对上游 13 个删去 `%MEDIA_ID%`，其余顺序不变）
     static let variables: [VariableInfo] = {
         [
             VariableInfo(name: "POST_ID", desc: "推文 ID", params: []) { data, _ in data.post.id },
@@ -34,7 +38,6 @@ enum FileNameTemplate {
         VariableInfo(name: "USER_ID", desc: "用户 ID", params: []) { data, _ in data.post.user.id },
         VariableInfo(name: "USER_NAME", desc: "用户昵称", params: []) { data, _ in data.post.user.name },
         VariableInfo(name: "USER_SCREEN_NAME", desc: "用户名", params: []) { data, _ in data.post.user.screenName },
-        VariableInfo(name: "MEDIA_ID", desc: "资源 ID", params: []) { data, _ in data.media.id ?? "" },
         VariableInfo(name: "MEDIA_WIDTH", desc: "资源宽度", params: []) { data, _ in data.media.width.map(String.init) ?? "" },
         VariableInfo(name: "MEDIA_HEIGHT", desc: "资源高度", params: []) { data, _ in data.media.height.map(String.init) ?? "" },
         VariableInfo(name: "MEDIA_INDEX", desc: "资源索引", params: []) { data, _ in
@@ -62,12 +65,28 @@ enum FileNameTemplate {
         ]
     }()
 
+    /// 每个变量的正则**编译一次就留着**。
+    ///
+    /// 原实现每次调用 `resolve` 都 `NSRegularExpression(pattern:)` 一遍——
+    /// 12 个变量就是 12 次编译，而 `resolve` 在批量建任务时逐个媒体都要跑
+    /// （1000 个媒体 = 12000 次正则编译，实测这部分占了不少主线程时间）。
+    /// 模板变量的名字是编译期的常量集合，匹配模式不会变，缓存是安全的。
+    private static let variableRegexes: [String: NSRegularExpression] = {
+        var out: [String: NSRegularExpression] = [:]
+        for variable in variables {
+            let pattern = "%\(variable.name)((?:,[a-z]=.+?)+)?%"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                out[variable.name] = regex
+            }
+        }
+        return out
+    }()
+
     /// 完整解析：%VAR% 与 %VAR,k=v% 两种形式，大小写不敏感变量名（上游 regex 'gi'）
     static func resolve(template: String, data: FileNameTemplateData) -> String {
         var result = template
         for variable in variables {
-            let pattern = "%\(variable.name)((?:,[a-z]=.+?)+)?%"
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            guard let regex = variableRegexes[variable.name] else { continue }
 
             var replaced = result
             let nsRange = NSRange(replaced.startIndex..., in: replaced)

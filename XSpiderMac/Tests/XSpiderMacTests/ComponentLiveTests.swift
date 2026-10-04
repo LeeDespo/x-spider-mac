@@ -271,6 +271,10 @@ final class ComponentLiveTests: XCTestCase {
     ///
     /// 这条是下载迁移的验收：`DownloadStore.launch` 现在只做"算好目录与文件名 → `dl.enqueue`"，
     /// 字节、断点、并发都由组件负责；应用仍然自己做内容校验（魔数/HTML 误页）与下载记录。
+    ///
+    /// 记录体系重构（`MEDIA_RECORDS.md`）后加断言的那一段：
+    /// 下载判定临时切到「记录·分布式」，成功后在账号文件夹里应出现
+    /// `.downloadedrecord.json`（含该媒体 id），且 `hasDownloaded` 返回 true。
     @MainActor
     func testDownloadThroughTheStoreAndComponent() async throws {
         try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
@@ -288,13 +292,21 @@ final class ComponentLiveTests: XCTestCase {
         // 被改成 /var/folders/…/xspider-live-<uuid>，而那目录随后被删了）。
         let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
         let originalSkip = SettingsStore.shared.settings.download.sameFileSkip
+        // 下载判定也临时切到「记录·分布式」（同样快照/还原）
+        let originalCheckMode = SettingsStore.shared.settings.download.sameFileCheckMode
+        let originalSubfolder = SettingsStore.shared.settings.download.accountSubfolder
         let outDir = NSTemporaryDirectory() + "xspider-live-\(UUID().uuidString)"
         SettingsStore.shared.settings.download.saveDirBase = outDir
         SettingsStore.shared.settings.download.sameFileSkip = false
+        SettingsStore.shared.settings.download.sameFileCheckMode = SameFileCheckMode.distributed.rawValue
+        SettingsStore.shared.settings.download.accountSubfolder = true
         let restoreHistory = backupDownloadHistory()
         defer {
             SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
             SettingsStore.shared.settings.download.sameFileSkip = originalSkip
+            SettingsStore.shared.settings.download.sameFileCheckMode = originalCheckMode
+            SettingsStore.shared.settings.download.accountSubfolder = originalSubfolder
+            DownloadStore.shared.invalidateJudgements()
             try? FileManager.default.removeItem(atPath: outDir)
             restoreHistory()
         }
@@ -337,6 +349,22 @@ final class ComponentLiveTests: XCTestCase {
         XCTAssertNotNil(size, "文件没落盘：\(path)")
         XCTAssertEqual(size, finalTask.completeSize, "落盘字节数要与任务状态一致")
         XCTAssertGreaterThan(size ?? 0, 0, "0 字节不能算成功")
+
+        // ── 记录体系的真实验证（记录·分布式）──
+        let mediaId = try XCTUnwrap(media.id, "媒体必须有 id（记录只记资源 id）")
+        let recordURL = URL(fileURLWithPath: finalTask.dir)
+            .appendingPathComponent(SettingsStore.shared.settings.recordFileNameValue)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recordURL.path),
+                      "分布式记录文件应当出现在账号文件夹里：\(recordURL.path)")
+        let record = try XCTUnwrap(MediaRecords.shared.loadDownload(fileURL: recordURL),
+                                   "记录文件应当能按契约解析：\(recordURL.path)")
+        XCTAssertEqual(record.kind, "xspider.download-record")
+        XCTAssertEqual(record.version, 1)
+        XCTAssertTrue(record.ids.contains(mediaId), "记录里应当有该媒体 id：\(mediaId)")
+        XCTAssertFalse((AccountFolder.accountId(fromFolderName: (finalTask.dir as NSString).lastPathComponent) ?? "")
+                        .isEmpty, "账号文件夹名应当带数字 id：\(finalTask.dir)")
+        XCTAssertTrue(DownloadStore.shared.hasDownloaded(media: media, dir: finalTask.dir, post: post),
+                      "刚下完的媒体，记录·分布式判定必须返回 true")
     }
 
     /// 新的创建任务爬取路径：`crawl.run` **分块**跑，候选要能回连到完整推文。

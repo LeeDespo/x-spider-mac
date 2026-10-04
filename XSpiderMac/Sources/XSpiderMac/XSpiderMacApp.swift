@@ -10,6 +10,9 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
+            // 下载历史是**节流**落盘的（见 `DownloadStore.markHistoryDirty`），
+            // 退出前同步补一次，否则最近一秒内的状态变化会丢。
+            await MainActor.run { DownloadStore.shared.flushHistoryNow() }
             await XSpiderComponent.shared.shutdown()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
