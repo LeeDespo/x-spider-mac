@@ -29,6 +29,11 @@ echo "==> 版本 ${VERSION}"
 
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
 
+# 打包前置：随包二进制必须先过账本校验（存在性 / arm64 / 执行位 /
+# SHA256 与 components.lock.json 一致 / 契约主版本一致），失败即中止打包
+echo "==> 校验随包组件"
+"${PROJECT_DIR}/script/verify_components.sh"
+
 echo "==> 构建 Release（arm64）"
 xcodebuild \
   -project "${PROJECT_FILE}" \
@@ -56,6 +61,8 @@ codesign --force --deep --sign - "${APP_PATH}" 2>&1 | tail -2 || true
 STAGING="$(mktemp -d)"
 trap 'rm -rf "${STAGING}"' EXIT
 cp -R "${APP_PATH}" "${STAGING}/"
+# 第三方声明放进 dmg 根（未签名分发也要随包携带许可与出处声明）
+cp "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" "${STAGING}/许可证与第三方声明.txt"
 ln -s /Applications "${STAGING}/Applications"
 
 DMG_PATH="${DIST_DIR}/XSpiderMac-${VERSION}.dmg"
