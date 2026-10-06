@@ -242,8 +242,8 @@ final class CreationTaskStore {
         if let range = filter.dateRange {
             let widenedStart = Calendar.current.date(byAdding: .day, value: -1, to: range.start)
                 ?? range.start
-            strategy["since"] = .string(TwitterAPI.searchDateString(widenedStart))
-            strategy["until"] = .string(TwitterAPI.searchDateString(TwitterAPI.nextDay(range.end)))
+            strategy["since"] = .string(widenedStart.searchDateString)
+            strategy["until"] = .string(range.end.nextDay.searchDateString)
         }
         if let types = filter.mediaTypes {
             strategy["media_types"] = .array(types.map { .string($0.rawValue) })

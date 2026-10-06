@@ -28,7 +28,7 @@ struct TwitterPost: Codable, Sendable {
     /// `TwitterPost` 存的是它的引用，递归在类型层面被断开。
     ///
     /// 只递归**一层**：X 不允许"引用里再引用"，解析时内层显式禁止再向下取
-    /// （`TwitterAPI.mapTwitterPost(_:includeQuoted:)`），防异常数据无限递归。
+    /// （`XSpiderMapping.post(_:includeQuoted:)`），防异常数据无限递归。
     var quotedPost: QuotedPostBox?
 
     /// 转发者：转推时非 nil。此时 `user` 是**原作者**（被转发的推文），

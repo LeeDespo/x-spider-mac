@@ -346,7 +346,7 @@ struct TimelinePostCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // 转推标签：「某某 转推」。主体是原作者的正文，本行说明由谁转发
-            // （与 X 网页端一致；由 extractPostsFromTweetEntries 展平时填充）
+            // （与 X 网页端一致；来自契约 retweeted_by 字段的映射）
             if let by = post.retweetedBy {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.2.squarepath")
