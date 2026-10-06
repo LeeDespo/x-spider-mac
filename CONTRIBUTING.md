@@ -30,7 +30,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 - **外壳不做取数与下载**：请求签名、限流、下载引擎与爬取都在组件 `x-spider-core` 里，
   本仓库只做契约映射与 UI。职责边界见 [AGENTS.md](AGENTS.md) 的「黄金法则」。
 - 更换组件二进制（`xspiderd` / `aria2next`）后要 `xattr -cr` + `codesign --force --sign -`，
-  漏了会以退出码 137 静默被杀（见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) §2.7）。
+  漏了会以退出码 137 静默被杀（详见 [docs/COMPONENTS.md](docs/COMPONENTS.md)）。
 
 ## 反馈问题
 

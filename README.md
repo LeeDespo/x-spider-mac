@@ -101,8 +101,10 @@ codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 
 **组件从哪来**：新版二进制从组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core) 的 [Releases](https://github.com/LeeDespo/x-spider-core/releases) 下载。
 
-**核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本（当前 **1.5.1**）。
-应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用。
+**核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本。
+应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用；
+随包组件的精确版本与哈希记录在 [XSpiderMac/Resources/Binaries/components.lock.json](XSpiderMac/Resources/Binaries/components.lock.json)，
+对账与升级用法见 [docs/COMPONENTS.md](docs/COMPONENTS.md)。
 
 ## 系统要求
 
@@ -130,21 +132,25 @@ script/package_dmg.sh
 > `Resources/Binaries/` 里放的两个二进制（`aria2next`、`xspiderd`）是**随应用分发的兜底副本**，
 > 会一起打进 app bundle。改了 `project.yml`（版本号、内置文件等）后必须重新 `xcodegen generate`。
 
-## 仓库结构
+## 仓库结构与文档
 
 | 路径 | 说明 |
 |---|---|
 | `XSpiderMac/` | **应用本体**（SwiftUI）；`project.yml` 由 xcodegen 生成 xcodeproj |
-| `script/` | 构建、运行、打包脚本 |
-| `docs/DEVELOPMENT.md` | 架构地图、与上游的语义对照、已知问题与设计取舍（**改代码前先读**） |
+| `script/` | 构建、运行、打包与组件账本脚本（`build_and_run.sh` / `verify_components.sh` / `update_components.sh` / `check_boundaries.sh` / `package_dmg.sh`） |
+| `docs/ARCHITECTURE.md` | 架构地图、状态与并发、映射层职责、UI 纪律（**改代码前先读**） |
+| `docs/COMPONENTS.md` | 组件接入：接口、错误码、部署与更新、版本账本 |
+| `docs/TESTING.md` | 测试与验收：live 门控、两条实测路径、日志手法 |
+| `docs/RELEASING.md` | 发布流程：版本号、打包、GitHub Release |
+| `docs/history/` | 历史归档：上游参照退场记录、X 取数坑的叙事 |
 | `MEDIA_RECORDS.md` | 记录体系规范：下载 / 同步记录、判定三选一、命名（**改记录前先读**） |
 | `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
-| `AGENTS.md` | 面向 AI agent 的开发约束 |
-| `src/`、`src-tauri/` | 上游源码，**只作行为参照**，不参与构建 |
+| `AGENTS.md` | 面向 AI agent 的开发约束（阅读路由与质量门） |
 
 > **取数与下载的权威行为在组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core)**（本仓库只经契约调用它）。
-> 上游 `src/` / `src-tauri/` 对 X 的 GraphQL 端点仍有参照价值——queryId / features / variables
-> 极其敏感，需要核对上游实现时仍可对照。
+> 上游 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 的 vendor 源码
+> 已于 2026-10-07 从本仓库移除——历史出处与找回方法见
+> [docs/history/UPSTREAM_REFERENCE.md](docs/history/UPSTREAM_REFERENCE.md)。
 
 ## 已知限制
 
