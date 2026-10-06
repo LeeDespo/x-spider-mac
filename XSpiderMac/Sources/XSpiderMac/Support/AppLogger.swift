@@ -2,8 +2,8 @@ import Foundation
 import os
 
 /// 结构化应用日志：分类 + 级别 + 文件持久化。
-/// - 分类：NET / DL / HOME / SETTINGS / APP（对齐上游 log.category）
-/// - 持久化：~/Library/Logs/XSpiderMac/app-YYYY-MM-DD.log（按天滚动）
+/// - 分类：NET / DL / HOME / REC / SYNC / APP / CORE…
+/// - 持久化：~/Library/Logs/XSpiderMac/xspider.log（按大小轮转）
 /// - 格式：时间 级别 [分类] 消息 {结构化字段}
 enum AppLogger {
     private static let subsystem = "moe.keli.xspider.mac"
@@ -72,7 +72,7 @@ enum AppLogger {
         }
     }
 
-    // MARK: - 文件日志（按天滚动）
+    // MARK: - 文件日志（按大小轮转）
 
     static var logDirectory: URL { AppDirectories.logs }
 

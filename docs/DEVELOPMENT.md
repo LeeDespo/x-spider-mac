@@ -158,8 +158,10 @@ script/package_dmg.sh
 
 本应用**没有任何一条自己发出的 X 请求**，也没有自己的下载实现。取数、写操作、下载、爬取
 全部在组件 `x-spider-core`（Rust sidecar `xspiderd`，本地 JSON-RPC，契约版本 **1.5.1**）里。
-外壳里承担这件事的只有四个文件：`XSpiderComponent`（进程与 RPC）、`TwitterAPI`
-（契约方法 ↔ 应用模型的映射）、`XSpiderMapping` / `XSpiderJSON`（JSON → 应用模型）。
+契约映射与进程对接集中在四个文件：`XSpiderComponent`（进程与 RPC）、`TwitterAPI`
+（契约方法 ↔ 应用模型的映射）、`XSpiderMapping` / `XSpiderJSON`（JSON → 应用模型）；
+此外 `DownloadStore` 直调 `dl.enqueue` / `dl.resume` 等下载 method，
+`AccountStatusStore` 直调 `net.status` 读限流状态——它们不经过映射层。
 
 **为什么抽出去**：签名（`x-client-transaction-id`）、请求闸门与 429 熔断、queryId 自愈、
 下载引擎与断点/完整性校验，这些若在两个外壳里各实现一遍必然漂移，而限流治理是这条链上
@@ -210,8 +212,7 @@ script/package_dmg.sh
 | `upstream` | 其它上游错误（带 HTTP `status`） | `responseError(status:)` |
 | 传输 / 形状（无 `code`） | 组件没起来 / 超时 / 响应不是契约包络 | `transport` / `shape`；只有 `isTransport` 值得重试 |
 
-**判断一律用 `code`，不要匹配 `message`**——组件与外壳都遵守这条（第 5 部分里有因为
-按文案判断而全错的旧例）。
+**判断一律用 `code`，不要匹配 `message`**——组件与外壳都遵守这条。
 
 ## 2.5 仍然有效的领域知识（现在由组件负责，外壳只需理解现象）
 
@@ -232,9 +233,10 @@ script/package_dmg.sh
 
 **搜索端点**（组件实现）：必须 POST + JSON body（GET 一律 404，且**这个 404 与 queryId 无关**）；
 queryId 失效时自愈（抓 `/search` 页，且抓页面**必须带凭据**，匿名会 307 到 onboarding）。
-外壳只传 `screen_name` / `since` / `until` / `media_only` / `cursor`。
+外壳只传 `screen_name` / `since` / `until` / `media_only` / `count` / `cursor`。
 **日期语义**：契约里 `since` / `until` 是**用户本地日历日期、含当天**，组件内部按排他语义
-**+1 天**——**外壳不要再自己加一天**（旧 `searchRawQuery` 里的 `nextDay` 已是历史）。
+**+1 天**——**外壳不要再自己加一天**（旧的 `searchRawQuery` 只剩测试引用，不要再接线；
+`nextDay` 仍被 `crawlStrategy` 用来放宽 `until`，即 §5.2 的 ±1 天粗筛）。
 
 **限流治理**（组件实现）：请求闸门（令牌桶 + 同端点串行）、429 熔断（记截止时间）、
 **X API 与媒体 CDN 分开治理**（不同域、不同配额）。外壳侧只需：
@@ -264,7 +266,8 @@ queryId 失效时自愈（抓 `/search` 页，且抓页面**必须带凭据**，
 1. `~/Library/Application Support/moe.keli.xspider.mac/XSpiderCore/`
 2. `~/Library/Application Support/XSpiderMac/XSpiderCore/`
 3. `XSpiderMac.app/Contents/Resources/`（随包携带的兜底；仓库里是 `XSpiderMac/Resources/Binaries/`）
-4. `PATH`
+4. 可执行文件所在目录（`Contents/MacOS`，开发时为构建产物旁）
+5. `PATH`
 
 目录里放**两个文件**即可：`xspiderd` 与 `aria2next`。
 
@@ -394,7 +397,8 @@ library validation 拒，所以主形态是 sidecar（换组件 = 换一个二�
 ## 4.3 三处媒体卡的统一
 
 `Views/MediaCardActions.swift`（下载/已查看按钮）与 `Views/MediaTypeBadge.swift`
-（视频/GIF 角标）被搜索网格、瀑布流、评论缩略图**共用**。
+（视频/GIF 角标）各自被三处共用，范围不同：**按钮**用于搜索网格、瀑布流、评论缩略图；
+**角标**用于搜索网格、瀑布流、时间线推文卡的媒体行——评论缩略图不用角标。
 
 理由：需求是"三处都要按已下载状态切换按钮"，各写一份必然漂移——
 **瀑布流曾经因此完全没有下载按钮**。同理，评论缩略图的按钮挂在**每一张**上，
@@ -646,7 +650,8 @@ Bundle.main.localizations  == ["en"]         ← 原因
 | 任何改动 | `xcodebuild test` 全绿 |
 
 日志观察：`log stream --predicate 'process == "XSpiderMac"'`（组件日志以
-`组件: …` 出现在分类 `CORE` 下），或读 `~/Library/Logs/XSpiderMac/xspider.log`（按天滚动）。
+`组件: …` 出现在分类 `CORE` 下），或读 `~/Library/Logs/XSpiderMac/xspider.log`（单文件 10MB，超出轮转为 `xspider.log.1`，
+仅保留一份历史）。
 
 ## 6.3 已知限制（不是 bug）
 

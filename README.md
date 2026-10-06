@@ -11,7 +11,7 @@
 ## 安装
 
 1. 下载 `XSpiderMac-x.x.x.dmg`（见 [Releases](../../releases)）；
-2. 打开 dmg，把 **X-Spider** 拖进「应用程序」；
+2. 打开 dmg，把 **X-Spider** 拖进「应用程序」（Finder 里显示为 X-Spider，实际文件名是 `XSpiderMac.app`）；
 3. 首次打开若提示 **"已损坏，无法打开"** 或 **"无法验证开发者"**，见下一节。
 
 > 组件（`xspiderd` 与 `aria2next`）随 DMG 一起分发，**无需单独安装**；需要更新组件时见「组件」一节。
@@ -35,7 +35,7 @@
 在「终端」执行：
 
 ```bash
-sudo xattr -dr com.apple.quarantine /Applications/X-Spider.app
+sudo xattr -dr com.apple.quarantine /Applications/XSpiderMac.app
 ```
 
 **方法三：系统设置里放行**
@@ -49,12 +49,12 @@ sudo xattr -dr com.apple.quarantine /Applications/X-Spider.app
 
 - **主页**
   - 搜索用户（`screen_name`）或直接粘贴推文链接，查看媒体时间线 / 推文时间线
-  - 日期范围 + 媒体类型筛选；开启「加快搜索页加载」时走 X 搜索接口，加载更快
+  - 日期范围 + 媒体类型筛选；开启「加快搜索页加载」时走 X 搜索接口，加载更快（浏览可能有个别遗漏，下载仍由爬虫逐页兜底）
   - 主页时间线：推荐 / 关注，支持「推文卡片」与「媒体瀑布流」两种形态
   - 推文详情浮层：媒体查看、评论（层级 + 排序）、引用推文、翻译、点赞 / 书签、在浏览器打开
   - 独立媒体查看窗口：缩放、旋转、全屏、倍速播放、切换上下一个
 - **下载管理**
-  - 引擎由组件提供：内置引擎与 aria2Next（多连接、断点续传），按文件大小自动选择，也可在设置里指定
+  - 引擎由组件提供：默认 aria2Next（多连接、断点续传），可在设置里改为自动（按文件大小分流）或内置引擎
   - 「选择下载」支持全选 / 反选 / 多选。全选对应原项目全部下载。全选又取消几个媒体的选中，则视为下载时跳过这几个媒体。
   - 自动跳过已下载（判定依据三选一：文件名 / 记录文件·分布式 / 记录文件·集中式，默认集中式）
   - 进度、暂停 / 恢复、重试、批量操作、系统通知
@@ -88,8 +88,9 @@ sudo xattr -dr com.apple.quarantine /Applications/X-Spider.app
 
 1. `~/Library/Application Support/moe.keli.xspider.mac/XSpiderCore/`（放 `xspiderd` 与 `aria2next` 两个文件）
 2. `~/Library/Application Support/XSpiderMac/XSpiderCore/`
-3. app bundle 内 `X-Spider.app/Contents/Resources/`（DMG 自带的兜底副本）
-4. `PATH`
+3. app bundle 内 `XSpiderMac.app/Contents/Resources/`（DMG 自带的兜底副本）
+4. app bundle 内 `XSpiderMac.app/Contents/MacOS/`
+5. `PATH`
 
 **更新组件 = 换掉文件即可**，不必重新构建应用。把新的 `xspiderd`（与 `aria2next`）放进上面的外部目录，然后**两件事都要做**，否则内核会以退出码 137 静默杀掉它——应用只写一行日志，表现是"组件整个不工作"：
 
@@ -98,16 +99,18 @@ xattr -cr "<组件目录>"
 codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 ```
 
+**组件从哪来**：新版二进制从组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core) 的 [Releases](https://github.com/LeeDespo/x-spider-core/releases) 下载。
+
 **核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本（当前 **1.5.1**）。
 应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用。
 
 ## 系统要求
 
-**macOS 15.0** 或更高。
+**Apple Silicon（M 系列）Mac**，**macOS 15.0** 或更高。随包携带的组件二进制（`xspiderd` / `aria2next`）只有 arm64 版。
 
 ## 构建
 
-需要 Xcode 与 [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）。
+需要 **Xcode 16 或更高**（工程用 Swift 6.0，目标 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）。
 
 ```bash
 # project.yml 变更后重新生成工程
@@ -139,7 +142,7 @@ script/package_dmg.sh
 | `AGENTS.md` | 面向 AI agent 的开发约束 |
 | `src/`、`src-tauri/` | 上游源码，**只作行为参照**，不参与构建 |
 
-> **取数与下载的权威行为在组件仓库 `x-spider-core`**（本仓库只经契约调用它）。
+> **取数与下载的权威行为在组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core)**（本仓库只经契约调用它）。
 > 上游 `src/` / `src-tauri/` 对 X 的 GraphQL 端点仍有参照价值——queryId / features / variables
 > 极其敏感，需要核对上游实现时仍可对照。
 
@@ -152,3 +155,7 @@ script/package_dmg.sh
 界面与下载逻辑移植自 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)。
 
 许可证沿用上游：**GPL-3.0-only**，见 [LICENSE](LICENSE)。
+
+## 参与贡献
+
+欢迎提交 issue 与 PR，约定见 [CONTRIBUTING.md](CONTRIBUTING.md)；各版本的变更记录见 [GitHub Releases](../../releases)。

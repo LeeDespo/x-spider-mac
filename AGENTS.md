@@ -27,7 +27,7 @@
 | `src/`, `src-tauri/` | 上游源码，**X 端点行为的参照**（尤其 `src/twitter/api.ts`、`src/stores/`）；**不是"本仓库该怎么取数"的答案** |
 | `docs/DEVELOPMENT.md` | **开发者手册**：架构、组件边界、组件部署与更新、踩坑与设计决策（改代码前必读） |
 | `MEDIA_RECORDS.md` | **记录体系规范**：下载/同步记录、判定三选一、命名（改记录前必读） |
-| `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
+| `SETTINGS_DEFAULTS.md` | 设置项默认值一览（改默认值须 bump `settingsSchemaVersion`，见 `MEDIA_RECORDS.md` §9.2） |
 | `script/build_and_run.sh` | 构建 + 启动 Debug 版（arm64） |
 | `script/package_dmg.sh` | 打包 Release 为 dmg（未签名分发） |
 
@@ -46,7 +46,7 @@
 | X **端点行为**（请求形状、分页语义、解析路径）到底怎样 | 上游 `src/twitter/api.ts`、`src/stores/`、`src/components/InfiniteScroll.tsx`——仍是**端点行为参照**，但**不再是外壳的实现答案** |
 
 组件与外壳的接口只有一个：**`xspider_call(method, json)` + `system.version` 握手**
-（sidecar 里是 `POST /` 加 `X-XSpider-Token` 头）。端点路径 / `queryId` / `features` /
+（外壳侧对应 `XSpiderComponent.call(_:_:)`；sidecar 里是 `POST /` 加 `X-XSpider-Token` 头）。端点路径 / `queryId` / `features` /
 HTTP 头**都不进契约**，也不该出现在本仓库的新代码里。
 
 > 组件从哪来、怎么部署/更新（`xattr -cr` + ad-hoc 签名，漏了会以退出码 137 静默被杀）、
@@ -94,7 +94,7 @@ HTTP 头**都不进契约**，也不该出现在本仓库的新代码里。
     一律走 `ImageCache` 降采样。
 13. **强调色用在按钮背景上**，不是把图标/文字染成强调色。行内文字型小操作仍可用强调色文字。
 14. **媒体卡的按钮一律走 `Views/MediaCardActions.swift`**，不要各写一份：
-    三处（详情/瀑布流/搜索网格）必须都按已下载状态切换按钮，
+    三处（评论缩略图/瀑布流/搜索网格）必须都按已下载状态切换按钮，
     各写一份必然漂移——瀑布流曾因此完全没有下载按钮。
 15. **媒体查看窗口用 `NSWindow` 不是 `.sheet`**（`Support/MediaViewerCenter.swift`）：
     用户在窗口里选一张媒体再看另一张，各处的切换**范围**不同
@@ -124,8 +124,8 @@ HTTP 头**都不进契约**，也不该出现在本仓库的新代码里。
     而**这个 404 与 queryId 无关**——实测新旧两个 queryId 用 POST **都返回 200**，
     只有随机乱写的才 404。曾用 GET 试并误判成"queryId 失效"，白做了自愈。
     **queryId 自愈现在在组件里**（外壳的 `SearchQueryIdProvider` 已删除）——
-    外壳只传 `screen_name` / `since` / `until` / `media_only`。这也是"端点行为留在参照、
-    实现归组件"的一个例子：本仓库不该再维护这份自愈。
+    外壳只传 `screen_name` / `since` / `until` / `media_only` / `count` / `cursor`
+    （cursor 可选）。这也是"端点行为留在参照、实现归组件"的一个例子：本仓库不该再维护这份自愈。
 24. **日期边界**：`DatePicker` 的 `end` 是**当天零点**，本地比较要用 `DateRange.inclusiveEnd`
     （否则「至」当天被整天排除）。拼给 X 的日期串由组件处理：契约 `fetch.search_timeline`
     的 `since` / `until` 按**本地日历**理解且**含当天**，组件内部按排他语义 **+1 天**——
@@ -141,6 +141,7 @@ HTTP 头**都不进契约**，也不该出现在本仓库的新代码里。
 27. **视频字幕用 AVFoundation 媒体选择 API**（`select(_:in:)` 等，
     均为 macOS 10.8+，远低于基线 15.0，**不要写版本判断**）。
     选的是视频**内嵌**字幕轨；X 视频多数没有，此时按钮不显示属正常。
+    （字幕选择已随 1.0.0（d6dca66）移除，此条留作将来重做字幕时的实现纪律。）
 
 ## 构建与验证
 
@@ -160,7 +161,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
   -destination 'platform=macOS,arch=arm64' test
 ```
 
-- 运行日志用 `AppLogger`（分类 HOME/NET/DOWNLOAD/CORE…），验证行为用
+- 运行日志用 `AppLogger`（分类 NET/DL/HOME/REC/SYNC/APP/CORE…），验证行为用
   `log stream --predicate 'process == "XSpiderMac"'` 或 Console.app；
   **组件日志以 `组件: …` 出现在分类 `CORE`**，要看更细设 `XSPIDER_LOG=debug`。
 - **组件没起来会阻断一切取数与下载**：设置页「组件状态」绿灯 = 进程真的起来并握手。
@@ -178,7 +179,8 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 - 状态一律放 `@Observable` Store（`Stores/`），视图 `@State` 只放纯 UI 态；单例 `*.shared`。
 - **取数与下载全部经组件**（`Services/XSpiderComponent.swift` 是唯一客户端）：
   本仓库不引入自己的 HTTP / 下载实现，也不在映射层里仿上游发明取数逻辑。
-  接口只有 `xspider_call` + `system.version` 握手（见上方黄金法则）。
+  接口只有 `xspider_call`（外壳侧对应 `XSpiderComponent.call(_:_:)`）+ `system.version` 握手
+  （见上方黄金法则）。
 - **最低系统版本 macOS 15.0**（改动时不要降低；15.0 是为了用系统
   `Translation` 框架，见 `docs/DEVELOPMENT.md` §4.6.1）。
   改动系统 API 前先确认其可用版本不低于 15.0。

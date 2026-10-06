@@ -16,6 +16,7 @@
 | 设置项 | 默认值 | 范围 | 说明 |
 |---|---|---|---|
 | 代理开关 | 关 | — | 关闭则不走代理 |
+| 使用系统代理 | 开 | — | 开启时跟随系统代理，关闭才显示下方地址/账号 |
 | 代理地址 | `http://127.0.0.1:7890` | — | 手动模式下使用 |
 | 代理用户名 / 密码 | 空 | — | 可选，支持需要认证的代理 |
 
@@ -27,14 +28,14 @@
 | 时间窗内请求数 | 100 | 1–600 | 令牌桶容量 |
 | 时间窗秒数 | 10 | 1–300 | 与上一项共同决定速率 |
 | 同端点串行 | **开**（nil 安全） | — | 前一请求完成前不发下一个 |
-| 429 熔断 | **开** | — | 触发后暂停该类端点，避免越限越试 |
+| 429 熔断 | **开**（nil 安全） | — | 触发后暂停该类端点，避免越限越试 |
 | 熔断冷却 | 300 秒 | 30–3600 | |
 
 ## 媒体 CDN 限流（下载侧，与 API 配额独立）
 
 | 设置项 | 默认值 | 范围 | 说明 |
 |---|---|---|---|
-| CDN 限流时降低并发 | **开** | — | |
+| CDN 限流时降低并发 | **开**（nil 安全） | — | |
 | CDN 限流时并发上限 | 1 | 1–10 | |
 | CDN 限流暂停 | 120 秒 | 10–3600 | |
 
@@ -43,7 +44,7 @@
 | 设置项 | 默认值 | 范围 | 说明 |
 |---|---|---|---|
 | 保存路径 | 系统「下载」目录 | — | 首次启动时写入 |
-| 文件名模板 | `%POST_TIME% %USER_SCREEN_NAME% %POST_ID% %EXT%` | — | |
+| 文件名模板 | `%POST_TIME% %USER_SCREEN_NAME% %POST_ID%-%MEDIA_INDEX%%EXT%` | — | |
 | 跳过已下载文件 | **开** | — | |
 | 判定依据 | **记录文件·集中式**（`centralized`） | 文件名 / 记录文件·分布式 / 记录文件·集中式 | 默认集中式：判定与保存路径解耦，按账号分文件读取快。见 `MEDIA_RECORDS.md` §6.1/§9.1 |
 | 记录形态（导入/导出/重建） | **集中式**（`centralized`） | 分布式 / 集中式 | **独立于判定依据**，三个记录入口读写哪一份由它决定 |
@@ -51,7 +52,7 @@
 | 记录文件名 | `.downloadedrecord.json` | — | 仅分布式记录用（历史默认 `.downloaded.json` 视为未设置） |
 | 按账号建子文件夹 | **开**（nil 安全） | — | 存到「昵称-用户名[数字id]」目录，同一 user id 复用已有文件夹 |
 | 自动加载媒体 | **开**（nil 安全） | — | 关闭后需手动点「加载媒体」 |
-| 下载引擎 | **aria2Next** | aria2Next / 内置 | |
+| 下载引擎 | **aria2Next** | aria2Next / 内置 / 自动 | |
 | 同时下载文件数 | 5 | 1–20 | |
 | 单文件最大连接数 | 6 | 1–256 | aria2Next 的 `stream-max-connections` |
 | 文件分配方式 | `none` | none / prealloc / falloc | |
@@ -129,15 +130,15 @@
 
 | 项 | 值 | 位置 |
 |---|---|---|
-| 分页每页条数 | 20 | `TwitterAPI` 各 `get*` 的 `count` |
-| 页间节流 | 400–500 ms | `HomepageStore.runFillLoop` / `CreationTaskStore.pageThrottle` |
+| 分页每页条数 | 20 | `TwitterAPI` 时间线/搜索类各 `get*` 的 `count`（关注列表 `getFollowing` 为 100） |
+| 页间节流 | 400–500 ms | `HomepageStore.runFillLoop`（400ms 字面量）；爬取侧由组件执行（`crawlStrategy` 的 `page_throttle_ms=500`，`CreationTaskStore.swift:237`） |
 | 爬虫连续空页上限 | 5 页 | `CreationTaskStore.maxConsecutiveEmptyPages` |
 | 批量建任务节流阈值 | > 50 条时分批，每批 25 | `DownloadStore.batchThrottleThreshold` |
 | 缩略图解码尺寸 | 网格 600 / 详情 1600 / 查看器 4096 px | 各调用点 |
 | 图片缓存磁盘扫描节流 | 60 秒至多一次 | `ImageCache.scheduleDiskLimitCheck` |
 | 推文详情缓存 | TTL 5 分钟、容量 12 条 | `Support/TweetDetailCache.swift` |
 | 关注状态缓存 | 300 秒 | `TwitterAPI.followCacheTTL` |
-| 网络重试 | 最多 4 次、总预算 25 秒 | `NetworkClient` |
+| 网络重试 | — | 重试策略在组件 `x-spider-core` 内，外壳不再持有此默认值 |
 | 合成器"熔断中"兜底窗口 | 60 秒 | `AccountStatusStore.fallbackRateLimitedWindow` |
 | 网络类异常 TTL | 30 秒 | `AccountStatusStore.networkErrorTTL` |
 | 语言包下载等待上限 | 300 秒 | `TranslationPackStore.downloadTimeout` |
