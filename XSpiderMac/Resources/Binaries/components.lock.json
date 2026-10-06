@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "xspiderCore": {
+    "repository": "LeeDespo/x-spider-core",
+    "tag": "v0.1.0",
+    "version": "0.1.0",
+    "asset": "xspiderd-0.1.0-macos-arm64.tar.gz",
+    "sha256": "3c96596f124c77046dd8afa9c3f3f5e786c0a2e1c618777c29025089b3a20d9b",
+    "contractMajor": "1"
+  },
+  "aria2next": {
+    "repository": "AnInsomniacy/aria2-next",
+    "version": "2.7.5",
+    "asset": "aria2-next-2.7.5-macos-arm64",
+    "sha256": "c36268f2ab67614ad8737586adab7fc1e1df85e0aef55421bd45f778f0868343"
+  }
+}
