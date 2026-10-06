@@ -55,7 +55,7 @@ echo "==> 应用：${APP_PATH}"
 
 # ad-hoc 签名（含内置二进制），保证可执行
 echo "==> ad-hoc 签名"
-codesign --force --deep --sign - "${APP_PATH}" 2>&1 | tail -2 || true
+codesign --force --deep --sign - "${APP_PATH}" 2>&1 | tail -2
 
 # 组装 dmg 内容：应用 + 指向 /Applications 的快捷方式
 STAGING="$(mktemp -d)"
