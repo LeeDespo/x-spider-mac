@@ -1,0 +1,59 @@
+# CI 质量门：x-spider-mac（macOS SwiftUI 外壳）
+#
+# 单 job 串行四道门，任一失败即整体失败：
+#   1) 工程同步守卫 —— Xcode 工程由 XSpiderMac/project.yml 生成且入库，
+#      CI 里重新 generate 后必须与提交内容零差异，防止「改了 project.yml
+#      忘了 xcodegen generate」的漂移入库；
+#   2) 边界护栏 —— 外壳只做契约映射与 UI：X 协议特征（端点路径 / queryId /
+#      features / 签名头 / 广告与回复流标记）与 aria2 RPC 实现特征
+#      不得出现在生产源码，token 清单见 script/check_boundaries.sh；
+#   3) 组件账本校验 —— 随包 xspiderd / aria2next 的存在性、arm64 架构、
+#      可执行位、sha256 必须与 components.lock.json 一致，契约主版本必须
+#      与外壳握手常量 supportedContractMajor 一致；
+#   4) 单元测试 —— 与仓库标准命令一致；ComponentLiveTests 由 XSPIDER_LIVE=1
+#      环境变量门控，CI 不设该变量即默认跳过，无需任何真实账号凭据。
+#
+# 前置文件（缺失即对应步骤失败）：script/check_boundaries.sh、
+# script/verify_components.sh、XSpiderMac/Resources/Binaries/components.lock.json
+# 以及随包二进制 xspiderd / aria2next（入库 + lock 记账）。
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: 质量门（工程同步 / 边界护栏 / 组件账本 / 单元测试）
+    runs-on: macos-15  # arm64 runner，与测试步骤 -destination 的 arch=arm64 匹配
+    steps:
+      # 检出仓库：含入库的 Xcode 工程与随包组件二进制（账本校验的对象）
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      # xcodegen：本地与 CI 须同代（同代 generate 已实测零漂移），
+      # 否则工程同步守卫会因生成器版本差异误报
+      - name: 安装 xcodegen
+        run: brew install xcodegen
+
+      # 从唯一真源 project.yml 重新生成工程，为下一步的同步守卫做准备
+      - name: 重新生成 Xcode 工程
+        run: (cd XSpiderMac && xcodegen generate)
+
+      # 工程同步守卫：generate 后工程文件与提交内容必须零差异
+      - name: 工程同步守卫（工程文件零漂移）
+        run: git diff --exit-code -- XSpiderMac/XSpiderMac.xcodeproj
+
+      # 边界护栏：X 协议 / 下载引擎实现特征不得回流生产源码
+      - name: 边界护栏（协议泄漏扫描）
+        run: bash script/check_boundaries.sh
+
+      # 组件账本校验：随包二进制与 components.lock.json 对账（纯校验不改动）
+      - name: 组件账本校验（verify_components）
+        run: bash script/verify_components.sh
+
+      # 单元测试：与仓库标准命令一致（工作目录 XSpiderMac，工程与 scheme 同名）
+      - name: 单元测试
+        working-directory: XSpiderMac
+        run: xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac -destination 'platform=macOS,arch=arm64' test
