@@ -175,11 +175,10 @@ if [[ "${COMPONENT}" == "xspiderd" ]]; then
   [[ "${BUILD_VERSION}" =~ ^[0-9.]+$ ]] \
     || fail "无法从 --version 解析 build 版本（输出：${VERSION_OUTPUT}）"
   CONTRACT_MAJOR="$(printf '%s\n' "${VERSION_OUTPUT}" \
-    | grep -oE '契约版本[[:space:]]*[0-9]+(\.[0-9]+){2}' \
-    | grep -oE '^[0-9]+' | tail -1)"
+    | sed -nE 's/.*契约版本[[:space:]]*([0-9]+)\..*/\1/p' | tail -1)"
   [[ -n "${CONTRACT_MAJOR}" ]] \
     || fail "无法从 --version 解析契约主版本（输出：${VERSION_OUTPUT}）"
-  python3 - "$LOCK" "$NEW_SHA" "$BUILD_VERSION" "$TAG" "$ASSET" "$CONTRACT_MAJOR" <<'PY'
+  python3 - "$LOCK" "$NEW_SHA" "$BUILD_VERSION" "$TAG" "$ASSET" "$CONTRACT_MAJOR" <<'PY' || fail "回写 lock 失败（xspiderCore 节）"
 import json, sys
 path, sha, version, tag, asset, major = sys.argv[1:7]
 with open(path, encoding="utf-8") as f:
@@ -190,7 +189,7 @@ with open(path, "w", encoding="utf-8") as f:
     f.write("\n")
 PY
 else
-  python3 - "$LOCK" "$NEW_SHA" "$VERSION" "$ASSET" <<'PY'
+  python3 - "$LOCK" "$NEW_SHA" "$VERSION" "$ASSET" <<'PY' || fail "回写 lock 失败（aria2next 节）"
 import json, sys
 path, sha, version, asset = sys.argv[1:5]
 with open(path, encoding="utf-8") as f:
