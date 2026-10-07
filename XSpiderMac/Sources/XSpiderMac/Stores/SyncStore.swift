@@ -282,7 +282,7 @@ final class SyncStore {
         for sn in parts {
             let lowered = sn.lowercased()
             guard !users.contains(where: { $0.screenName.lowercased() == lowered }) else { continue }
-            // 名称/头像：先查下载历史，再查 TwitterAPI（异步补全）
+            // 名称/头像：先查下载历史，再查 XSpiderAPI（异步补全）
             if let known = DownloadStore.shared.knownUsers.first(where: { $0.screenName.lowercased() == lowered }) {
                 users.append(SyncUser(screenName: known.screenName, name: known.name, avatar: known.avatar))
             } else {
@@ -296,7 +296,7 @@ final class SyncStore {
 
     /// 异步补全用户昵称头像
     private func resolveUserInfo(screenName: String) async {
-        guard let user = try? await TwitterAPI.shared.getUser(screenName: screenName) else { return }
+        guard let user = try? await XSpiderAPI.shared.getUser(screenName: screenName) else { return }
         if let idx = users.firstIndex(where: { $0.screenName.lowercased() == screenName.lowercased() }) {
             users[idx].name = user.name
             users[idx].avatar = user.avatar
@@ -472,7 +472,7 @@ final class SyncStore {
             do {
                 // 单用户总闸 150s：任何未知慢点(密钥加载/分页翻页)兜底快速失败
                 let info = try await withTimeout(150) {
-                    try await TwitterAPI.shared.getUser(screenName: user.screenName, fast: true)
+                    try await XSpiderAPI.shared.getUser(screenName: user.screenName, fast: true)
                 }
                 guard !info.id.isEmpty else {
                     throw SyncFailure.userNotFound(user.screenName)
@@ -509,7 +509,7 @@ final class SyncStore {
                     if Task.isCancelled { return }
                     let cursorIn = cursor
                     let (posts, next) = try await withTimeout(150) {
-                        try await TwitterAPI.shared.getUserMedias(userId: info.id, cursor: cursorIn, fast: true)
+                        try await XSpiderAPI.shared.getUserMedias(userId: info.id, cursor: cursorIn, fast: true)
                     }
                     for post in posts {
                         let postDay = post.createdAt.map(Self.dayString) ?? ""
@@ -650,7 +650,7 @@ enum SyncFailure: LocalizedError {
 
     /// 从底层错误归类
     static func classify(_ error: Error, screenName: String) -> SyncFailure {
-        if let apiErr = error as? TwitterAPIError {
+        if let apiErr = error as? XSpiderAPIError {
             switch apiErr {
             case .userNotFound: return .userNotFound(screenName)
             case .missingScreenName, .missingAvatar, .notAuthorized: return .authExpired

@@ -116,7 +116,7 @@ final class HomepageStore {
         loadUserTask?.cancel()
 
         do {
-            let user = try await TwitterAPI.shared.getUser(screenName: sn)
+            let user = try await XSpiderAPI.shared.getUser(screenName: sn)
             guard generation == userGeneration else { return } // 旧请求晚到，丢弃
             userInfoLoading = false
             userInfo = user
@@ -171,7 +171,7 @@ final class HomepageStore {
     /// 只获取推文(不入页面状态)——搜索推文直接弹详情卡用
     func fetchTweet(tweetID: String) async -> TwitterPost? {
         do {
-            return try await TwitterAPI.shared.getTweet(id: tweetID)
+            return try await XSpiderAPI.shared.getTweet(id: tweetID)
         } catch {
             lastError = L("推文加载失败")
             return nil
@@ -192,7 +192,7 @@ final class HomepageStore {
         defer { postListLoading = false }
 
         do {
-            let post = try await TwitterAPI.shared.getTweet(id: tweetID)
+            let post = try await XSpiderAPI.shared.getTweet(id: tweetID)
             guard generation == userGeneration else { return }
             if post.medias?.isEmpty ?? true {
                 lastError = L("该推文没有媒体内容")
@@ -350,8 +350,8 @@ final class HomepageStore {
         if let range = filter.dateRange, useSearchEndpoint {
             let sn = userInfo?.screenName ?? ""
             guard !sn.isEmpty else { return try await fetchTimelinePage(userId: userId, cursor: cursor) }
-            let product: TwitterAPI.SearchProduct = filter.source == .medias ? .media : .latest
-            return try await TwitterAPI.shared.searchTimeline(screenName: sn, range: range,
+            let product: XSpiderAPI.SearchProduct = filter.source == .medias ? .media : .latest
+            return try await XSpiderAPI.shared.searchTimeline(screenName: sn, range: range,
                                                              product: product, cursor: cursor)
         }
         return try await fetchTimelinePage(userId: userId, cursor: cursor)
@@ -368,11 +368,11 @@ final class HomepageStore {
             // 展示用不过滤无媒体推文(requireMedia:false);下载过滤在创建任务里做
             // 展示路径：保留转推（卡片顶部显示「某某 转推」）；
             // 爬虫路径不传此参数（默认过滤），避免转推媒体与原创重复下载
-            return try await TwitterAPI.shared.getUserTweets(userId: userId, cursor: cursor,
+            return try await XSpiderAPI.shared.getUserTweets(userId: userId, cursor: cursor,
                                                              requireMedia: false,
                                                              includeRetweets: true)
         }
-        return try await TwitterAPI.shared.getUserMedias(userId: userId, cursor: cursor)
+        return try await XSpiderAPI.shared.getUserMedias(userId: userId, cursor: cursor)
     }
 
     /// 上游 InfiniteScroll 的 while 循环。**由 store 持有任务**，不绑定视图生命周期。

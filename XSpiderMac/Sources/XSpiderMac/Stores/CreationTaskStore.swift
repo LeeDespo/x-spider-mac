@@ -140,7 +140,7 @@ final class CreationTaskStore {
 
             let result: [String: JSONValue]
             do {
-                result = try await TwitterAPI.shared.crawlPage(
+                result = try await XSpiderAPI.shared.crawlPage(
                     source: filter.source, userId: userId, cursor: cursor, strategy: strategy)
             } catch is CancellationError {
                 AppLogger.info("创建任务已取消", category: "DL", ["userId": userId])
@@ -242,8 +242,8 @@ final class CreationTaskStore {
         if let range = filter.dateRange {
             let widenedStart = Calendar.current.date(byAdding: .day, value: -1, to: range.start)
                 ?? range.start
-            strategy["since"] = .string(TwitterAPI.searchDateString(widenedStart))
-            strategy["until"] = .string(TwitterAPI.searchDateString(TwitterAPI.nextDay(range.end)))
+            strategy["since"] = .string(XSpiderAPI.searchDateString(widenedStart))
+            strategy["until"] = .string(XSpiderAPI.searchDateString(XSpiderAPI.nextDay(range.end)))
         }
         if let types = filter.mediaTypes {
             strategy["media_types"] = .array(types.map { .string($0.rawValue) })

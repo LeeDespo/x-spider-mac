@@ -651,8 +651,8 @@ private struct ReplyMediaThumbCell: View {
         TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
-                if liked { try await TwitterAPI.shared.favoriteTweet(id: post.id) }
-                else { try await TwitterAPI.shared.unfavoriteTweet(id: post.id) }
+                if liked { try await XSpiderAPI.shared.favoriteTweet(id: post.id) }
+                else { try await XSpiderAPI.shared.unfavoriteTweet(id: post.id) }
             } catch { liked.toggle(); actionMessage = L("操作失败：") + error.localizedDescription }
         }
     }
@@ -662,8 +662,8 @@ private struct ReplyMediaThumbCell: View {
         TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
-                if retweeted { try await TwitterAPI.shared.createRetweet(id: post.id) }
-                else { try await TwitterAPI.shared.deleteRetweet(id: post.id) }
+                if retweeted { try await XSpiderAPI.shared.createRetweet(id: post.id) }
+                else { try await XSpiderAPI.shared.deleteRetweet(id: post.id) }
             } catch { retweeted.toggle(); actionMessage = L("操作失败：") + error.localizedDescription }
         }
     }
@@ -673,8 +673,8 @@ private struct ReplyMediaThumbCell: View {
         TweetDetailCache.shared.invalidate(post.id)
         Task {
             do {
-                if bookmarked { try await TwitterAPI.shared.createBookmark(id: post.id) }
-                else { try await TwitterAPI.shared.deleteBookmark(id: post.id) }
+                if bookmarked { try await XSpiderAPI.shared.createBookmark(id: post.id) }
+                else { try await XSpiderAPI.shared.deleteBookmark(id: post.id) }
             } catch { bookmarked.toggle(); actionMessage = L("操作失败：") + error.localizedDescription }
         }
     }
@@ -712,7 +712,7 @@ private struct ReplyMediaThumbCell: View {
 
         do {
             // **一次** TweetDetail 拿到 focal + 评论树（分别取会把同一请求打两遍，白耗配额）
-            let (full, nodes) = try await TwitterAPI.shared.getTweetDetailTree(id: post.id)
+            let (full, nodes) = try await XSpiderAPI.shared.getTweetDetailTree(id: post.id)
             detail = full
             // 详情返回的媒体集合可能与列表里的不一致（数量/顺序），按媒体 id 重新定位当前索引，
             // 否则页码错乱或停在越界位置

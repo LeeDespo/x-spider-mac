@@ -4,8 +4,8 @@ import Foundation
 ///
 /// 本类型只负责：把应用状态 / 动作翻译成组件 method 调用、把组件错误码映射为应用错误，
 /// 以及把契约 JSON 交给 `XSpiderMapping`。X 端点、请求构造、分页解析、限流与重试都属于 core。
-actor TwitterAPI {
-    static let shared = TwitterAPI()
+actor XSpiderAPI {
+    static let shared = XSpiderAPI()
 
     /// 这个 actor 现在是**纯粹的映射层**：把契约的 JSON 变成应用模型，
     /// 把应用的动作变成契约调用。签名、限流、凭据、重试全在组件里——
@@ -70,7 +70,7 @@ actor TwitterAPI {
     /// 组件调用 + 错误语义映射。
     ///
     /// 组件报的是**结构化错误码**（契约禁止按文案判断），而应用上层
-    /// （`SyncStore.classify`）按 `TwitterAPIError` 的 case 决定给用户什么提示：
+    /// （`SyncStore.classify`）按 `XSpiderAPIError` 的 case 决定给用户什么提示：
     /// "账号不存在" / "登录失效" / "网络问题" 三者的处理完全不同。
     /// 所以这里按**码**翻译，逐条对应。
     private func componentCall(_ method: String, _ params: [String: JSONValue] = [:]) async throws -> [String: JSONValue] {
@@ -84,12 +84,12 @@ actor TwitterAPI {
     static func translate(_ error: Error) -> Error {
         guard let component = error as? XSpiderComponent.ComponentError else { return error }
         switch component.code {
-        case "not_found": return TwitterAPIError.userNotFound
+        case "not_found": return XSpiderAPIError.userNotFound
         // 带上组件给的原文：141（账号被限制写操作）与"cookie 失效"都是 unauthorized，
         // 但两者的可操作提示不同——按 code 分流，把原因如实带给用户。
-        case "unauthorized": return TwitterAPIError.notAuthorized(component.errorDescription ?? "")
-        case "parse": return TwitterAPIError.parseFailure
-        case "upstream": return TwitterAPIError.responseError(status: component.status ?? 0)
+        case "unauthorized": return XSpiderAPIError.notAuthorized(component.errorDescription ?? "")
+        case "parse": return XSpiderAPIError.parseFailure
+        case "upstream": return XSpiderAPIError.responseError(status: component.status ?? 0)
         default: return error
         }
     }
@@ -101,7 +101,7 @@ actor TwitterAPI {
         let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
         guard let focalJSON = result[object: "focal"],
               let focal = XSpiderMapping.post(focalJSON) else {
-            throw TwitterAPIError.parseFailure
+            throw XSpiderAPIError.parseFailure
         }
         return focal
     }
@@ -133,7 +133,7 @@ actor TwitterAPI {
         let result = try await componentCall("auth.whoami")
         guard let account = result[object: "account"],
               let screenName = account[string: "screen_name"], !screenName.isEmpty else {
-            throw TwitterAPIError.missingScreenName
+            throw XSpiderAPIError.missingScreenName
         }
         return TwitterAccountInfo(
             screenName: screenName,
@@ -147,7 +147,7 @@ actor TwitterAPI {
         let result = try await componentCall("fetch.get_user", ["screen_name": .string(screenName)])
         guard let userJSON = result[object: "user"],
               let user = XSpiderMapping.user(userJSON) else {
-            throw TwitterAPIError.userNotFound
+            throw XSpiderAPIError.userNotFound
         }
         return user
     }
@@ -242,7 +242,7 @@ actor TwitterAPI {
     func getTweetDetailTree(id: String) async throws -> (focal: TwitterPost, replies: [ReplyNode]) {
         let result = try await componentCall("fetch.tweet_detail", ["id": .string(id)])
         let parsed = XSpiderMapping.replyNodes(result, focalId: id)
-        guard let focal = parsed.focal else { throw TwitterAPIError.parseFailure }
+        guard let focal = parsed.focal else { throw XSpiderAPIError.parseFailure }
         return (focal, parsed.replies)
     }
 
@@ -415,7 +415,7 @@ extension Date {
 
 // MARK: - 错误
 
-enum TwitterAPIError: LocalizedError {
+enum XSpiderAPIError: LocalizedError {
     case responseError(status: Int)
     case missingScreenName
     /// `unauthorized`：凭据失效或当前账号无权执行该操作。

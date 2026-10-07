@@ -1,7 +1,7 @@
 import XCTest
 @testable import XSpiderMac
 
-/// **接线的真实验证**：应用自己的那条路（`TwitterAPI` → 组件）能不能取到真数据。
+/// **接线的真实验证**：应用自己的那条路（`XSpiderAPI` → 组件）能不能取到真数据。
 ///
 /// 与 `XSpiderMacTests` 里其它测试不同，这条**要联网**，所以默认跳过：
 ///
@@ -58,9 +58,9 @@ final class ComponentLiveTests: XCTestCase {
 
         // 用**应用自己的设置**（代理等）配置组件——这正是接入后启动时的真实路径
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
         XCTAssertFalse(user.id.isEmpty, "id 不能为空（组件的 post/user 映射掉了字段）")
         XCTAssertEqual(user.screenName.lowercased(), "tesla")
         XCTAssertTrue(user.avatar.hasPrefix("https://"),
@@ -79,9 +79,9 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
-        let info = try await TwitterAPI.shared.getAccountInfo()
+        let info = try await XSpiderAPI.shared.getAccountInfo()
         XCTAssertFalse(info.screenName.isEmpty, "whoami 没拿到 screen_name（cookie 失效？）")
         XCTAssertTrue(info.avatar.hasPrefix("http"), "头像应当是绝对 URL：\(info.avatar)")
     }
@@ -94,10 +94,10 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
         // `useCache: false` 强制走一次真实请求（缓存命中不能算验证）
-        _ = try await TwitterAPI.shared.isFollowing(screenName: "tesla", useCache: false)
+        _ = try await XSpiderAPI.shared.isFollowing(screenName: "tesla", useCache: false)
     }
 
     /// **写操作的连线检查，但刻意不产生副作用**：用一个不存在的推文 id 调 `favorite`。
@@ -112,7 +112,7 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
         // 1) 参数校验：缺 tweet_id 必须在**发请求之前**就被挡住
         do {
@@ -164,14 +164,14 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
         // 多取几页，视频不一定在第一页
         var videos: [TwitterMedia] = []
         var cursor: String?
         for _ in 0..<3 {
-            let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, cursor: cursor, count: 20)
+            let page = try await XSpiderAPI.shared.getUserMedias(userId: user.id, cursor: cursor, count: 20)
             videos = page.posts.flatMap { $0.medias ?? [] }.filter { $0.type == .video }
             if !videos.isEmpty { break }
             cursor = page.cursor
@@ -212,7 +212,7 @@ final class ComponentLiveTests: XCTestCase {
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
         let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
         let originalSkip = SettingsStore.shared.settings.download.sameFileSkip
@@ -226,9 +226,9 @@ final class ComponentLiveTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: outDir)
         }
 
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
         // 拿一条真实推文的日期当窗口 → 这一天必定有内容，循环不会空转
-        let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, count: 10)
+        let page = try await XSpiderAPI.shared.getUserMedias(userId: user.id, count: 10)
         let reference = try XCTUnwrap(page.posts.compactMap(\.createdAt).max(),
                                       "需要一条带时间的推文来确定窗口")
         let day = Calendar.current.startOfDay(for: reference)
@@ -282,7 +282,7 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
         // 落到临时目录，别碰用户自己的下载文件夹。
         //
@@ -312,8 +312,8 @@ final class ComponentLiveTests: XCTestCase {
         }
 
         // 挑一个**小**媒体（省配额与时间）：优先图片
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
-        let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, count: 10)
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
+        let page = try await XSpiderAPI.shared.getUserMedias(userId: user.id, count: 10)
         let pairs = page.posts.compactMap { post -> (TwitterPost, TwitterMedia)? in
             guard let media = (post.medias ?? []).first else { return nil }
             return (post, media)
@@ -380,17 +380,17 @@ final class ComponentLiveTests: XCTestCase {
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
         // 用 tesla（fixture 与 canary 都用它，媒体量稳定）
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
         // 只跑一页一块：这条测的是"分块与回连"，不是爬多少内容
         let strategy: [String: JSONValue] = [
             "limits": .object(["page_size": .int(20), "page_throttle_ms": .int(200),
                                "max_pages": .int(1)]),
         ]
 
-        let first = try await TwitterAPI.shared.crawlPage(
+        let first = try await XSpiderAPI.shared.crawlPage(
             source: .medias, userId: user.id, cursor: nil, strategy: strategy)
         let candidates = (first[array: "candidates"] ?? []).compactMap { $0.asObject }
         let posts = (first[array: "posts"] ?? []).compactMap { $0.asObject }
@@ -423,7 +423,7 @@ final class ComponentLiveTests: XCTestCase {
                        "max_pages=1 时应当报「本块跑满」")
         let cursor = try XCTUnwrap(first[string: "next_cursor"], "跑满了就必须给续爬游标")
 
-        let second = try await TwitterAPI.shared.crawlPage(
+        let second = try await XSpiderAPI.shared.crawlPage(
             source: .medias, userId: user.id, cursor: cursor, strategy: strategy)
         let secondKeys = Set((second[array: "candidates"] ?? []).compactMap { $0.asObject }
             .compactMap { $0[string: "key"] })
@@ -441,10 +441,10 @@ final class ComponentLiveTests: XCTestCase {
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie，先在设置里导入一次")
 
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
-        await TwitterAPI.shared.configure(cookie: cookie, proxy: proxy)
+        await XSpiderAPI.shared.configure(cookie: cookie, proxy: proxy)
 
-        let user = try await TwitterAPI.shared.getUser(screenName: "tesla")
-        let page = try await TwitterAPI.shared.getUserMedias(userId: user.id, count: 10)
+        let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
+        let page = try await XSpiderAPI.shared.getUserMedias(userId: user.id, count: 10)
 
         XCTAssertFalse(page.posts.isEmpty, "应当取到推文")
         let withMedia = page.posts.filter { !($0.medias ?? []).isEmpty }

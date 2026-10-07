@@ -15,8 +15,8 @@ struct FollowButton: View {
             Task {
                 defer { busy = false }
                 do {
-                    if target { try await TwitterAPI.shared.followUser(screenName: screenName) }
-                    else { try await TwitterAPI.shared.unfollowUser(screenName: screenName) }
+                    if target { try await XSpiderAPI.shared.followUser(screenName: screenName) }
+                    else { try await XSpiderAPI.shared.unfollowUser(screenName: screenName) }
                     following = target
                 } catch {
                     AppLogger.warn("关注操作失败", category: "HOME", ["user": screenName, "error": error.localizedDescription])
@@ -41,7 +41,7 @@ struct FollowButton: View {
         .opacity(checking ? 0.55 : 1)
         .task {
             // 初始状态:查关系(轻量;失败默认未关注)
-            following = (try? await TwitterAPI.shared.isFollowing(screenName: screenName)) ?? false
+            following = (try? await XSpiderAPI.shared.isFollowing(screenName: screenName)) ?? false
             checking = false
         }
     }

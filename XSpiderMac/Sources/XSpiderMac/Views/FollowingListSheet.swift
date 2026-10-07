@@ -218,7 +218,7 @@ struct FollowingListSheet: View {
         do {
             // 需要 userId:用 getAccountInfo 已存;这里直接查自己(跟随当前账户 id)
             if let id = await Self.currentUserId() {
-                let r = try await TwitterAPI.shared.getFollowing(userId: id)
+                let r = try await XSpiderAPI.shared.getFollowing(userId: id)
                 users = r.users
                 cursor = r.cursor
             } else {
@@ -235,7 +235,7 @@ struct FollowingListSheet: View {
         defer { loadingMore = false }
         do {
             guard let id = await Self.currentUserId() else { return }
-            let r = try await TwitterAPI.shared.getFollowing(userId: id, cursor: c)
+            let r = try await XSpiderAPI.shared.getFollowing(userId: id, cursor: c)
             let existing = Set(users.map(\.screenName))
             users.append(contentsOf: r.users.filter { !existing.contains($0.screenName) })
             cursor = r.cursor != c ? r.cursor : nil
@@ -247,7 +247,7 @@ struct FollowingListSheet: View {
     static func currentUserId() async -> String? {
         if let id = AppStore.shared.account?.id { return id }
         // TwitterAccountInfo 无 id 时从 API 侧补
-        return await TwitterAPI.shared.currentUserId()
+        return await XSpiderAPI.shared.currentUserId()
     }
 
     // MARK: - 动作
@@ -268,13 +268,13 @@ struct FollowingListSheet: View {
         Task {
             for u in targets {
                 do {
-                    let user = try await TwitterAPI.shared.getUser(screenName: u.screenName)
+                    let user = try await XSpiderAPI.shared.getUser(screenName: u.screenName)
                     guard !user.id.isEmpty else { continue }
                     // 翻完该用户的媒体时间线,创建任务
                     var next: String? = nil
                     var guardCount = 0
                     repeat {
-                        let r = try await TwitterAPI.shared.getUserMedias(userId: user.id, cursor: next)
+                        let r = try await XSpiderAPI.shared.getUserMedias(userId: user.id, cursor: next)
                         let items: [(post: TwitterPost, media: TwitterMedia)] = r.posts.flatMap { p in
                             (p.medias ?? []).map { (p, $0) }
                         }

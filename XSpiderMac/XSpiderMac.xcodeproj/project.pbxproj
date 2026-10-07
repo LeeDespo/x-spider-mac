@@ -96,7 +96,7 @@
 		E950C166A4EFDCD28FA5B3C4 /* NumberStepperField.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70DBBE98EADA3D2FD08805F /* NumberStepperField.swift */; };
 		E9BD2DDE324004D13A360694 /* MediaRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AB4C20896A50B75807417C8 /* MediaRecords.swift */; };
 		EA4E06D710A4DE8FEB7407AC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F384578208B4323FB9E377 /* ContentView.swift */; };
-		EA5C133940AF31C444504ADE /* TwitterAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */; };
+		EA5C133940AF31C444504ADE /* XSpiderAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7DD72FE659948C2AA3272F /* XSpiderAPI.swift */; };
 		EB90013BFE5E8249FE9A8F85 /* SearchHistoryPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD92DA949C8B8D465ABE0C09 /* SearchHistoryPopover.swift */; };
 		EC28A95C1C6ACEBDB757F6C4 /* FeatureIntroSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E80DA186046A5A93AE6EA2 /* FeatureIntroSheet.swift */; };
 		EDD8A44ADA963391578DF21B /* FileIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E718A31888D53077262DF1A4 /* FileIntegrityTests.swift */; };
@@ -127,7 +127,7 @@
 		07AE5E3CA52D8E873493B819 /* XSpiderMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMacApp.swift; sourceTree = "<group>"; };
 		09E170CE15079348AEFB4C7F /* XSpiderMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderMappingTests.swift; sourceTree = "<group>"; };
 		0AD4B7CDFCDBFCD97AAACBBE /* MediaViewerAndFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaViewerAndFilterTests.swift; sourceTree = "<group>"; };
-		0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterAPI.swift; sourceTree = "<group>"; };
+		0D7DD72FE659948C2AA3272F /* XSpiderAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XSpiderAPI.swift; sourceTree = "<group>"; };
 		13AD8E0566B641889F9C73FB /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		13C99C4BFC75F391787FD663 /* DownloadTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadTask.swift; sourceTree = "<group>"; };
 		14D95808FD7731FEC8515D90 /* SyncRecordWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncRecordWindowTests.swift; sourceTree = "<group>"; };
@@ -358,7 +358,7 @@
 				1AB4C20896A50B75807417C8 /* MediaRecords.swift */,
 				671743A17950B84214104669 /* RecordsIO.swift */,
 				C10B1BE707F65B90F6E1E3B0 /* SystemProxy.swift */,
-				0D7DD72FE659948C2AA3272F /* TwitterAPI.swift */,
+				0D7DD72FE659948C2AA3272F /* XSpiderAPI.swift */,
 				966BB4D1E532D7063E0A3CE6 /* XSpiderComponent.swift */,
 				218BA6DDCAADAC0FFB9E94F7 /* XSpiderJSON.swift */,
 				7EB65017DE7AC9BA5DC9B8C9 /* XSpiderMapping.swift */,
@@ -637,7 +637,7 @@
 				B6A84005CEE4B262755B17B7 /* TranslationPackStore.swift in Sources */,
 				0437D649EA3532D1E1F60A9B /* TranslationStore.swift in Sources */,
 				2EEFCCE851231DA73539E96A /* TweetDetailCache.swift in Sources */,
-				EA5C133940AF31C444504ADE /* TwitterAPI.swift in Sources */,
+				EA5C133940AF31C444504ADE /* XSpiderAPI.swift in Sources */,
 				89ACE3C0BD37324C64AE22A8 /* TwitterAccountInfo.swift in Sources */,
 				C9786C1ECC437ED9F1282BE0 /* TwitterMedia.swift in Sources */,
 				75165C853F73A66A6AD0B6DF /* TwitterPost.swift in Sources */,

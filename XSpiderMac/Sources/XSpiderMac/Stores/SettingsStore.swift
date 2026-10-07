@@ -182,7 +182,7 @@ final class SettingsStore {
 
     /// 代理设置变更 → 重建网络客户端（**无需重启**）。
     ///
-    /// 此前 `TwitterAPI.configure` 只由 `AppStore.cookieString.didSet` 触发，
+    /// 此前 `XSpiderAPI.configure` 只由 `AppStore.cookieString.didSet` 触发，
     /// 在设置里改代理地址/开关**完全不会**影响已运行的 URLSession ——
     /// 表现为"代理换了却还在走旧配置""重设代理也没用，除非重启应用"。
     ///
@@ -196,7 +196,7 @@ final class SettingsStore {
         // 先取 cookie（避免在 Task 内首次触发 AppStore 构造，与自身初始化形成重入）
         let cookie = AppStore.shared.cookieString
         Task { [settings] in
-            await TwitterAPI.shared.configure(cookie: cookie, proxy: settings.proxy)
+            await XSpiderAPI.shared.configure(cookie: cookie, proxy: settings.proxy)
             AppLogger.info("代理设置已应用,网络客户端已重建", category: "NET", [
                 "enable": settings.proxy.enable ? "1" : "0",
                 "useSystem": settings.proxy.useSystem ? "1" : "0",
@@ -209,7 +209,7 @@ final class SettingsStore {
     private func applyRateLimit() {
         // 限流参数现在推给组件（`net.set_limits`）；组件内部按配额域分桶治理，
         // 外壳只是把用户设的值传下去。
-        Task { await TwitterAPI.shared.configure(cookie: AppStore.shared.cookieString, proxy: settings.proxy) }
+        Task { await XSpiderAPI.shared.configure(cookie: AppStore.shared.cookieString, proxy: settings.proxy) }
     }
 
     /// 应用语言（应用内字符串表即时生效 + UserDefaults AppleLanguages 供系统级组件）

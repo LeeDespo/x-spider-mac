@@ -241,7 +241,7 @@ final class AccountStatusStore {
         probing = true
         defer { probing = false }
         do {
-            _ = try await TwitterAPI.shared.probeConnection()
+            _ = try await XSpiderAPI.shared.probeConnection()
             // 探测成功且当前是"网络类异常"时才复位：限流态不该被探测悄悄清掉
             // （限流是 X 明确告知的，应等它的 until 到期或用户点重试）
             switch effectiveHealth {
@@ -282,7 +282,7 @@ final class AccountStatusStore {
 
         // 2) 真实探测（绕过闸门，避免被自己的限速拖住；短暂超时快速失败）
         do {
-            let info = try await TwitterAPI.shared.probeConnection()
+            let info = try await XSpiderAPI.shared.probeConnection()
             // 3) 成功即刷新为正常（限流态也强制清除——这是用户主动验证的结果）
             reset()
             AppLogger.info("手动探测:连接正常", category: "NET", ["screenName": info.screenName])
@@ -432,7 +432,7 @@ final class AccountStatusStore {
         cdnRateLimitedUntil = nil
         if wasThrottled { onCDNRecovered?() }
 
-        switch await TwitterAPI.shared.probeCDN() {
+        switch await XSpiderAPI.shared.probeCDN() {
         case .ok(let bytes):
             // 已在上方清过限流标记，这里只需清失败原因（不再依赖 noteCDNSuccess 触发回调）
             cdnLastFailure = nil

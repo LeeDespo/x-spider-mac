@@ -10,7 +10,7 @@ final class AppStore {
     var cookieString: String = "" {
         didSet {
             UserDefaults.standard.set(cookieString, forKey: "app.cookieString")
-            Task { await TwitterAPI.shared.configure(cookie: cookieString, proxy: SettingsStore.shared.settings.proxy) }
+            Task { await XSpiderAPI.shared.configure(cookie: cookieString, proxy: SettingsStore.shared.settings.proxy) }
         }
     }
 
@@ -104,7 +104,7 @@ final class AppStore {
 
     /// 用完整 cookie 字符串登录：调 getAccountInfo 验证，成功则保存并返回账户信息。
     func login(cookieString: String) async throws -> TwitterAccountInfo {
-        let info = try await TwitterAPI.shared.getAccountInfo(cookieStringOverride: cookieString)
+        let info = try await XSpiderAPI.shared.getAccountInfo(cookieStringOverride: cookieString)
         self.cookieString = cookieString
         self.account = info
         rememberCurrentAccount()
