@@ -126,7 +126,7 @@ final class TranslationStore {
     /// 语言代码比对：X 给的是 BCP-47 短码（如 "ja"、"zh"、"en"），
     /// 目标是 `Locale.Language`。只比较主语言子标签，忽略地区变体
     /// （zh-Hans 与 zh 视为同语言）。
-    static func isSameLanguage(_ a: String, _ b: Locale.Language) -> Bool {
+    nonisolated static func isSameLanguage(_ a: String, _ b: Locale.Language) -> Bool {
         let mainA = a.split(separator: "-").first.map(String.init)?.lowercased() ?? a.lowercased()
         let mainB = (b.languageCode?.identifier ?? "").lowercased()
         return !mainA.isEmpty && mainA == mainB
