@@ -61,8 +61,9 @@ codesign --force --deep --sign - "${APP_PATH}" 2>&1 | tail -2
 STAGING="$(mktemp -d)"
 trap 'rm -rf "${STAGING}"' EXIT
 cp -R "${APP_PATH}" "${STAGING}/"
-# 第三方声明放进 dmg 根（未签名分发也要随包携带许可与出处声明）
+# 第三方声明与 GPL 全文放进 dmg 根（未签名分发也要随包携带许可与出处声明）
 cp "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" "${STAGING}/许可证与第三方声明.txt"
+cp "${PROJECT_DIR}/LICENSE.aria2" "${STAGING}/GPL-2.0 许可证（aria2next）.txt"
 ln -s /Applications "${STAGING}/Applications"
 
 DMG_PATH="${DIST_DIR}/XSpiderMac-${VERSION}.dmg"
