@@ -1,7 +1,7 @@
 # X-Spider for macOS
 
-> 上游 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React，Windows 优先，
-> 已停止维护）到 **macOS / SwiftUI** 的移植。
+> 面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。
+> 应用负责界面、产品逻辑与本地数据；X 数据访问、写操作、爬取与下载由独立 Rust 组件 [x-spider-core](https://github.com/LeeDespo/x-spider-core) 提供。
 
 原生 macOS 应用，SwiftUI 重写界面，用于简单浏览与批量下载 X（Twitter）用户的媒体。
 
@@ -42,7 +42,7 @@ sudo xattr -dr com.apple.quarantine /Applications/XSpiderMac.app
 
 「系统设置 → 隐私与安全性」，在底部找到被拦截的提示，点「**仍要打开**」。
 
-> 为什么不签名：Apple 开发者账号需年费，本项目是免费开源移植。
+> 为什么不签名：Apple 开发者账号需年费，本项目是免费开源项目。
 > 源码完全公开，也可以按下方「构建」自行编译（自己编译的不会被拦截）。
 
 ## 功能
@@ -73,7 +73,7 @@ sudo xattr -dr com.apple.quarantine /Applications/XSpiderMac.app
 | 部分 | 语言 | 职责 |
 |---|---|---|
 | 外壳（本仓库） | SwiftUI | 界面、产品逻辑：文件名 / 目录模板、内容校验（"这是不是真的图 / mp4"）、记录文件与同文件跳过、通知、图片缓存、翻译、代理设置解析 |
-| 组件 `x-spider-core` | Rust（sidecar 可执行文件 `xspiderd`） | 取数、写操作、下载、爬取：请求签名、限流 / 429 熔断、queryId 自愈、内置与 aria2Next 引擎、断点续传、完整性校验、暂停 / 恢复 |
+| 组件 `x-spider-core` | Rust（sidecar 可执行文件 `xspiderd`） | X 数据访问、写操作、爬取与下载；对外只暴露稳定契约 |
 
 **走组件的功能**：
 
@@ -101,7 +101,7 @@ codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 
 **组件从哪来**：新版二进制从组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core) 的 [Releases](https://github.com/LeeDespo/x-spider-core/releases) 下载。
 
-**核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本（当前 **1.5.1**）。
+**核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本；运行时以 `system.version` 握手结果和实际使用的 Release 为准。
 应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用。
 
 ## 系统要求
@@ -136,15 +136,12 @@ script/package_dmg.sh
 |---|---|
 | `XSpiderMac/` | **应用本体**（SwiftUI）；`project.yml` 由 xcodegen 生成 xcodeproj |
 | `script/` | 构建、运行、打包脚本 |
-| `docs/DEVELOPMENT.md` | 架构地图、与上游的语义对照、已知问题与设计取舍（**改代码前先读**） |
+| `docs/DEVELOPMENT.md` | 架构地图、组件边界、已知问题与设计取舍（**改代码前先读**） |
 | `MEDIA_RECORDS.md` | 记录体系规范：下载 / 同步记录、判定三选一、命名（**改记录前先读**） |
 | `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
 | `AGENTS.md` | 面向 AI agent 的开发约束 |
-| `src/`、`src-tauri/` | 上游源码，**只作行为参照**，不参与构建 |
 
-> **取数与下载的权威行为在组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core)**（本仓库只经契约调用它）。
-> 上游 `src/` / `src-tauri/` 对 X 的 GraphQL 端点仍有参照价值——queryId / features / variables
-> 极其敏感，需要核对上游实现时仍可对照。
+> **X 数据访问与下载行为的真源在组件仓库 [LeeDespo/x-spider-core](https://github.com/LeeDespo/x-spider-core)**；本仓库只消费其契约，不维护 X 端点实现或行为盘点。
 
 ## 已知限制
 
@@ -152,9 +149,9 @@ script/package_dmg.sh
 
 ## 致谢与许可
 
-界面与下载逻辑移植自 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)。
+项目早期开发参考了已停止维护的 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 的功能设计与实现，现已采用独立的 SwiftUI + x-spider-core 架构；该项目仅作为历史来源保留致谢。
 
-许可证沿用上游：**GPL-3.0-only**，见 [LICENSE](LICENSE)。
+为保留项目历史与许可证连续性，本项目继续采用 **GPL-3.0-only**，见 [LICENSE](LICENSE)。
 
 ## 参与贡献
 

@@ -1,33 +1,20 @@
 # XSpiderMac 开发者手册
 
-面向在本仓库工作的开发者 / agent。**按模块与主题组织**，不按改动时间——
-时间线的历史留在 `git log`，这里只留结论。
-
-**取数与下载已经不在本仓库里。** 自 2026-10-01 起，X 的请求（签名 / 限流 / 重试 /
-queryId 自愈）、写操作、下载引擎与爬取全部收进组件 **`x-spider-core`**
-（Rust sidecar `xspiderd` + 本地 JSON-RPC，契约版本 **1.5.1**）。本仓库只剩
-**契约 JSON ↔ 应用模型的映射、UI、记录体系与文件命名**。组件仓库：
-`github.com/LeeDespo/x-spider-core`。接口细节看它的 `docs/07-API-REFERENCE.md`。
-
-上游源码 vendor 在 `src/`（React + zustand）与 `src-tauri/`（Rust），
-**只作行为参照，不参与构建**——它仍是 **X 端点行为**（请求形状、分页语义、解析路径）的参照；
-但**它已经不再回答"本仓库该怎么取数"**，那由组件负责。文中引用函数名而非行号（行号会漂移）。
-
----
+> 本手册只记录 **macOS 应用侧** 的架构、产品逻辑和本地状态。
+> X 请求、GraphQL、端点、queryId/features、原始响应解析、限流、爬取与下载引擎均属于
+> [x-spider-core](https://github.com/LeeDespo/x-spider-core)，本仓库不重复维护其领域知识。
+>
+> 组件版本不要写死：运行时以 `system.version` 握手结果和实际使用的 Release 为准。
 
 # 第 0 部分 · 速览
 
 ## 0.1 项目是什么
 
-[MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React，Windows 优先，
-**已停止维护**）到 macOS / SwiftUI 的移植。原生 App，用于浏览与批量下载 X（Twitter）用户的媒体。
+XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应用负责 UI、产品语义、本地设置、
+缓存以及下载 / 同步记录；X 数据访问与下载能力由 `x-spider-core` 通过稳定契约提供。
 
-**取数与下载由组件 `x-spider-core` 承担**（见第 2 部分）：本进程不再自己发任何 X 请求，
-也不自己实现下载引擎——`XSpiderMac/Resources/Binaries/` 里随包带一份 `xspiderd` + `aria2next`
-作兜底（外部目录优先，见 §2.7）。
-
-因为上游已停维护，`src/` 是 **X 端点行为**的一份历史快照参照（请求与解析怎么写的）——
-这也是它被保留的原因；但"本仓库该怎么取数"已经不是它回答的问题了。
+项目早期参考过 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)，但当前实现和构建链独立；
+该项目仅作为历史来源 / 致谢，不参与当前开发，也不作为 X 行为参考。
 
 ## 0.2 五分钟跑起来
 
@@ -85,7 +72,7 @@ script/package_dmg.sh
 | `Services/RecordsIO.swift` / `FileIntegrity.swift` | 记录导入导出 / 按文件名重建；下载收尾的内容校验 |
 | `Services/SystemProxy.swift` | 系统代理探测（组件是独立进程，不继承系统代理，要先解析成 URL 再告诉它） |
 | `Support/AccountFolder.swift` | 账号文件夹命名 `昵称-用户名[数字id]`（记录落点，同一 id 永远同一文件夹） |
-| `Stores/HomepageStore.swift` | 搜索用户 → 媒体/推文网格（上游 `src/stores/homepage.ts`） |
+| `Stores/HomepageStore.swift` | 搜索用户 → 媒体/推文网格 |
 | `Stores/CreationTaskStore.swift` | 爬取调度：分块调组件 `crawl.run`；产品语义（勾选/排除/精确日期）留在外壳 |
 | `Stores/DownloadStore.swift` | 下载队列、跳过判定、与组件 `dl.*` 对接（进度轮询、收尾、记录、通知） |
 | `Stores/SyncStore.swift` | 关注清单批量补齐（窗口语义在记录模式） |
@@ -157,13 +144,13 @@ script/package_dmg.sh
 ## 2.1 一句话：外壳不再直接打 X
 
 本应用**没有任何一条自己发出的 X 请求**，也没有自己的下载实现。取数、写操作、下载、爬取
-全部在组件 `x-spider-core`（Rust sidecar `xspiderd`，本地 JSON-RPC，契约版本 **1.5.1**）里。
+全部在组件 `x-spider-core`（Rust sidecar `xspiderd`，本地 JSON-RPC，契约版本以运行时 `system.version` 为准）里。
 契约映射与进程对接集中在四个文件：`XSpiderComponent`（进程与 RPC）、`TwitterAPI`
 （契约方法 ↔ 应用模型的映射）、`XSpiderMapping` / `XSpiderJSON`（JSON → 应用模型）；
 此外 `DownloadStore` 直调 `dl.enqueue` / `dl.resume` 等下载 method，
 `AccountStatusStore` 直调 `net.status` 读限流状态——它们不经过映射层。
 
-**为什么抽出去**：签名（`x-client-transaction-id`）、请求闸门与 429 熔断、queryId 自愈、
+**为什么抽出去**：X 数据访问和下载需要统一实现、统一测试，
 下载引擎与断点/完整性校验，这些若在两个外壳里各实现一遍必然漂移，而限流治理是这条链上
 最容易出事的地方。组件同时被 CLI（第一个真实消费方）与其它平台复用。
 
@@ -214,36 +201,17 @@ script/package_dmg.sh
 
 **判断一律用 `code`，不要匹配 `message`**——组件与外壳都遵守这条。
 
-## 2.5 仍然有效的领域知识（现在由组件负责，外壳只需理解现象）
+## 2.5 组件领域问题只做路由，不在本仓库维护
 
-下面这些是移植时实测出来的坑，**照着做能省几周**。实现现在都在组件里，写在这里是因为：
-排障时你需要知道"什么现象对应什么根因"，以及"哪些是组件侧的事、不要去本仓库里改"。
+mac 应用只判断“这是应用侧问题还是组件侧问题”，不维护 X 端点行为盘点。
 
-**分页语义**（组件实现；外壳只需保证传参正确）：
-1. **首页必须省略 `cursor` 键**（不是传 `null`）——否则每页都请求第一页，
-   这是"无限加载"与"爬虫重复检索同一页"的总根源。映射层保证首页不传该键。
-2. **空页即到底**：判据是**服务端原始条数**，不是客户端筛选后的条数。
-3. **游标不推进即判到底**：X 偶发回吐相同 cursor，原地空转刷爆配额。
-4. **补拉节奏**：视口填满即停（复刻上游 `InfiniteScroll`），无停止条件的连发会触发 429 风暴。
+以下情况直接转到 `x-spider-core` 排查并在那里补测试 / fixture：
+- 原始 X 数据缺字段、解析错误或分页结果异常；
+- 请求失败、限流 / 429、认证、queryId/features、签名问题；
+- crawl 候选不完整、服务端停止条件异常；
+- 下载引擎、断点、代理或 CDN 请求行为异常。
 
-**响应解析的坑**（组件实现）：focal 推文按 ID 精确取（否则详情会弹成别人的推文）、
-引用在 `result.quoted_status_result.result`（**不是** `legacy.quoted_status_result`）、
-转推有两种包裹键、用户字段有新老两种结构、广告判据是 `promotedMetadata` 非空。
-这些出错时的症状是"空页 / 详情弹错推文 / 引用卡空白"，现在应在**组件侧**修。
-
-**搜索端点**（组件实现）：必须 POST + JSON body（GET 一律 404，且**这个 404 与 queryId 无关**）；
-queryId 失效时自愈（抓 `/search` 页，且抓页面**必须带凭据**，匿名会 307 到 onboarding）。
-外壳只传 `screen_name` / `since` / `until` / `media_only` / `count` / `cursor`。
-**日期语义**：契约里 `since` / `until` 是**用户本地日历日期、含当天**，组件内部按排他语义
-**+1 天**——**外壳不要再自己加一天**（旧的 `searchRawQuery` 只剩测试引用，不要再接线；
-`nextDay` 仍被 `crawlStrategy` 用来放宽 `until`，即 §5.2 的 ±1 天粗筛）。
-
-**限流治理**（组件实现）：请求闸门（令牌桶 + 同端点串行）、429 熔断（记截止时间）、
-**X API 与媒体 CDN 分开治理**（不同域、不同配额）。外壳侧只需：
-- 被动读 `net.status` 展示；用户点「重试」时主动探一次（`AccountStatusStore`）；
-- 下载失败按结构化 `reason` / `status` 决定重试与 CDN 降并发（`DownloadStore.isRetryable`）；
-- **取消语义**由组件保证（取消必须抛取消、不重试）——旧实现曾把取消当可重试错误，
-  又因 `try? await Task.sleep` 在取消时立即返回，刷出**同一毫秒 5400 行**重试日志（见 §5.1）。
+本仓库只处理 core 已经通过契约返回的数据如何映射、展示、缓存和记录。不要为了临时修 UI 症状在 mac 增加第二套请求或原始响应解析。
 
 ## 2.6 排障：组件出问题时该看什么
 
@@ -431,7 +399,7 @@ library validation 拒，所以主形态是 sidecar（换组件 = 换一个二�
 ## 4.6.1 翻译与语言包
 
 **用系统 `Translation` 框架**（本地翻译），不抓 X 的翻译端点——
-后者要维护会失效的私有 queryId，且**消耗 X 配额**。
+应用不直接调用 X 翻译接口；翻译功能只使用系统 `Translation` 框架。
 相关 API 全部是 **macOS 15.0+**，与基线一致，无需版本判断。
 
 ### 自动翻译的判据：白名单
@@ -512,24 +480,15 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 > 每条格式：**现象 → 根因 → 解法**。写"如何避免再犯"而不是故事。
 
-## 5.1 分页与限流
+## 5.1 列表加载与应用侧分页状态
 
-**外壳侧（仍然适用）**：
+应用只负责消费 core 返回的 `items + cursor` 并维护 UI 加载状态。若 cursor、页内容或停止条件本身错误，
+属于 core；mac 不解析原始 X timeline，也不维护 X 分页规则。
 
-| 现象 | 根因 | 解法 |
+| 现象 | 应用侧根因 | 解法 |
 |---|---|---|
-| 列表停在约 20 帖 / 27 媒体，且随用户变化 | 视图侧 `.task(id:)` 的 id 随翻页变化 → 自我取消，while 只推进一页 | 填充循环由 store 持有（`fillTask`），视图只调 `triggerFill()` |
-
-**组件侧（现象照旧，但改的位置在组件）**：下面这些是分页与限流的老坑，
-现在由组件负责，本仓库只需认识现象——出问题去组件仓库修，不要在映射层打补丁。
-
-| 现象 | 根因 | 解法（组件里） |
-|---|---|---|
-| 同一毫秒 5400 行取消重试 | 取消被当可重试错误 + `try? await Task.sleep` 在取消时立即返回 | 取消抛取消错误、不重试；取消感知睡眠 |
-| 每页都请求第一页 | `variables.cursor` 写死 `null`（应为省略键） | 首页省略 cursor 键 |
-| 爬虫反复检索同一页 | `continue` 前没推进 cursor | cursor 推进紧跟 fetch，早于一切过滤 |
-| 429 风暴 | 无停止条件的连发循环 | 视口填满即停 + 页间节流 + 令牌桶闸门 |
-| 翻页偶发卡死 | X 回吐相同 cursor，原地空转 | 游标未推进即判到底 |
+| 列表停在约 20 帖 / 27 媒体，且随用户变化 | 视图侧 `.task(id:)` 的 id 随翻页变化 → 自我取消 | 填充循环由 Store 持有，View 只触发 |
+| 同页内容重复进入 `ForEach` | 展示层未按稳定 id 去重 | 入 Store 前完成应用侧去重；不要去解析 raw timeline 修 |
 
 ## 5.2 时间范围
 
@@ -547,9 +506,7 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 ## 5.3 评论与引用
 
-**组件侧（现象照旧，实现已迁走）**：详情弹出别人的推文（focal 未按 ID 精确取）、
-引用卡永远空白（路径写成 `legacy.quoted_status_result`）、评论区混进广告
-（未过滤 `promotedMetadata`）——这些解析都在组件里，症状出现时去组件仓库修。
+若 focal、引用内容、回复集合或推广内容过滤本身错误，属于 core 契约结果问题；去组件仓库修，不在 mac 解析原始 X 响应。
 
 | 现象 | 根因 | 解法 |
 |---|---|---|
@@ -619,8 +576,6 @@ Bundle.main.localizations  == ["en"]         ← 原因
 - **"修复无效"先确认跑的是哪个构建**（见 §0.3）；
 - **未签名分发**：不做签名与公证（无开发者账号），README 里说明三种放行方式
   （右键打开 / `xattr -dr com.apple.quarantine` / 系统设置放行）；
-- `.github/workflows/gh-pages.yml` 已随上游官网一起删除——它会把**上游**官网
-  （含上游赞助入口）部署到本仓库的 Pages。
 
 
 # 第 6 部分 · 约定与清单
@@ -666,8 +621,7 @@ Bundle.main.localizations  == ["en"]         ← 原因
 | 已删 | 原因 |
 |---|---|
 | `NetworkClient` / `RequestGate` / `XClientTransaction` | HTTP 重试/退避、限流闸门、请求签名——**已收进组件**（第 2 部分） |
-| `Aria2Engine` / `Aria2RPCClient` / `SearchQueryIdProvider` | 下载引擎与 queryId 自愈——**已收进组件**；`SystemProxy` / `AsyncTimeout` 从它们里留下（与引擎无关） |
+| 旧直连 X / 下载实现 | 已迁入 `x-spider-core`；mac 侧只保留契约客户端、映射与产品逻辑 |
 | 评论发布输入框 | 从未实现（常量绑定打不进字 + 空实现），且全仓库无 `CreateTweet` 端点 |
 | `SelectiveDownloadSheet.swift` | 从未被引用（选择模式一直是内联的），留着会让人以为"选择页面"是那个弹窗 |
 | 字幕选择 | 那是"视频内嵌字幕轨"，与需求（实时翻译字幕）不是一回事 |
-| `homepage/`、`assets/`、`design/`、Tauri/Vite 脚手架 | 上游残留，与移植无关 |

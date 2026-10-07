@@ -5,7 +5,7 @@ import Foundation
 /// # 为什么要单独一层
 ///
 /// 应用里到处是 `TwitterPost` / `TwitterUser` / `TwitterMedia`，视图与商店都依赖它们；
-/// 组件给的是契约里的 JSON。两者**字段基本一一对应**（组件就是照参考实现抽的），
+/// 组件给的是契约里的 JSON。应用模型与契约字段基本一一对应，
 /// 所以映射只做"改名字、补默认值、解日期"三件事，不做业务判断。
 ///
 /// 这一层同时是**契约的消费点**：组件少给一个字段，这里就是第一个发现的地方
@@ -74,7 +74,7 @@ enum XSpiderMapping {
         case .photo:
             videoInfo = nil
         case .gif:
-            // 动图在契约里就是"可直接下载的 mp4"，参考实现把它放在 videoInfo.url
+            // 动图在契约里就是“可直接下载的 mp4”，应用模型把它放在 videoInfo.url
             videoInfo = VideoInfo(url: url, duration: nil, variants: nil, aspectRatio: aspect)
         case .video:
             let variants = json[array: "variants"]?.compactMap { raw -> VideoVariant? in
@@ -120,7 +120,7 @@ enum XSpiderMapping {
         let retweetedBy = json[object: "retweeted_by"].flatMap { Self.author($0) }
 
         // 被引用的推文：契约 1.4.0 起 `post.quoted` 自带内嵌对象（正文/作者/媒体），
-        // 与参考实现的 `quoted_status_result` 是同一条。
+        // 契约已把被引用推文归一化为 `quoted`。
         // `includeQuoted: false` 用在内层——**只递归一层**（X 不允许"引用里再引用"，
         // 内层再向下取遇到异常数据会无限递归）。
         // 取不到时（被删/不可见）`quoted` 不出现，`quoted_id` 仍在，卡片自然退化成"只有 id"。
@@ -168,7 +168,7 @@ enum XSpiderMapping {
     ///
     /// 契约给 `parent_id`（父推文 id）与 `is_partial_parent`（父不在本页），
     /// 但**不给深度**——深度是外壳按同一份数据算出来的：从根往下走父链。
-    /// 参考实现的树也是在这里构建的，所以这一步留在应用侧是对的。
+    /// 深度属于展示层派生状态，因此留在应用侧计算。
     static func replyNodes(_ result: [String: JSONValue], focalId: String) -> (focal: TwitterPost?, replies: [ReplyNode]) {
         let focal = result[object: "focal"].flatMap { post($0) }
         let rawReplies = (result[array: "replies"] ?? []).compactMap { $0.asObject }

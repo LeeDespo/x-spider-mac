@@ -3,8 +3,9 @@ import SwiftUI
 struct AboutView: View {
     private let developerURL = URL(string: "https://github.com/LeeDespo")!
     private let projectURL = URL(string: "https://github.com/LeeDespo/x-spider-mac")!
-    private let licenseURL = URL(string: "https://github.com/LeeDespo/x-spider-mac/blob/main/LICENSE")!
-    private let upstreamURL = URL(string: "https://github.com/MiningCattiva/x-spider")!
+    private let licenseURL = URL(string: "https://github.com/LeeDespo/x-spider-mac/blob/master/LICENSE")!
+    private let coreURL = URL(string: "https://github.com/LeeDespo/x-spider-core")!
+    private let historyURL = URL(string: "https://github.com/MiningCattiva/x-spider")!
 
     var body: some View {
         VStack(spacing: 20) {
@@ -25,11 +26,12 @@ struct AboutView: View {
             Text(L("macOS 原生版 X 媒体下载器"))
                 .foregroundStyle(.secondary)
 
-            // 项目信息：开发 → 项目 → 上游 → 开源协议（自上而下）
+            // 项目信息：开发 → 项目 → 组件 → 历史参考 → 开源协议
             VStack(alignment: .leading, spacing: 10) {
                 labeledRow(L("开发"), "LeeDespo", url: developerURL)
                 labeledRow(L("项目"), "LeeDespo/x-spider-mac", url: projectURL)
-                labeledRow(L("上游"), "MiningCattiva/x-spider", url: upstreamURL)
+                labeledRow(L("组件"), "LeeDespo/x-spider-core", url: coreURL)
+                labeledRow(L("历史参考"), "MiningCattiva/x-spider", url: historyURL)
                 labeledRow(L("开源协议"), "GPL-3.0-only", url: licenseURL)
             }
             .font(.callout)

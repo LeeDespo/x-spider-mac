@@ -1,7 +1,7 @@
 # 贡献指南
 
-XSpiderMac 是上游 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)（Tauri + React，已停止维护）
-到 macOS / SwiftUI 的移植，用于浏览与批量下载 X（Twitter）用户的媒体。
+XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应用只负责界面、产品逻辑和本地数据；X 数据访问、写操作、爬取与下载由独立组件 [x-spider-core](https://github.com/LeeDespo/x-spider-core) 提供。
+项目早期参考过已停止维护的 [MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider)，当前开发不把它作为实现或行为真源。
 项目介绍、安装与使用见 [README.md](README.md)。
 
 ## 环境要求
@@ -27,8 +27,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 
 - `XSpiderMac/project.yml` 是工程的唯一真源，**改了它必须重跑 `xcodegen generate`**，
   否则新文件不进工程。
-- **外壳不做取数与下载**：请求签名、限流、下载引擎与爬取都在组件 `x-spider-core` 里，
-  本仓库只做契约映射与 UI。职责边界见 [AGENTS.md](AGENTS.md) 的「黄金法则」。
+- **外壳不维护 X 端点行为**：请求、分页、原始响应解析、限流、爬取与下载都在组件 `x-spider-core` 里；本仓库只消费契约并实现应用侧产品逻辑。职责边界见 [AGENTS.md](AGENTS.md)。
 - 更换组件二进制（`xspiderd` / `aria2next`）后要 `xattr -cr` + `codesign --force --sign -`，
   漏了会以退出码 137 静默被杀（见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) §2.7）。
 
