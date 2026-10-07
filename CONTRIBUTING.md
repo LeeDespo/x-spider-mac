@@ -6,7 +6,7 @@ XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应
 
 ## 环境要求
 
-- macOS + Xcode 16+（本仓库按 arm64 构建与测试）
+- macOS + Xcode 26+（需要 macOS 26 SDK；deployment target 仍为 macOS 15.0，本仓库按 arm64 构建与测试）
 - [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）
 
 ## 构建与运行
