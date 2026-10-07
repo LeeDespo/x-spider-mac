@@ -1,21 +1,10 @@
-# Logs / local files
+# ── Logs ──
 logs/
 *.log
-.DS_Store
-*.local
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Xcode / macOS
+# ── Xcode / macOS 构建产物 ──
 build/
+DerivedData/
 *.pbxuser
 !default.pbxuser
 *.mode1v3
@@ -24,17 +13,36 @@ build/
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
-xcuserdata
+xcuserdata/
 *.xccheckout
 *.moved-aside
-DerivedData
 *.hmap
 *.ipa
-*.dSYM.zip
 *.dSYM
+*.dSYM.zip
 *.xcuserstate
+*.xcresult
 
-# macOS
+# ── 打包产物（dmg 走 GitHub Release）──
+dist/
+
+# ── 本地 Agent / 工具工作区（不入库）──
+# 长期文档不在排除名单：AGENTS.md、docs/、MEDIA_RECORDS.md、SETTINGS_DEFAULTS.md、CONTRIBUTING.md
+.agents/
+.scratch/
+.codex/
+.zcode/
+.zcodeignore
+.opensquilla/
+.fetch/
+.claude/
+.cursor/
+.aider*
+CLAUDE.md
+.vscode/*
+
+# ── OS ──
+.DS_Store
 .AppleDouble
 .LSOverride
 Icon
@@ -51,23 +59,3 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
-
-# ── Agent / 内部工作文件（不入库；本地保留）──
-# 计划、审计、进度类文档属于开发过程中的临时产物，不进公开仓库。
-# 有长期价值的内容已沉淀到随仓库发布的这几份里，它们**不在下面的排除名单**中：
-#   docs/DEVELOPMENT.md（架构地图、组件边界、已知坑与设计取舍）
-#   MEDIA_RECORDS.md（记录体系规范：下载/同步记录、判定三选一、命名）
-#   SETTINGS_DEFAULTS.md（设置项默认值一览）
-*_PLAN.md
-PLAN_*.md
-FEATURE_AUDIT.md
-DOWNLOAD_ENGINE_PLAN.md
-NETWORK_AND_WATERFALL_PLAN.md
-
-# 工具/研究残留目录
-.codex/
-.opensquilla/
-.fetch/
-
-# 打包产物（dmg 走 GitHub Release，不进版本库）
-dist/
