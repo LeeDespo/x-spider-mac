@@ -136,9 +136,14 @@ echo "==> 下载物 SHA256 与官方校验文件一致"
 # ── staging：取二进制本体 → tmp → arm64 确认 → chmod → xattr → ad-hoc 签名 ────
 if [[ "${COMPONENT}" == "xspiderd" ]]; then
   mkdir -p "${WORK}/extract"
-  tar -xzf "${WORK}/${ASSET}" -C "${WORK}/extract" xspiderd \
-    || fail "解包失败（tar 里应有 xspiderd 本体）：${ASSET}"
-  SOURCE_BIN="${WORK}/extract/xspiderd"
+  # 资产内布局不保证扁平（v0.1.0 是 <name>-<version>-macos-arm64/ 子目录），
+  # 按 basename 定位 xspiderd 本体
+  MEMBER="$(tar -tzf "${WORK}/${ASSET}" | grep -E '(^|/)xspiderd$' | head -1)" \
+    || fail "tar 里找不到 xspiderd 本体：${ASSET}"
+  [[ -n "${MEMBER}" ]] || fail "tar 里找不到 xspiderd 本体：${ASSET}"
+  tar -xzf "${WORK}/${ASSET}" -C "${WORK}/extract" "${MEMBER}" \
+    || fail "解包失败：${ASSET}"
+  SOURCE_BIN="${WORK}/extract/${MEMBER}"
 else
   SOURCE_BIN="${WORK}/${ASSET}"
 fi
