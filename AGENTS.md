@@ -48,7 +48,7 @@
 | `XSpiderMac/Sources/XSpiderMac/Views/` | SwiftUI / AppKit 界面 |
 | `XSpiderMac/Sources/XSpiderMac/Support/` | 缓存、日志、导航、窗口等基础设施 |
 | `XSpiderMac/Tests/XSpiderMacTests/` | 应用侧单元 / 接线测试 |
-| `docs/` | DEVELOPMENT（手册）、COMPONENTS（组件部署与账本）、TESTING（测试与验收）、RELEASING（发布）、history/（历史归档） |
+| `docs/` | DEVELOPMENT（手册）、COMPONENTS（组件部署与账本）、TESTING（测试与验收）、RELEASING（发布）、history/（仅历史来源） |
 | `MEDIA_RECORDS.md` | 下载 / 同步记录真源 |
 | `SETTINGS_DEFAULTS.md` | 设置默认值真源 |
 | `script/` | 构建与打包脚本 |
@@ -68,7 +68,7 @@
 | 组件部署 / 换二进制 / 组件账本 | `docs/COMPONENTS.md` |
 | 测试与 live X 验收 | `docs/TESTING.md` |
 | 发布 / Tag / DMG | `docs/RELEASING.md` |
-| 追溯早期行为与旧坑 | `docs/history/`（仅当前文档不足时） |
+| 追溯项目来源 / 许可证历史 | `docs/history/UPSTREAM_REFERENCE.md`；不要用于判断 X 行为 |
 
 ## 应用侧黄金法则
 
@@ -110,4 +110,6 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 
 ## 历史来源
 
-[MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 对本项目早期功能设计有历史影响。当前开发不要把它当作“上游实现”或 X 行为权威；若需要追溯早期决策，使用 Git 历史即可，不把其源码重新放回当前工作树。迁移前的对照方法与外壳旧坑归档在 `docs/history/`（`UPSTREAM_REFERENCE.md`、`x-endpoint-pitfalls.md`），仅当前文档不足时查阅。
+[MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 对本项目早期功能设计有历史影响。
+当前开发不要把它当作“上游实现”或 X 行为权威；需要追溯来源或许可证历史时使用 Git 历史与
+`docs/history/UPSTREAM_REFERENCE.md`，不要把旧源码或端点行为文档重新放回当前工作树。
