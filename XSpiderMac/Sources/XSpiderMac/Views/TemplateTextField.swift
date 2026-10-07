@@ -21,6 +21,7 @@ struct TemplateTextField: NSViewRepresentable {
 
         /// 把 `snippet` 插到光标处（有选区则替换选区）。
         /// **未聚焦时什么都不做**并返回 `false`——这正是用户要的语义。
+        @MainActor
         @discardableResult
         func insert(_ snippet: String) -> Bool {
             guard let field, let editor = field.currentEditor() as? NSTextView else { return false }
