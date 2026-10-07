@@ -458,6 +458,7 @@ final class TranslationLanguageTests: XCTestCase {
     }
 
     /// 语言未知（nil）时不自动翻译 —— 按用户决策：不确定就交给手动
+    @MainActor
     func testUnknownLanguageDoesNotAutoTranslate() {
         // 语言未知 → 判据第一步就应返回 false（不猜）
         XCTAssertFalse(TranslationStore.shouldAutoTranslate(lang: nil))
@@ -465,6 +466,7 @@ final class TranslationLanguageTests: XCTestCase {
     }
 
     /// 自动翻译默认关闭：开启会让每次浏览都触发翻译，打扰且耗电
+    @MainActor
     func testAutoTranslateDefaultsOff() {
         XCTAssertFalse(SettingsStore.shared.settings.autoTranslateEnabled,
                        "自动翻译默认应为关")
