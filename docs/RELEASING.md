@@ -53,8 +53,8 @@ script/package_dmg.sh 1.2.3     # 或显式指定
 3. **分发物必须携带许可证对应物**：DMG 根内的「许可证与第三方声明.txt」与
    「GPL-2.0 许可证（aria2next）.txt」（分别来自 `THIRD_PARTY_NOTICES.md` 与
    `LICENSE.aria2`）。仓库里有、分发包里也要有。
-4. **不要重新引入 GitHub Pages 部署**：曾随上游官网一起删除过
-   `gh-pages.yml`——它会把**上游**官网（含上游赞助入口）部署到本仓库的 Pages。
+4. **不要复用历史 Pages 配置**：本仓库当前不提供 GitHub Pages 站点；如果未来需要官网，
+   应为 XSpiderMac 独立设计和部署，不复用历史项目的页面与发布流程。
 
 ## 4. 用户首次放行（未签名分发的已知代价）
 
