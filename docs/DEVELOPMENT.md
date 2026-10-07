@@ -18,7 +18,7 @@ XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应
 
 ## 0.2 五分钟跑起来
 
-**前提**：装了 Xcode 与 [xcodegen](https://github.com/yonaskolb/XcodeGen)
+**前提**：Xcode 26+（需要 macOS 26 SDK；deployment target 仍为 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)
 （`brew install xcodegen`）。`XSpiderMac/project.yml` 是工程的**唯一真源**，
 `XSpiderMac.xcodeproj`（入库）由它生成——**改了 `project.yml`（加文件、改设置、改 target）
 必须重跑 `xcodegen generate`**，否则新文件不进工程。
@@ -119,7 +119,7 @@ script/package_dmg.sh
     → HomepageStore.loadPostList → fetchPage
          ├─（有日期范围 + 开关开）→ XSpiderAPI.searchTimeline → "fetch.search_timeline"
          └─（否则）→ getUserMedias / getUserTweets
-                      → "fetch.user_medias" / "fetch.user_tweets"（首页省略 cursor 键）
+                      → "fetch.user_medias" / "fetch.user_tweets"
     → XSpiderMapping.postPage → postList + postListCursor
 
 滚动到底
@@ -471,14 +471,12 @@ Bundle.main.localizations  == ["en"]         ← 原因
 | 现象 | 根因 | 解法 |
 |---|---|---|
 | 点「确定」没反应 | `dateRange` 只有爬虫读，浏览路径没读 | 展示路径加客户端筛选（与爬虫同语义） |
-| 账号有空窗期就加载不出内容 | 用"连续空页计数"判到底，而空窗期只是时间轴的空隙 | 改判据为**时间轴推进**（`oldestSeenAt < since`） |
-| 某页全被筛掉后列表提前结束 | 同上 | 判定"到底"只看**服务端原始条数** |
-| 「至」那天没有内容 | `DatePicker` 的 `end` 是当天零点 | 展示路径把范围交给组件（`fetch.search_timeline` 的 `since`/`until` 含当天），**外壳不再自己 +1 天** |
-| 范围整体偏移一天 | 拼给 X 的日期串用了 UTC 格式化 | 契约按**本地日历**理解日期；爬取的精确边界在 `CreationTaskStore.decide` |
+| 筛选后当前页没有可见内容就提前停 | View / Store 把“当前没有可展示项”误当成“没有后续页” | 是否继续只消费 core 契约返回的分页状态；显示筛选结果不能自行推导 X 是否到底 |
+| 「至」那天没有内容 | `DatePicker` 的 `end` 是当天零点 | 应用侧使用 `DateRange.inclusiveEnd` 做本地展示筛选；传给 core 的日期参数按契约定义编码，不自行改写协议边界 |
+| 范围整体偏移一天 | 外壳曾自行格式化日期并改变时区语义 | 应用只维护本地产品日期语义；core 内部如何粗筛或转换日期属于组件实现细节 |
 
-> 时间范围现在是**两段式**：组件按 UTC 天做**粗筛**（省请求），外壳的 `decide`
-> 再按**本地日历**做精确边界——所以 `crawlStrategy` 里 `since` 会故意各放宽一天（±1 天），
-> 时区偏移最大 ±14h < 24h，±1 天足够覆盖。这是有意的分工，不是 bug。
+> 时间范围的应用侧职责只有两件事：生成契约需要的日期参数，以及对已经归一化的应用模型做产品级精确筛选。
+> core 内部采用什么分页、时区或粗筛策略，不在本仓库记录。
 
 ## 5.3 评论与引用
 
