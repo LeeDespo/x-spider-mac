@@ -24,6 +24,9 @@
 | 组件进程启动 / 握手 / 调用 | `Services/XSpiderComponent.swift` 与应用侧 API facade |
 | UI / 产品语义 | 本仓库现役 Store / View / Model + `docs/DEVELOPMENT.md` |
 | 下载 / 同步记录 | `MEDIA_RECORDS.md` |
+| 组件部署、查找顺序、随包版本账本 | `docs/COMPONENTS.md` |
+| 测试、live 验收、验证清单 | `docs/TESTING.md` |
+| 发布 / Tag / DMG / checksum | `docs/RELEASING.md` |
 | 设置默认值 | `SETTINGS_DEFAULTS.md` |
 | 工程文件 | `XSpiderMac/project.yml`（`.xcodeproj` 由 xcodegen 生成） |
 
@@ -32,7 +35,7 @@
 1. **不要在本仓库研究或实现 X 端点行为。** 一旦问题定位到请求、分页、原始响应、queryId/features、限流等，去 core 修；mac 只消费修正后的契约结果。
 2. **不要新增直连 X 的 HTTP / 下载旁路。** 取数、写操作、爬取与下载全部经 `x-spider-core`。
 3. **不要复制 core 的行为知识到 mac 文档。** mac 文档只记录契约如何消费、产品如何呈现和本地状态如何维护。
-4. **不要把组件版本号写死在文档。** 实际版本以 `system.version` 握手和所用 Release 为准。
+4. **不要把组件版本号写死在文档。** 实际版本以 `system.version` 握手和所用 Release 为准；随包二进制的精确版本与 SHA256 以 `XSpiderMac/Resources/Binaries/components.lock.json` 为准。
 5. **不要把历史参考项目重新 vendor 进仓库。**
 
 ## 目录速览
@@ -45,7 +48,7 @@
 | `XSpiderMac/Sources/XSpiderMac/Views/` | SwiftUI / AppKit 界面 |
 | `XSpiderMac/Sources/XSpiderMac/Support/` | 缓存、日志、导航、窗口等基础设施 |
 | `XSpiderMac/Tests/XSpiderMacTests/` | 应用侧单元 / 接线测试 |
-| `docs/DEVELOPMENT.md` | 开发者手册与架构边界 |
+| `docs/` | DEVELOPMENT（手册）、COMPONENTS（组件部署与账本）、TESTING（测试与验收）、RELEASING（发布）、history/（历史归档） |
 | `MEDIA_RECORDS.md` | 下载 / 同步记录真源 |
 | `SETTINGS_DEFAULTS.md` | 设置默认值真源 |
 | `script/` | 构建与打包脚本 |
@@ -62,6 +65,10 @@
 | 搜索 / 首页 / 时间线展示流程 | 对应 Store + View；只处理产品侧筛选与呈现 |
 | 设置项 | `Settings` / `SettingsStore` + `SETTINGS_DEFAULTS.md` |
 | UI / 窗口 / 手势 | `Views/` + `Support/`，并读 `docs/DEVELOPMENT.md` |
+| 组件部署 / 换二进制 / 组件账本 | `docs/COMPONENTS.md` |
+| 测试与 live X 验收 | `docs/TESTING.md` |
+| 发布 / Tag / DMG | `docs/RELEASING.md` |
+| 追溯早期行为与旧坑 | `docs/history/`（仅当前文档不足时） |
 
 ## 应用侧黄金法则
 
@@ -74,7 +81,9 @@
 - 运行日志统一走 `AppLogger`；组件相关日志归 `CORE` 分类。
 - 返回导航统一走 `Support/NavigationHistory.swift`。
 - 媒体卡操作统一走 `Views/MediaCardActions.swift`，不要各页面复制按钮逻辑。
-- 更换外部 `xspiderd` / `aria2next` 后要处理 quarantine 与 ad-hoc 签名，具体见 `docs/DEVELOPMENT.md`。
+- 更换外部 `xspiderd` / `aria2next` 后要处理 quarantine 与 ad-hoc 签名，具体见 `docs/COMPONENTS.md` §2。
+- 本地化文案走 `Support/L10n.swift` 的 `L()`，界面文案以中文为主。
+- 升级随包组件一律走 `script/update_components.sh`（账本唯一写手），不要手工换文件后直接提交。
 
 ## 构建与验证
 
@@ -92,6 +101,13 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 
 改动完成后至少运行与改动相关的单元测试。涉及组件接线时，另外确认设置页「组件状态」可完成启动和 `system.version` 握手。
 
+### 质量门
+
+- 普通 Swift 行为改动：跑相关单测，收尾前 `xcodebuild test` 全绿。
+- 动过随包组件、或打包 / 发布前：`script/verify_components.sh`（与 `components.lock.json` 对账，见 `docs/COMPONENTS.md` §5）。
+- 涉及组件 / API 的改动收尾前：`script/check_boundaries.sh`（生产源码零边界泄漏）。
+- **不要用截图 / 录屏做视觉验收**（太耗 token）：改完 UI 描述改动、请用户确认；行为验证用单测 + `AppLogger` 日志（细则见 `docs/TESTING.md`）。
+
 ## 历史来源
 
-[MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 对本项目早期功能设计有历史影响。当前开发不要把它当作“上游实现”或 X 行为权威；若需要追溯早期决策，使用 Git 历史即可，不把其源码重新放回当前工作树。
+[MiningCattiva/x-spider](https://github.com/MiningCattiva/x-spider) 对本项目早期功能设计有历史影响。当前开发不要把它当作“上游实现”或 X 行为权威；若需要追溯早期决策，使用 Git 历史即可，不把其源码重新放回当前工作树。迁移前的对照方法与外壳旧坑归档在 `docs/history/`（`UPSTREAM_REFERENCE.md`、`x-endpoint-pitfalls.md`），仅当前文档不足时查阅。

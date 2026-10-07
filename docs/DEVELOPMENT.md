@@ -216,7 +216,7 @@ mac 应用只判断“这是应用侧问题还是组件侧问题”，不维护 
 - **组件日志走 stderr**，被 `XSpiderComponent` 逐行转发到 `AppLogger`（分类 `CORE`）。
   想看更细：设环境变量 `XSPIDER_LOG=debug` 再启动（默认 `warn`）。
 - **改动没生效**先确认加载的是哪一份组件：启动日志会打
-  `组件已就绪 … path=…`（外部目录优先，bundle 里的是兜底，见 §2.7）。
+  `组件已就绪 … path=…`（外部目录优先，bundle 里的是兜底，见 `docs/COMPONENTS.md` §2）。
 - **代理**：组件是独立进程，**不继承 macOS 系统代理**。"跟随系统"那一档由
   `SystemProxy.current()` 解析成具体 URL，经 `net.set_proxy` 告诉它；**改代理无需重启**
   （`null` = 明确关闭，与"字段缺失"语义不同）。
@@ -227,31 +227,9 @@ mac 应用只判断“这是应用侧问题还是组件侧问题”，不维护 
 
 ## 2.7 组件从哪来、怎么部署 / 更新
 
-**查找顺序**（`XSpiderComponent.searchDirectories()`，**外部目录优先**）：
-
-1. `~/Library/Application Support/moe.keli.xspider.mac/XSpiderCore/`
-2. `~/Library/Application Support/XSpiderMac/XSpiderCore/`
-3. `XSpiderMac.app/Contents/Resources/`（随包携带的兜底；仓库里是 `XSpiderMac/Resources/Binaries/`）
-4. 可执行文件所在目录（`Contents/MacOS`，开发时为构建产物旁）
-5. `PATH`
-
-目录里放**两个文件**即可：`xspiderd` 与 `aria2next`。
-
-**更新组件 = 换掉那两个文件 + 重新签名，不必重新构建应用**（这正是分进程形态的意义）。
-两步都要做，漏了会被内核静默杀掉：
-
-```bash
-DIR=~/Library/Application\ Support/moe.keli.xspider.mac/XSpiderCore
-xattr -cr "$DIR"                                             # 清隔离属性（从浏览器下载来的必做）
-codesign --force --sign - "$DIR"/xspiderd "$DIR"/aria2next   # ad-hoc 签名
-```
-
-**漏签 / 带隔离属性的典型表现**：文件在、却以**退出码 137** 静默被杀——`ready` 行永远不出现，
-只有一行日志。因此设置页「组件状态」绿灯的判据是**进程真的起来并完成握手**，不是"文件存在"
-（文件在但被隔离会是假绿灯，所以刻意不这么判）。
-
-**为什么不用 cdylib**：本机 hardened runtime 打开时 `dlopen` 任何 dylib 都会被
-library validation 拒，所以主形态是 sidecar（换组件 = 换一个二进制）。
+查找顺序（**外部目录优先**）、`xattr -cr` + ad-hoc 签名两步、退出码 137 症状、
+随包组件的版本账本（`components.lock.json`）与升级 / 校验脚本，**统一维护在
+[`docs/COMPONENTS.md`](COMPONENTS.md)**；设置页「组件状态」绿灯的判据也写在那一册 §2。
 
 
 # 第 3 部分 · 下载与同步
@@ -593,18 +571,9 @@ Bundle.main.localizations  == ["en"]         ← 原因
 
 ## 6.2 验证清单
 
-| 改动 | 必须实测 |
-|---|---|
-| 分页 / 爬虫 | ① 媒体量大的用户滑到底，总数持续增长超过 40 条且不重复；② 同用户同条件「下载全部」执行两遍，第二遍应全部 skip |
-| 组件对接 | 设置页「组件状态」绿灯（进程真起来并握手）；改代理后取数/下载恢复；换一份组件后启动日志的 `path=` 指向新目录 |
-| 图片管线 | 快速来回滚动不掉帧；滚回顶部不重新闪载 |
-| 时间范围 | 取一个已知有长空窗期的账号，设跨越空窗期的范围，确认能持续翻页并显示内容 |
-| UI 层级 | 详情浮层打开时，底层卡片的悬停提示不出现 |
-| 任何改动 | `xcodebuild test` 全绿 |
-
-日志观察：`log stream --predicate 'process == "XSpiderMac"'`（组件日志以
-`组件: …` 出现在分类 `CORE` 下），或读 `~/Library/Logs/XSpiderMac/xspider.log`（单文件 10MB，超出轮转为 `xspider.log.1`，
-仅保留一份历史）。
+按改动类型「改什么测什么」的实测清单、live 测试门控（`XSPIDER_LIVE=1`）与日志观察
+手法统一维护在 [`docs/TESTING.md`](TESTING.md)；任何改动的基线是
+`xcodebuild test` 全绿。
 
 ## 6.3 已知限制（不是 bug）
 

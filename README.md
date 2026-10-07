@@ -103,6 +103,7 @@ codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 
 **核对版本**：`"<组件目录>"/xspiderd --version` 会打印组件版本与契约版本；运行时以 `system.version` 握手结果和实际使用的 Release 为准。
 应用启动时按契约**主版本**握手，主版本不匹配会拒绝启动并提示更新组件或应用。
+随包兜底副本的精确版本与 SHA256 记在 `XSpiderMac/Resources/Binaries/components.lock.json`，升级走 `script/update_components.sh`（详见 [docs/COMPONENTS.md](docs/COMPONENTS.md)）。
 
 ## 系统要求
 
@@ -125,6 +126,9 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 
 # 打包 dmg（Release）
 script/package_dmg.sh
+
+# 校验随包组件与账本一致（换过组件 / 打包前）
+script/verify_components.sh
 ```
 
 > `Resources/Binaries/` 里放的两个二进制（`aria2next`、`xspiderd`）是**随应用分发的兜底副本**，
@@ -136,7 +140,7 @@ script/package_dmg.sh
 |---|---|
 | `XSpiderMac/` | **应用本体**（SwiftUI）；`project.yml` 由 xcodegen 生成 xcodeproj |
 | `script/` | 构建、运行、打包脚本 |
-| `docs/DEVELOPMENT.md` | 架构地图、组件边界、已知问题与设计取舍（**改代码前先读**） |
+| `docs/` | DEVELOPMENT（架构地图、组件边界、已知问题与设计取舍，**改代码前先读**）、COMPONENTS（组件部署与版本账本）、TESTING（测试与 live 验收）、RELEASING（发布流程）、history/（历史归档） |
 | `MEDIA_RECORDS.md` | 记录体系规范：下载 / 同步记录、判定三选一、命名（**改记录前先读**） |
 | `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
 | `AGENTS.md` | 面向 AI agent 的开发约束 |

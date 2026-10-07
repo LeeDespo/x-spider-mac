@@ -29,7 +29,7 @@ cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
   否则新文件不进工程。
 - **外壳不维护 X 端点行为**：请求、分页、原始响应解析、限流、爬取与下载都在组件 `x-spider-core` 里；本仓库只消费契约并实现应用侧产品逻辑。职责边界见 [AGENTS.md](AGENTS.md)。
 - 更换组件二进制（`xspiderd` / `aria2next`）后要 `xattr -cr` + `codesign --force --sign -`，
-  漏了会以退出码 137 静默被杀（见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) §2.7）。
+  漏了会以退出码 137 静默被杀（见 [docs/COMPONENTS.md](docs/COMPONENTS.md) §2）。
 
 ## 反馈问题
 
