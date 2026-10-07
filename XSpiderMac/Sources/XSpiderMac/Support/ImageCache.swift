@@ -37,7 +37,7 @@ final class ImageCache {
         c.totalCostLimit = 192 * 1_048_576
         return c
     }()
-    private var inflight: [String: Task<NSImage?, Never>] = [:]
+    private var inflight: [String: Task<CGImage?, Never>] = [:]
     private var diskCheckTask: Task<Void, Never>?
     private var lastDiskCheckAt = Date.distantPast
 
@@ -67,35 +67,47 @@ final class ImageCache {
         if let hit = memory.object(forKey: key as NSString) { return hit }
 
         let filePath = dir.appendingPathComponent(key)
-        if let img = await Self.decodeFile(at: filePath, maxPixelSize: maxPixelSize) {
-            memory.setObject(img, forKey: key as NSString, cost: Self.pixelCost(img))
+        if let cg = await Self.decodeFile(at: filePath, maxPixelSize: maxPixelSize) {
+            let img = Self.makeImage(cg)
+            memory.setObject(img, forKey: key as NSString, cost: Self.pixelCost(cg))
             return img
         }
 
         if !enabled(category) {
-            // 缓存关闭：直接网络加载，不落盘
-            return await Self.fetchAndDecode(url: url, maxPixelSize: maxPixelSize, writingTo: nil)
+            // 缓存关闭：直接网络加载，不落盘。后台只传 Sendable 的 CGImage，
+            // NSImage 始终在 MainActor 上创建与使用。
+            guard let cg = await Self.fetchAndDecode(url: url, maxPixelSize: maxPixelSize, writingTo: nil) else {
+                return nil
+            }
+            return Self.makeImage(cg)
         }
 
-        // 网络加载 → 落盘（inflight 合并同 key 并发请求）
-        if let task = inflight[key] { return await task.value }
-        let t = Task<NSImage?, Never> { [weak self] in
-            let img = await Self.fetchAndDecode(url: url, maxPixelSize: maxPixelSize, writingTo: filePath)
-            if let img {
-                self?.memory.setObject(img, forKey: key as NSString, cost: Self.pixelCost(img))
+        // 网络加载 → 落盘（inflight 合并同 key 并发请求）。
+        // Task.Success 不能是 NSImage：AppKit 明确将 NSImage 标为 non-Sendable。
+        let task: Task<CGImage?, Never>
+        if let existing = inflight[key] {
+            task = existing
+        } else {
+            let created = Task {
+                await Self.fetchAndDecode(url: url, maxPixelSize: maxPixelSize, writingTo: filePath)
             }
-            self?.scheduleDiskLimitCheck()
-            return img
+            inflight[key] = created
+            task = created
         }
-        inflight[key] = t
-        let result = await t.value
+
+        let cg = await task.value
         inflight.removeValue(forKey: key)
-        return result
+        scheduleDiskLimitCheck()
+
+        guard let cg else { return nil }
+        let img = Self.makeImage(cg)
+        memory.setObject(img, forKey: key as NSString, cost: Self.pixelCost(cg))
+        return img
     }
 
     // MARK: - 后台工作（nonisolated async 函数跑在全局并发池,不占主线程）
 
-    private nonisolated static func fetchAndDecode(url: URL, maxPixelSize: Int, writingTo: URL?) async -> NSImage? {
+    private nonisolated static func fetchAndDecode(url: URL, maxPixelSize: Int, writingTo: URL?) async -> CGImage? {
         guard let (data, resp) = try? await URLSession.shared.data(from: url),
               (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
         guard !Task.isCancelled else { return nil }
@@ -103,31 +115,33 @@ final class ImageCache {
         return decode(data: data, maxPixelSize: maxPixelSize)
     }
 
-    private nonisolated static func decodeFile(at path: URL, maxPixelSize: Int) async -> NSImage? {
+    private nonisolated static func decodeFile(at path: URL, maxPixelSize: Int) async -> CGImage? {
         guard let data = try? Data(contentsOf: path) else { return nil }
         return decode(data: data, maxPixelSize: maxPixelSize)
     }
 
-    /// 按 kCGImageSourceThumbnailMaxPixelSize 降采样 + ShouldCacheImmediately 立即解码,
-    /// 避免 NSImage(data:) 的惰性解码把全尺寸位图解码拖到主线程首次绘制时
-    private nonisolated static func decode(data: Data, maxPixelSize: Int) -> NSImage? {
-        if let src = CGImageSourceCreateWithData(data as CFData, nil) {
-            let opts: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            ]
-            if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
-                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-            }
+    /// 按 kCGImageSourceThumbnailMaxPixelSize 降采样 + ShouldCacheImmediately 立即解码。
+    /// 后台只产出 CGImage；NSImage 留在 MainActor 上构造，避免跨并发域传递 AppKit 对象。
+    private nonisolated static func decode(data: Data, maxPixelSize: Int) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+            return cg
         }
-        return NSImage(data: data)
+        return CGImageSourceCreateImageAtIndex(src, 0, nil)
     }
 
-    private nonisolated static func pixelCost(_ img: NSImage) -> Int {
-        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return 1 }
-        return max(1, cg.bytesPerRow * cg.height)
+    private static func makeImage(_ cg: CGImage) -> NSImage {
+        NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
+    private nonisolated static func pixelCost(_ cg: CGImage) -> Int {
+        max(1, cg.bytesPerRow * cg.height)
     }
 
     // MARK: - 容量控制（后台节流，每 60s 至多一次全目录扫描）
