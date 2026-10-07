@@ -501,9 +501,10 @@ struct DownloadTaskRow: View {
         }
     }
 
-    /// QuickLook 生成视频/文档缩略图
+    /// QuickLook 生成视频/文档缩略图。
+    /// continuation 只传递 Sendable 的 CGImage，NSImage 在调用方 actor 上构造。
     private static func quickLookThumbnail(path: String) async -> NSImage? {
-        await withCheckedContinuation { cont in
+        let cg: CGImage? = await withCheckedContinuation { cont in
             let request = QLThumbnailGenerator.Request(
                 fileAt: URL(fileURLWithPath: path),
                 size: CGSize(width: 96, height: 96),
@@ -511,9 +512,11 @@ struct DownloadTaskRow: View {
                 representationTypes: .thumbnail
             )
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
-                cont.resume(returning: rep?.nsImage)
+                cont.resume(returning: rep?.cgImage)
             }
         }
+        guard let cg else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
     private func openFile(_ task: DownloadTask) {
