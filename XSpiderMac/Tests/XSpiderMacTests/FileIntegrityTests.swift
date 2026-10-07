@@ -492,12 +492,3 @@ final class TranslationLanguageTests: XCTestCase {
         XCTAssertNil(settings.app.translateTargetLanguage)
     }
 }
-
-/// TweetDetail 的 focal 推文提取与引用解析。
-///
-/// 这一组针对两个真实 bug（2026-09 用真实响应定位）：
-/// 1. focal 走 `extractPostsFromTweetEntries`（默认 requireMedia=true）时，
-///    **无媒体的 focal 会被过滤掉**，退化分支返回"第一条有媒体的推文"——
-///    那往往是评论区的带图评论或广告，表现为"详情弹出的是别人的推文"；
-/// 2. 引用写在 `legacy.quoted_status_result` 上永远取不到——
-///    真实路径是 `result.quoted_status_result.result`（result 的直接子键）。
