@@ -3,7 +3,7 @@ import XCTest
 
 final class DownloadEngineTests: XCTestCase {
 
-    // MARK: - 下载 URL 解析（上游 getDownloadUrl）
+    // MARK: - 下载 URL 选择
 
     func testPhotoDownloadURL() {
         let media = TwitterMedia(id: "m1", url: "https://pbs.twimg.com/media/foo.jpg", width: nil, height: nil, type: .photo, videoInfo: nil)
@@ -34,181 +34,7 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(downloadURL(for: media), "http://gif.mp4")
     }
 
-    // MARK: - GraphQL 解析（上游 extractPostsFromModuleInstructions / extractPostsFromTweetEntries）
-
-    func testUserMediaModuleParsing() {
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                [
-                    "entryId": "profile-grid-0",
-                    "content": [
-                        "entryType": "TimelineTimelineModule",
-                        "items": [
-                            [
-                                "item": [
-                                    "itemContent": [
-                                        "tweet_results": [
-                                            "result": [
-                                                "__typename": "Tweet",
-                                                "rest_id": "123",
-                                                "legacy": [
-                                                    "full_text": "hello",
-                                                    "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-                                                    "entities": [
-                                                        "media": [
-                                                            [
-                                                                "id_str": "m1",
-                                                                "type": "photo",
-                                                                "media_url_https": "https://pbs.twimg.com/media/a.jpg",
-                                                                "original_info": ["width": 100, "height": 200],
-                                                            ]
-                                                        ]
-                                                    ]
-                                                ],
-                                                "core": [
-                                                    "user_results": [
-                                                        "result": [
-                                                            "rest_id": "456",
-                                                            "legacy": [
-                                                                "screen_name": "alice",
-                                                                "name": "Alice",
-                                                                "profile_image_url_https": "https://x.com/avatar.jpg",
-                                                            ]
-                                                        ] as [String: Any]
-                                                    ] as [String: Any]
-                                                ] as [String: Any]
-                                            ] as [String: Any]
-                                        ] as [String: Any]
-                                    ] as [String: Any]
-                                ] as [String: Any]
-                            ] as [String: Any]
-                        ]
-                    ] as [String: Any]
-                ] as [String: Any]
-            ]
-        ]]
-
-        let posts = TwitterAPI.extractPostsFromModuleInstructions(instructions)
-        XCTAssertEqual(posts.count, 1)
-        XCTAssertEqual(posts[0].id, "123")
-        XCTAssertEqual(posts[0].user.screenName, "alice")
-        XCTAssertEqual(posts[0].medias?.count, 1)
-        XCTAssertEqual(posts[0].medias?[0].type, .photo)
-        XCTAssertEqual(posts[0].createdAt, TwitterDate.parse("Sat Jan 20 15:15:36 +0000 2024"))
-    }
-
-    func testTweetWithVisibilityResultsUnwrap() {
-        let wrapped: [String: Any] = [
-            "__typename": "TweetWithVisibilityResults",
-            "tweet": ["rest_id": "789", "legacy": [:]] as [String: Any]
-        ]
-        let unwrapped = TwitterAPI.unwrapVisibility(wrapped)
-        XCTAssertEqual(unwrapped["rest_id"] as? String, "789")
-    }
-
-    func testBottomCursorExtraction() {
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                ["entryId": "tweet-1", "content": ["itemContent": [:]]],
-                ["entryId": "cursor-bottom-1", "content": ["cursorType": "Bottom", "value": "DAABCgABGIC"]],
-            ]
-        ]]
-        XCTAssertEqual(TwitterAPI.extractBottomCursor(instructions), "DAABCgABGIC")
-    }
-
-    // MARK: - UserMedia 超集解析（module + 散装 tweet 条目 + 去重）
-
-    /// 一页同时含 module 与散装 tweet-* 条目:两者都取,同 id 去重
-    func testUserMediaSupersetParsingAndDedup() {
-        func tweetResult(_ id: String) -> [String: Any] {
-            [
-                "__typename": "Tweet",
-                "rest_id": id,
-                "legacy": [
-                    "full_text": "t\(id)",
-                    "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-                    "entities": ["media": [["id_str": "m\(id)", "type": "photo", "media_url_https": "u\(id)"]]],
-                ] as [String: Any],
-            ]
-        }
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                [
-                    "entryId": "profile-grid-0",
-                    "content": [
-                        "entryType": "TimelineTimelineModule",
-                        "items": [
-                            ["item": ["itemContent": ["tweet_results": ["result": tweetResult("123")]]]],
-                            ["item": ["itemContent": ["tweet_results": ["result": tweetResult("123")]]]],
-                        ] as [[String: Any]],
-                    ] as [String: Any],
-                ] as [String: Any],
-                ["entryId": "tweet-456", "content": ["itemContent": ["tweet_results": ["result": tweetResult("456")]]]],
-            ] as [[String: Any]],
-        ]]
-
-        let posts = TwitterAPI.extractPostsFromModuleInstructions(instructions)
-        XCTAssertEqual(posts.count, 2)
-        XCTAssertEqual(Set(posts.map(\.id)), ["123", "456"])
-    }
-
-    /// X 偶发返回只有散装 tweet 条目、没有 module 的页(上游解析为 0 条导致提前到底)
-    func testUserMediaStandaloneTweetOnlyParsing() {
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                [
-                    "entryId": "tweet-789",
-                    "content": ["itemContent": ["tweet_results": ["result": [
-                        "__typename": "Tweet",
-                        "rest_id": "789",
-                        "legacy": [
-                            "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-                            "entities": ["media": [["id_str": "m789", "type": "photo", "media_url_https": "u"]]],
-                        ] as [String: Any],
-                    ] as [String: Any]]]],
-                ] as [String: Any],
-                ["entryId": "cursor-bottom-2", "content": ["cursorType": "Bottom", "value": "next"]],
-            ] as [[String: Any]],
-        ]]
-
-        let posts = TwitterAPI.extractPostsFromModuleInstructions(instructions)
-        XCTAssertEqual(posts.count, 1)
-        XCTAssertEqual(posts[0].id, "789")
-    }
-
-    func testUserTweetsEntryParsingAndRetweetFilter() {
-        let tweetResult: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "111",
-            "legacy": [
-                "entities": ["media": [["type": "photo", "id_str": "m1", "media_url_https": "u"]]]
-            ] as [String: Any]
-        ]
-        let retweetResult: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "222",
-            "legacy": [
-                "retweeted_status_result": ["tweet": [:]],
-                "entities": ["media": [["type": "photo"]]]
-            ] as [String: Any]
-        ]
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                ["entryId": "tweet-111", "content": ["itemContent": ["tweet_results": ["result": tweetResult]]]],
-                ["entryId": "tweet-222", "content": ["itemContent": ["tweet_results": ["result": retweetResult]]]],
-            ]
-        ]]
-        let posts = TwitterAPI.extractPostsFromTweetEntries(instructions)
-        XCTAssertEqual(posts.count, 1)
-        XCTAssertEqual(posts[0].id, "111")
-    }
-
-    // MARK: - Cookie 工具（上游 parseCookie / stringifyCookie）
+    // MARK: - Cookie header 工具
 
     func testCookieParseAndStringify() {
         let cookieString = "auth_token=abc123; ct0=xyz789; k3=v3"
@@ -222,12 +48,4 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertTrue(stringified.contains("ct0=xyz"))
     }
 
-    // MARK: - X 日期解析
-
-    func testTwitterDateParsing() {
-        let date = TwitterDate.parse("Sat Jan 20 15:15:36 +0000 2024")
-        XCTAssertNotNil(date)
-        let formatted = date?.formatted(fileNameFormat: "yyyy-MM-dd HH-mm-ss")
-        XCTAssertEqual(formatted, "2024-01-20 15-15-36")
-    }
 }

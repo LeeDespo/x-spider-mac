@@ -1375,7 +1375,7 @@ struct SettingsView: View {
         let post = TwitterPost(
             id: "1145141919810",
             user: user,
-            createdAt: TwitterDate.parse("Sat Jan 20 15:15:36 +0000 2024"),
+            createdAt: Date(timeIntervalSince1970: 1_705_763_736),
             fullText: L("这里是推文内容,这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容，这里是推文内容。"),
             tags: [L("标签1"), L("标签2")],
             views: 13496,

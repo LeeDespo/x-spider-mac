@@ -4,7 +4,7 @@ import XCTest
 final class FileNameTemplateTests: XCTestCase {
 
     private func makeData(
-        createdAt: Date? = TwitterDate.parse("Sat Jan 20 15:15:36 +0000 2024"),
+        createdAt: Date? = Date(timeIntervalSince1970: 1_705_763_736),
         fullText: String? = "这里是推文内容，这里是推文内容。",
         tags: [String]? = ["标签1", "标签2"],
         mediaType: MediaType = .photo,
@@ -13,7 +13,7 @@ final class FileNameTemplateTests: XCTestCase {
         let user = TwitterUser(
             screenName: "userscreenname", avatar: "", name: "这是用户昵称",
             id: "1145141919", mediaCount: 8888,
-            registerTime: TwitterDate.parse("2024-01-01 00:00:00")
+            registerTime: Date(timeIntervalSince1970: 1_704_067_200)
         )
         let media = TwitterMedia(
             id: "1748695771262889984",
@@ -37,7 +37,7 @@ final class FileNameTemplateTests: XCTestCase {
         return FileNameTemplateData(post: post, media: media)
     }
 
-    // MARK: - 上游默认模板
+    // MARK: - 默认模板
 
     func testDefaultTemplate() {
         let data = makeData()
@@ -72,7 +72,7 @@ final class FileNameTemplateTests: XCTestCase {
                        "%MEDIA_ID%", "变量表里没有它 → 原样保留（由设置清理兜底）")
     }
 
-    // MARK: - 参数语法（上游 %VAR,k=v%）
+    // MARK: - 参数语法（%VAR,k=v%）
 
     func testParamSyntax() {
         let data = makeData()
@@ -88,7 +88,7 @@ final class FileNameTemplateTests: XCTestCase {
         XCTAssertEqual(defaulted, "这里是推文内容，这里是推文内容。")
     }
 
-    // MARK: - 扩展名取自下载 URL（上游 EXT 从 getDownloadUrl 取）
+    // MARK: - 扩展名取自下载 URL
 
     func testExtFromDownloadUrl() {
         XCTAssertEqual(FileNameTemplate.resolve(template: "%EXT%", data: makeData()), ".jpg")
@@ -97,7 +97,7 @@ final class FileNameTemplateTests: XCTestCase {
         XCTAssertEqual(FileNameTemplate.resolve(template: "%EXT%", data: videoData), ".mp4")
     }
 
-    // MARK: - 文件名安全化（上游 unicodeFilenamify）
+    // MARK: - 文件名安全化
 
     func testFilenamify() {
         // 保留字符替换为 !

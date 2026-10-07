@@ -401,77 +401,9 @@ final class JudgmentSemanticsTests: XCTestCase {
     }
 }
 
-/// 引用推文与转推的解析契约
-final class QuotedPostParsingTests: XCTestCase {
 
-    private func tweet(_ id: String, text: String, extra: [String: Any] = [:]) -> [String: Any] {
-        var legacy: [String: Any] = ["full_text": text, "created_at": "Sat Jan 20 15:15:36 +0000 2024"]
-        for (k, v) in extra { legacy[k] = v }
-        return [
-            "__typename": "Tweet",
-            "rest_id": id,
-            "legacy": legacy,
-            "core": ["user_results": ["result": [
-                "rest_id": "u\(id)",
-                "legacy": ["screen_name": "user\(id)", "name": "User \(id)",
-                           "profile_image_url_https": "https://x.com/a.jpg"],
-            ] as [String: Any]]] as [String: Any],
-        ]
-    }
-
-    /// 引用推文应解析出 quotedPost，且内容正确
-    func testQuotedPostParsed() {
-        let inner = tweet("999", text: "被引用的内容")
-        var outer = tweet("111", text: "我的评论")
-        (outer["legacy"] as? [String: Any]).map { _ in
-            outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
-                ["quoted_status_result": ["result": inner] as [String: Any]]) { _, new in new }
-        }
-        let post = TwitterAPI.mapTwitterPost(outer)
-        XCTAssertNotNil(post)
-        XCTAssertEqual(post?.id, "111")
-        XCTAssertEqual(post?.quotedPost?.value.id, "999", "应解析出被引用推文")
-        XCTAssertEqual(post?.quotedPost?.value.fullText, "被引用的内容")
-    }
-
-    /// 无引用时 quotedPost 必须为 nil（不能凭空造）
-    func testNoQuotedPostWhenAbsent() {
-        let post = TwitterAPI.mapTwitterPost(tweet("222", text: "普通推文"))
-        XCTAssertNotNil(post)
-        XCTAssertNil(post?.quotedPost)
-    }
-
-    /// 回归：嵌套引用必须被截断（只递归一层），否则异常数据会无限递归。
-    /// X 不允许"引用里再引用"，真出现即为脏数据。
-    func testNestedQuoteIsTruncatedToOneLevel() {
-        let innermost = tweet("333", text: "最内层")
-        var middle = tweet("222", text: "中间层")
-        middle["legacy"] = (middle["legacy"] as! [String: Any]).merging(
-            ["quoted_status_result": ["result": innermost] as [String: Any]]) { _, new in new }
-        var outer = tweet("111", text: "最外层")
-        outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
-            ["quoted_status_result": ["result": middle] as [String: Any]]) { _, new in new }
-
-        let post = TwitterAPI.mapTwitterPost(outer)
-        XCTAssertEqual(post?.quotedPost?.value.id, "222", "第一层引用应解析")
-        XCTAssertNil(post?.quotedPost?.value.quotedPost,
-                     "第二层引用必须被截断（防无限递归）")
-    }
-
-    /// TweetWithVisibilityResults 包裹的引用推文也要能取到内层
-    func testQuotedPostUnwrapsVisibility() {
-        let wrapped: [String: Any] = [
-            "__typename": "TweetWithVisibilityResults",
-            "tweet": tweet("444", text: "被包裹的引用"),
-        ]
-        var outer = tweet("111", text: "外层")
-        outer["legacy"] = (outer["legacy"] as! [String: Any]).merging(
-            ["quoted_status_result": ["result": wrapped] as [String: Any]]) { _, new in new }
-        let post = TwitterAPI.mapTwitterPost(outer)
-        XCTAssertEqual(post?.quotedPost?.value.id, "444")
-    }
-
-    /// 旧的历史记录（无 quotedPost/retweetedBy 键）必须仍可解码
+/// 应用模型的引用推文持久化语义。
+final class QuotedPostModelTests: XCTestCase {
     func testLegacyCodableStillDecodes() throws {
         let legacyJSON = """
         {"id":"1","user":{"screenName":"u","avatar":"","name":"U","id":"1"},
@@ -480,125 +412,32 @@ final class QuotedPostParsingTests: XCTestCase {
          "favorited":null,"favoriteCount":null,"bookmarkCount":null,"bookmarked":null,
          "medias":null}
         """
-        let decoder = JSONDecoder()
-        let post = try decoder.decode(TwitterPost.self, from: Data(legacyJSON.utf8))
+        let post = try JSONDecoder().decode(TwitterPost.self, from: Data(legacyJSON.utf8))
         XCTAssertEqual(post.id, "1")
-        XCTAssertNil(post.quotedPost, "旧记录缺该键应取 nil，而非解码失败")
+        XCTAssertNil(post.quotedPost)
         XCTAssertNil(post.retweetedBy)
     }
 
-    /// 引用推文可编码再解码（历史记录持久化路径）
     func testQuotedPostRoundTrip() throws {
-        let inner = TwitterPost(id: "999", user: TwitterUser(screenName: "a", avatar: "", name: "A", id: "1", mediaCount: nil, registerTime: nil),
-                                createdAt: nil, fullText: "内层", tags: nil, views: nil, lang: nil,
-                                retweeted: nil, retweetCount: nil, replyCount: nil, possiblySensitive: nil,
-                                favorited: nil, favoriteCount: nil, bookmarkCount: nil, bookmarked: nil,
-                                medias: nil)
-        let outer = TwitterPost(id: "111", user: inner.user, createdAt: nil, fullText: "外层",
-                                tags: nil, views: nil, lang: nil, retweeted: nil, retweetCount: nil,
-                                replyCount: nil, possiblySensitive: nil, favorited: nil,
-                                favoriteCount: nil, bookmarkCount: nil, bookmarked: nil, medias: nil,
-                                quotedPost: QuotedPostBox(inner))
+        let inner = TwitterPost(
+            id: "999",
+            user: TwitterUser(screenName: "a", avatar: "", name: "A", id: "1", mediaCount: nil, registerTime: nil),
+            createdAt: nil, fullText: "内层", tags: nil, views: nil, lang: nil,
+            retweeted: nil, retweetCount: nil, replyCount: nil, possiblySensitive: nil,
+            favorited: nil, favoriteCount: nil, bookmarkCount: nil, bookmarked: nil, medias: nil)
+        let outer = TwitterPost(
+            id: "111", user: inner.user, createdAt: nil, fullText: "外层",
+            tags: nil, views: nil, lang: nil, retweeted: nil, retweetCount: nil,
+            replyCount: nil, possiblySensitive: nil, favorited: nil,
+            favoriteCount: nil, bookmarkCount: nil, bookmarked: nil, medias: nil,
+            quotedPost: QuotedPostBox(inner))
         let data = try JSONEncoder().encode(outer)
         let back = try JSONDecoder().decode(TwitterPost.self, from: data)
-        XCTAssertEqual(back.quotedPost?.value.id, "999", "引用推文应能往返编解码")
+        XCTAssertEqual(back.quotedPost?.value.id, "999")
         XCTAssertEqual(back.quotedPost?.value.fullText, "内层")
     }
 }
 
-/// 转推解析契约（展示保留 / 爬虫过滤）
-final class RetweetParsingTests: XCTestCase {
-
-    /// 构造一条转推 entry：外层是转发者，内层 retweeted_status_result 是原推文
-    private func retweetInstructions() -> [[String: Any]] {
-        let original: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "orig1",
-            "legacy": [
-                "full_text": "原推文内容",
-                "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-                "entities": ["media": [["id_str": "m1", "type": "photo",
-                                        "media_url_https": "https://pbs.twimg.com/media/a.jpg"]]],
-            ] as [String: Any],
-            "core": ["user_results": ["result": [
-                "rest_id": "author1",
-                "legacy": ["screen_name": "author", "name": "原作者",
-                           "profile_image_url_https": "https://x.com/a.jpg"],
-            ] as [String: Any]]] as [String: Any],
-        ]
-        let retweetEntry: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "rt1",
-            "legacy": ["full_text": "RT @author: 原推文内容",
-                       "retweeted_status_result": ["result": original] as [String: Any]] as [String: Any],
-            "core": ["user_results": ["result": [
-                "rest_id": "retweeter1",
-                "legacy": ["screen_name": "retweeter", "name": "转发者",
-                           "profile_image_url_https": "https://x.com/r.jpg"],
-            ] as [String: Any]]] as [String: Any],
-        ]
-        return [[
-            "type": "TimelineAddEntries",
-            "entries": [
-                ["entryId": "tweet-rt1",
-                 "content": ["itemContent": ["tweet_results": ["result": retweetEntry]]]],
-            ] as [[String: Any]],
-        ]]
-    }
-
-    /// 展示路径：保留转推，主体为原作者，并带上转发者
-    func testRetweetKeptOnDisplayPath() {
-        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(),
-                                                           requireMedia: false,
-                                                           includeRetweets: true)
-        XCTAssertEqual(posts.count, 1, "展示路径应保留转推")
-        let p = posts[0]
-        XCTAssertEqual(p.id, "orig1", "主体应为被转发的原推文")
-        XCTAssertEqual(p.user.screenName, "author", "作者应为原作者，而非转发者")
-        XCTAssertEqual(p.fullText, "原推文内容")
-        XCTAssertEqual(p.retweetedBy?.screenName, "retweeter", "应带出转发者用于标签")
-    }
-
-    /// 爬虫路径（默认）：丢弃转推，避免重复下载同一媒体
-    func testRetweetDroppedOnCrawlerPath() {
-        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(),
-                                                           requireMedia: false,
-                                                           includeRetweets: false)
-        XCTAssertTrue(posts.isEmpty, "爬虫路径必须丢弃转推（媒体与原创重复）")
-    }
-
-    /// 默认参数必须保持旧行为（既有爬虫调用方不传参数）
-    func testDefaultExcludesRetweets() {
-        let posts = TwitterAPI.extractPostsFromTweetEntries(retweetInstructions(), requireMedia: false)
-        XCTAssertTrue(posts.isEmpty, "默认应过滤转推以保持既有语义")
-    }
-
-    /// 非转推条目在两条路径下都保留
-    func testNormalTweetKeptOnBothPaths() {
-        let normal: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "n1",
-            "legacy": ["full_text": "普通推文", "created_at": "Sat Jan 20 15:15:36 +0000 2024"] as [String: Any],
-            "core": ["user_results": ["result": [
-                "rest_id": "u1",
-                "legacy": ["screen_name": "u", "name": "U", "profile_image_url_https": "x"],
-            ] as [String: Any]]] as [String: Any],
-        ]
-        let instructions: [[String: Any]] = [[
-            "type": "TimelineAddEntries",
-            "entries": [["entryId": "tweet-n1",
-                         "content": ["itemContent": ["tweet_results": ["result": normal]]]]] as [[String: Any]],
-        ]]
-        for include in [true, false] {
-            let posts = TwitterAPI.extractPostsFromTweetEntries(instructions, requireMedia: false,
-                                                               includeRetweets: include)
-            XCTAssertEqual(posts.count, 1, "普通推文在 includeRetweets=\(include) 下都应保留")
-        }
-    }
-}
-
-/// 翻译的语言判定契约（自动翻译"只翻非目标语言"的核心判据）
-@MainActor
 final class TranslationLanguageTests: XCTestCase {
 
     /// 主语言子标签比对：忽略地区/书写变体
@@ -662,138 +501,3 @@ final class TranslationLanguageTests: XCTestCase {
 ///    那往往是评论区的带图评论或广告，表现为"详情弹出的是别人的推文"；
 /// 2. 引用写在 `legacy.quoted_status_result` 上永远取不到——
 ///    真实路径是 `result.quoted_status_result.result`（result 的直接子键）。
-final class TweetDetailParsingTests: XCTestCase {
-
-    /// 构造 focal 推文（可带/不带媒体、可带引用）
-    private func focal(hasMedia: Bool, quoted: [String: Any]? = nil) -> [String: Any] {
-        var legacy: [String: Any] = [
-            "full_text": "主推文正文",
-            "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-            "lang": "fr",
-        ]
-        if hasMedia {
-            legacy["entities"] = ["media": [["id_str": "m1", "type": "photo",
-                                             "media_url_https": "https://pbs.twimg.com/media/a.jpg"]]]
-        }
-        var result: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "1000",
-            "legacy": legacy,
-            "core": ["user_results": ["result": [
-                "rest_id": "u1",
-                "legacy": ["screen_name": "author", "name": "作者", "profile_image_url_https": "x"],
-            ] as [String: Any]]] as [String: Any],
-        ]
-        // 关键：引用挂在 result 的直接子键上（不是 legacy 下）
-        if let quoted { result["quoted_status_result"] = ["result": quoted] as [String: Any] }
-        return result
-    }
-
-    /// 一条评论（带媒体），用于验证"不会退回评论区"
-    private func replyWithMedia() -> [String: Any] {
-        [
-            "__typename": "Tweet",
-            "rest_id": "9999",
-            "legacy": [
-                "full_text": "评论区的推文",
-                "created_at": "Sat Jan 20 15:15:36 +0000 2024",
-                "entities": ["media": [["id_str": "ad1", "type": "photo",
-                                        "media_url_https": "https://pbs.twimg.com/media/ad.jpg"]]],
-            ] as [String: Any],
-        ]
-    }
-
-    private func detailJSON(focalResult: [String: Any], includeReplyThread: Bool = true) -> [String: Any] {
-        var entries: [[String: Any]] = [[
-            "entryId": "tweet-1000",
-            "content": ["itemContent": ["tweet_results": ["result": focalResult]]],
-        ]]
-        if includeReplyThread {
-            entries.append([
-                "entryId": "conversationthread-9999",
-                "content": ["items": [[
-                    "item": ["itemContent": ["tweet_results": ["result": replyWithMedia()]]],
-                ]]],
-            ])
-        }
-        return ["data": ["threaded_conversation_with_injections_v2": [
-            "instructions": [[
-                "type": "TimelineAddEntries",
-                "entries": entries,
-            ]],
-        ]]]
-    }
-
-    /// **回归**：无媒体的 focal 必须按 ID 精确取到，不能退回评论区的推文
-    func testFocalWithoutMediaIsExtractedNotReply() {
-        let json = detailJSON(focalResult: focal(hasMedia: false))
-        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
-        XCTAssertNotNil(post, "无媒体的 focal 必须能取到（旧逻辑会返回 nil 并退化）")
-        XCTAssertEqual(post?.id, "1000", "必须是 focal 本身，而不是评论区的 9999")
-        XCTAssertEqual(post?.fullText, "主推文正文")
-        XCTAssertNil(post?.medias, "该 focal 确实没有媒体")
-    }
-
-    /// 有媒体的 focal 同样按 ID 精确取
-    func testFocalWithMediaIsExtracted() {
-        let json = detailJSON(focalResult: focal(hasMedia: true))
-        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
-        XCTAssertEqual(post?.id, "1000")
-        XCTAssertEqual(post?.medias?.count, 1)
-    }
-
-    /// **回归**：引用在 `result.quoted_status_result`（直接子键），必须解析出来
-    func testQuotedPostFromDirectKeyParsed() {
-        let quoted: [String: Any] = [
-            "__typename": "Tweet",
-            "rest_id": "2000",
-            "legacy": ["full_text": "被引用的推文",
-                       "created_at": "Sat Jan 20 15:15:36 +0000 2024"] as [String: Any],
-        ]
-        let json = detailJSON(focalResult: focal(hasMedia: false, quoted: quoted))
-        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
-        XCTAssertEqual(post?.id, "1000")
-        XCTAssertNotNil(post?.quotedPost, "引用必须从 result 直接子键解析出来")
-        XCTAssertEqual(post?.quotedPost?.value.id, "2000")
-        XCTAssertEqual(post?.quotedPost?.value.fullText, "被引用的推文")
-    }
-
-    /// focal entry 不在首位时也要能取到（顺序不应影响）
-    func testFocalFoundRegardlessOfEntryOrder() {
-        let json: [String: Any] = ["data": ["threaded_conversation_with_injections_v2": [
-            "instructions": [[
-                "type": "TimelineAddEntries",
-                "entries": [
-                    ["entryId": "conversationthread-9999",
-                     "content": ["items": [["item": ["itemContent": ["tweet_results": ["result": replyWithMedia()]]]]]]],
-                    ["entryId": "tweet-1000",
-                     "content": ["itemContent": ["tweet_results": ["result": focal(hasMedia: false)]]]],
-                ],
-            ]],
-        ]]]
-        let post = TwitterAPI.extractFocalTweet(json: json, id: "1000")
-        XCTAssertEqual(post?.id, "1000")
-    }
-
-    /// 目标推文不存在时应返回 nil（让调用方报错），**不得**退化成评论区推文
-    func testMissingFocalReturnsNilNotReply() {
-        let json = detailJSON(focalResult: focal(hasMedia: true))
-        let post = TwitterAPI.extractFocalTweet(json: json, id: "12345")
-        XCTAssertNil(post, "找不到 focal 时应返回 nil，而不是返回评论区推文")
-    }
-
-    /// 兼容 legacy 路径（部分响应把引用放在 legacy 下）
-    func testQuotedFromLegacyPathStillWorks() {
-        var legacy: [String: Any] = ["full_text": "主推文", "created_at": "Sat Jan 20 15:15:36 +0000 2024"]
-        legacy["quoted_status_result"] = ["result": [
-            "__typename": "Tweet", "rest_id": "3000",
-            "legacy": ["full_text": "legacy 路径的引用"] as [String: Any],
-        ] as [String: Any]]
-        let result: [String: Any] = [
-            "__typename": "Tweet", "rest_id": "1000", "legacy": legacy,
-        ]
-        let post = TwitterAPI.mapTwitterPost(result)
-        XCTAssertEqual(post?.quotedPost?.value.id, "3000",
-                       "legacy 路径也应兼容（部分响应版本如此）")
-    }
-}
