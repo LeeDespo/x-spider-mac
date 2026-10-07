@@ -339,7 +339,7 @@ final class MediaRecordsTests: XCTestCase {
                          width: 100, height: 100, type: .photo, videoInfo: nil)
         }
         return TwitterPost(id: "2098843535730725124", user: user,
-                           createdAt: TwitterDate.parse("Sat Sep 12 18:37:48 +0000 2026"),
+                           createdAt: ISO8601DateFormatter().date(from: "2026-09-12T18:37:48Z"),
                            fullText: "x", tags: nil, views: nil, lang: nil, retweeted: nil,
                            retweetCount: nil, replyCount: nil, possiblySensitive: nil,
                            favorited: nil, favoriteCount: nil, bookmarkCount: nil, bookmarked: nil,
