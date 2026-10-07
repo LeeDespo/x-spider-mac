@@ -80,7 +80,7 @@ sudo xattr -dr com.apple.quarantine /Applications/XSpiderMac.app
 - **取数**：用户、媒体时间线、推文时间线、推文详情树、搜索、关注列表、主页时间线；
 - **写操作**：点赞 / 转推 / 书签 / 关注（含取消）；
 - **下载**：内置引擎 + aria2Next、断点续传、完整性校验、暂停 / 恢复 / 取消；
-- **爬取调度**：翻页、游标推进，以及"到底 / 连续空页 / 游标未推进"等终止判据。
+- **爬取调度**：分页、游标与终止判据均由 core 负责；外壳只消费契约结果。
 
 **刻意留在外壳里的**：界面、文件名 / 目录模板、内容校验、记录文件与同文件跳过、通知、图片缓存、翻译、代理设置解析。
 
@@ -111,7 +111,7 @@ codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 
 ## 构建
 
-需要 **Xcode 16 或更高**（工程用 Swift 6.0，目标 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）。
+需要 **Xcode 26 或更高**（使用 macOS 26 SDK；deployment target 仍为 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）。
 
 ```bash
 # project.yml 变更后重新生成工程
@@ -140,7 +140,7 @@ script/verify_components.sh
 |---|---|
 | `XSpiderMac/` | **应用本体**（SwiftUI）；`project.yml` 由 xcodegen 生成 xcodeproj |
 | `script/` | 构建、运行、打包脚本 |
-| `docs/` | DEVELOPMENT（架构地图、组件边界、已知问题与设计取舍，**改代码前先读**）、COMPONENTS（组件部署与版本账本）、TESTING（测试与 live 验收）、RELEASING（发布流程）、history/（历史归档） |
+| `docs/` | DEVELOPMENT（架构地图、组件边界、已知问题与设计取舍，**改代码前先读**）、COMPONENTS（组件部署与版本账本）、TESTING（测试与 live 验收）、RELEASING（发布流程）、history/（历史来源） |
 | `MEDIA_RECORDS.md` | 记录体系规范：下载 / 同步记录、判定三选一、命名（**改记录前先读**） |
 | `SETTINGS_DEFAULTS.md` | 设置项默认值一览 |
 | `AGENTS.md` | 面向 AI agent 的开发约束 |
