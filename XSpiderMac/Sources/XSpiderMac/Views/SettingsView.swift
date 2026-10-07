@@ -328,7 +328,7 @@ struct SettingsView: View {
         }
     }
 
-    /// `xspiderd 0.1.0 (契约版本 1.5.1)` → `版本 0.1.0 · 契约 1.5.1`
+    /// `xspiderd 0.1.0 (契约版本 x.y.z)` → `版本 0.1.0 · 契约 x.y.z`
     static func sidecarVersionLabel(_ raw: String?) -> String? {
         guard let raw else { return nil }
         let numbers = raw
@@ -451,7 +451,7 @@ struct SettingsView: View {
 
     // MARK: - 限流缓解
 
-    /// 限流缓解：分两组——X API（GraphQL，管翻页/爬虫）与媒体 CDN（管图片视频下载）。
+    /// 限流状态分两组展示：core API 调用与媒体 CDN 下载。
     /// 二者是不同域、不同配额，所以各自独立配置。
     private var rateLimitSection: some View {
         Section {
@@ -1362,7 +1362,7 @@ struct SettingsView: View {
         }
     }
 
-    /// 上游 EXAMPLE_USER / EXAMPLE_POST / EXAMPLE_MEDIA（示例数据，供模板预览）
+    /// 模板预览示例数据
     static let exampleTemplateData: FileNameTemplateData = {
         let user = TwitterUser(
             screenName: "userscreenname",

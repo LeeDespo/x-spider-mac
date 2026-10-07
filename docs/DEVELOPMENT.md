@@ -65,7 +65,7 @@ script/package_dmg.sh
 | 文件 | 职责 |
 |---|---|
 | `Services/XSpiderComponent.swift` | 组件进程与 JSON-RPC 客户端：查找、启动、握手、调用、崩溃自愈、优雅关停（第 2 部分的核心） |
-| `Services/TwitterAPI.swift` | 契约 method ↔ 应用模型的**映射层**（不再发 X 请求；旧的解析函数只剩测试引用） |
+| `Services/XSpiderAPI.swift` | 应用侧 core 契约客户端：method 调用、错误映射与产品侧缓存；不实现 X 端点 |
 | `Services/XSpiderMapping.swift` / `XSpiderJSON.swift` | 契约 JSON → `TwitterPost` / `TwitterUser` / `TwitterMedia` / `ReplyNode`；受限值类型 `JSONValue` |
 | `Services/MediaRecords.swift` | 下载 / 同步记录层（两种形态、缓存、原子写） |
 | `Services/MediaJudgement.swift` | 文件名（模板 + 唯一标识）、按文件名判定、断点后缀清单 |
@@ -98,7 +98,7 @@ script/package_dmg.sh
 ## 1.2 并发模型
 
 - Store 与涉及 UI 状态的服务标 `@MainActor`；
-- `TwitterAPI` 是 `actor`（串行化 cookie / token / 缓存）；
+- `XSpiderAPI` 是 `actor`（串行化 cookie / token / 缓存）；
 - 重活（解码、磁盘、下载）在 `Task.detached` 或 `nonisolated` 函数里，不占主线程；
 - Swift 6 严格并发下的三类常见修法：
   1. **闭包是 `@Sendable` 但要写 `@State`** → 状态收进 `@MainActor @Observable` 类，
@@ -114,10 +114,10 @@ script/package_dmg.sh
 ```
 搜索用户
   HomeView.submitSearch
-    → HomepageStore.loadUser → TwitterAPI.getUser
+    → HomepageStore.loadUser → XSpiderAPI.getUser
         → XSpiderComponent.call("fetch.get_user") → XSpiderMapping.user
     → HomepageStore.loadPostList → fetchPage
-         ├─（有日期范围 + 开关开）→ TwitterAPI.searchTimeline → "fetch.search_timeline"
+         ├─（有日期范围 + 开关开）→ XSpiderAPI.searchTimeline → "fetch.search_timeline"
          └─（否则）→ getUserMedias / getUserTweets
                       → "fetch.user_medias" / "fetch.user_tweets"（首页省略 cursor 键）
     → XSpiderMapping.postPage → postList + postListCursor
@@ -128,14 +128,14 @@ script/package_dmg.sh
 
 下载
   单张 / 选择下载 / 爬取 → CreationTaskStore.runCreationTask
-    → TwitterAPI.crawlPage("crawl.run")（分块驱动；组件给 done_reason / next_cursor）
+    → XSpiderAPI.crawlPage("crawl.run")（分块驱动；组件给 done_reason / next_cursor）
     → DownloadStore.createDownloadTask（外壳算目录/文件名 + 跳过判定）
     → XSpiderComponent.call("dl.enqueue") → 组件（内置引擎 / aria2Next）
     → DownloadStore 轮询 "dl.events" / "dl.list" → FileIntegrity 收尾校验 → 写记录
 
 组件配置
   cookie / 代理 / 限流参数变更 → AppStore.cookieString.didSet 或 SettingsStore.save
-    → TwitterAPI.configure → auth.set_cookie / net.set_proxy / net.set_limits
+    → XSpiderAPI.configure → auth.set_cookie / net.set_proxy / net.set_limits
 ```
 
 
@@ -145,7 +145,7 @@ script/package_dmg.sh
 
 本应用**没有任何一条自己发出的 X 请求**，也没有自己的下载实现。取数、写操作、下载、爬取
 全部在组件 `x-spider-core`（Rust sidecar `xspiderd`，本地 JSON-RPC，契约版本以运行时 `system.version` 为准）里。
-契约映射与进程对接集中在四个文件：`XSpiderComponent`（进程与 RPC）、`TwitterAPI`
+契约映射与进程对接集中在四个文件：`XSpiderComponent`（进程与 RPC）、`XSpiderAPI`
 （契约方法 ↔ 应用模型的映射）、`XSpiderMapping` / `XSpiderJSON`（JSON → 应用模型）；
 此外 `DownloadStore` 直调 `dl.enqueue` / `dl.resume` 等下载 method，
 `AccountStatusStore` 直调 `net.status` 读限流状态——它们不经过映射层。
@@ -163,9 +163,7 @@ script/package_dmg.sh
 - **唯一入口** `xspider_call(method, json) -> json`（sidecar 里是 `POST /` 加
   `X-XSpider-Token` 头）；另有 `system.version` 做握手。**契约主版本不匹配就拒绝启动**，
   不降级成"部分可用"（`XSpiderComponent.supportedContractMajor = "1"`）。
-- 契约里**不出**：端点路径、`queryId`、`features` 常量、HTTP 头、Rust 类型、签名细节。
-  所以本仓库里不该再看到它们——`TwitterAPI.swift` 底部那几个 `*Features` 常量与
-  `extractPostsFrom*` / `mapTwitterPost` 只剩测试引用，**不要再接线**。
+- core 的请求内部细节不属于应用契约；本仓库不实现、不复制，也不为这些细节建立第二套测试。
 - 外壳持有的只有受限 JSON 值类型：`XSpiderJSON.JSONValue`（`Any` 不是 `Sendable`，
   跨 actor 会被 Swift 6 拒）。参数与结果就是契约里的 JSON，没有中间类型。
 
@@ -173,7 +171,7 @@ script/package_dmg.sh
 
 | 能力 | 组件（契约 method） | 外壳 |
 |---|---|---|
-| 用户 / 时间线 / 详情 / 搜索 / 关注 | `fetch.*` | `TwitterAPI` + `XSpiderMapping` 映射成 `TwitterPost` 等 |
+| 用户 / 时间线 / 详情 / 搜索 / 关注 | `fetch.*` | `XSpiderAPI` + `XSpiderMapping` 映射成 `TwitterPost` 等 |
 | 写操作（赞 / 转推 / 书签 / 关注） | `fetch.mutate` | 映射 + 关注态缓存失效 |
 | 登录校验 / 当前账号 | `auth.whoami` / `auth.set_cookie` | 登录流程调用；凭据**只进不出** |
 | 限流 / 代理 / 探测 | `net.set_limits` / `net.set_proxy` / `net.status` / `net.probe_size` | 把设置推下去、读状态展示 |
@@ -186,14 +184,14 @@ script/package_dmg.sh
 
 ## 2.4 外壳会拿到哪些错误码（排障先看这个）
 
-组件报的是**结构化错误码**，契约禁止按文案判断；`TwitterAPI.translate` 把 `code` 翻成
-`TwitterAPIError`，上层（`SyncStore.classify`、`DownloadStore.isRetryable`）再决定给用户
+组件报的是**结构化错误码**，契约禁止按文案判断；`XSpiderAPI.translate` 把 `code` 翻成
+`XSpiderAPIError`，上层（`SyncStore.classify`、`DownloadStore.isRetryable`）再决定给用户
 什么提示。常见映射：
 
 | 组件的 `code` | 什么情况 | 外壳翻成 |
 |---|---|---|
 | `not_found` | 用户 / 推文不存在 | `userNotFound` 或按上下文 |
-| `unauthorized` | cookie 失效，或**账号被限制写操作**（上游 141） | `notAuthorized(原因)` → 提示"重新登录 / 换账号" |
+| `unauthorized` | 凭据失效或当前账号无权执行操作 | `notAuthorized(原因)` → 给出可操作提示 |
 | `rate_limited` | X 返回 429（带 `retry_after_s`） | 状态行显示限流；下载侧降并发 |
 | `parse` | 响应结构与预期对不上——**"X 改版了"的信号** | `parseFailure` |
 | `upstream` | 其它上游错误（带 HTTP `status`） | `responseError(status:)` |
@@ -207,7 +205,7 @@ mac 应用只判断“这是应用侧问题还是组件侧问题”，不维护 
 
 以下情况直接转到 `x-spider-core` 排查并在那里补测试 / fixture：
 - 原始 X 数据缺字段、解析错误或分页结果异常；
-- 请求失败、限流 / 429、认证、queryId/features、签名问题；
+- 请求失败、限流、认证或其它 core 内部请求问题；
 - crawl 候选不完整、服务端停止条件异常；
 - 下载引擎、断点、代理或 CDN 请求行为异常。
 

@@ -209,7 +209,7 @@ final class EngineSelectionTests: XCTestCase {
     }
 }
 
-/// CDN 状态与 GraphQL 状态相互独立（不同域、不同配额）
+/// CDN 状态与 API 状态相互独立（不同资源、独立状态）
 final class CDNStatusTests: XCTestCase {
 
     @MainActor

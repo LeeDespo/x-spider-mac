@@ -5,7 +5,7 @@ import Foundation
 /// # 为什么不用 `[String: Any]`
 ///
 /// `Any` 不是 `Sendable`：Swift 6 的严格并发检查会拒绝把它跨 actor 边界传递
-/// （`sending 'params' risks causing data races`）。而 `TwitterAPI` 是 actor，
+/// （`sending 'params' risks causing data races`）。而 `XSpiderAPI` 是 actor，
 /// 组件客户端是另一个隔离域——这正是会踩到的地方。
 ///
 /// 换成受限的枚举顺带还有两个好处：
