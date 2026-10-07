@@ -60,10 +60,9 @@ library validation 拒，所以主形态是 sidecar（换组件 = 换一个二�
 | `tag` / `asset` | 来源 Release 的**对账锚**（升级时比对用），不保证随包文件字节等于该资产 |
 | `contractMajor` | 与 `XSpiderComponent.supportedContractMajor` 对账（§5 校验第 7 项） |
 
-> **口径与现状**：`sha256` 记的是**随包文件自身**（升级脚本替换后重算），不是来源 tar 包的
-> 哈希；`tag` / `asset` 指向来源 Release，作升级时的对账锚。当前随包 `xspiderd` 已由
-> `script/update_components.sh` 对齐官方 `v0.1.0` 资产（契约 1.5.1，满足外壳的 1.x 要求）；
-> `aria2next` 是官方 `v2.7.5` 资产原样（core 的 `NOTICE` §3 记其为本项目实测版本）。
+> **口径**：`sha256` 记的是**随包文件自身**（升级脚本替换后重算），不是来源压缩包的哈希；
+> `tag` / `asset` 只作为来源 Release 的对账锚。精确版本、tag、asset 与哈希只看
+> `components.lock.json`，长期文档不重复写当前 PATCH 版本。
 
 账本的**唯一写手**是 `script/update_components.sh`（§4）；不要手工替换二进制后直接提交，
 否则 §5 的校验必然失配。
