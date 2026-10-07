@@ -17,17 +17,23 @@ struct TransparentWindowConfig: ViewModifier {
                 let center = NotificationCenter.default
                 center.addObserver(forName: NSWindow.didEnterFullScreenNotification,
                                    object: window, queue: .main) { _ in
-                    // 全屏后重新应用：系统切全屏时会重置样式
-                    WindowConfigurator.apply(to: window)
+                    // queue=.main 保证这里在主线程；显式告诉 Swift 6 主 actor 隔离。
+                    MainActor.assumeIsolated {
+                        WindowConfigurator.apply(to: window)
+                    }
                 }
                 center.addObserver(forName: NSWindow.didExitFullScreenNotification,
                                    object: window, queue: .main) { _ in
-                    WindowConfigurator.apply(to: window)
+                    MainActor.assumeIsolated {
+                        WindowConfigurator.apply(to: window)
+                    }
                 }
                 // 亮暗模式切换：刷新 titlebar 合成,避免全屏/窗口化顶栏残留旧模式纯色
                 center.addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
                                    object: nil, queue: .main) { _ in
-                    WindowConfigurator.refreshTitlebars()
+                    MainActor.assumeIsolated {
+                        WindowConfigurator.refreshTitlebars()
+                    }
                 }
             }
         )
@@ -43,6 +49,7 @@ struct TransparentWindowConfig: ViewModifier {
 }
 
 /// 窗口配置工具：常规态(透明底+沉浸 titlebar)与全屏态共用同一套沉浸样式
+@MainActor
 enum WindowConfigurator {
     static func apply(to window: NSWindow) {
         window.isOpaque = false
@@ -75,7 +82,7 @@ enum WindowConfigurator {
 
 /// 拿到宿主 NSWindow
 struct WindowAccessor: NSViewRepresentable {
-    var callback: (NSWindow?) -> Void
+    var callback: @MainActor (NSWindow?) -> Void
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -88,7 +95,7 @@ struct WindowAccessor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     /// 对 key window 应用配置（供 onChange 等外部触发）
-    static func applyToKeyWindow(_ apply: @escaping (NSWindow) -> Void) {
+    static func applyToKeyWindow(_ apply: @escaping @MainActor (NSWindow) -> Void) {
         DispatchQueue.main.async {
             if let window = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first {
                 apply(window)
