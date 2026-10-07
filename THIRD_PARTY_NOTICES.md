@@ -24,11 +24,13 @@
   所用版本 tag：`v2.7.5`（上游资产 `aria2-next-2.7.5-macos-arm64`）。
 - **版本**：2.7.5（随包二进制内嵌版本串实测，与 x-spider-core `NOTICE` §3、上游 tag 一致）。
 - **许可证**：**GPL-2.0**（"version 2, or (at your option) any later version"）。
-  完整许可证文本随本仓库根 **`LICENSE.aria2`** 分发（复制自 x-spider-core 仓库同名文件）。
+  完整许可证文本随本仓库根 **`LICENSE.aria2`** 分发（复制自 x-spider-core 仓库同名文件），
+  打包时也会拷入 DMG 根（「GPL-2.0 许可证（aria2next）.txt」）。
 - **与上游 aria2 的关系**：Aria2Next 是 aria2 的 fork（x-spider-core `NOTICE` §3 提及其
   "fork 专有项" `--stream-max-connections`，并说明指向上游 aria2 的二进制会被组件预检拒绝）。
-  原始 aria2 项目的官方主页与许可证声明：**待补**（x-spider-core 的 `NOTICE` 与
-  `LICENSE.aria2` 均未记录，本文件不臆写）。
+  **原始 aria2 项目（官方出处）**：项目主页 <https://aria2.github.io/>、
+  源码仓库 <https://github.com/aria2/aria2>、许可证同为 **GPL-2.0-or-later**
+  （官方声明 "either version 2 of the License, or (at your option) any later version"）。
 - **分发义务**（x-spider-core `NOTICE` §3）：随包分发其二进制时必须
   a) 附上 GPL-2.0 完整许可证文本（本仓库 `LICENSE.aria2`）；
   b) 提供对应源码的获取方式（上方仓库链接 + 所用版本 tag `v2.7.5`）；

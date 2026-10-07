@@ -60,9 +60,10 @@ library validation 拒，所以主形态是 sidecar（换组件 = 换一个二�
 | `tag` / `asset` | 来源 Release 的**对账锚**（升级时比对用），不保证随包文件字节等于该资产 |
 | `contractMajor` | 与 `XSpiderComponent.supportedContractMajor` 对账（§5 校验第 7 项） |
 
-> **现状注记**：随包 `xspiderd` 报契约 1.5.1，与来源仓库 Release `v0.1.0` 资产
-> 字节不同——所以 `sha256` 记随包文件自身、`tag`/`asset` 只作对账锚，两者不能互验。
-> 是否用 `update_components.sh` 把随包替换成某个正式 Release 资产，由维护者决策。
+> **口径与现状**：`sha256` 记的是**随包文件自身**（升级脚本替换后重算），不是来源 tar 包的
+> 哈希；`tag` / `asset` 指向来源 Release，作升级时的对账锚。当前随包 `xspiderd` 已由
+> `script/update_components.sh` 对齐官方 `v0.1.0` 资产（契约 1.5.1，满足外壳的 1.x 要求）；
+> `aria2next` 是官方 `v2.7.5` 资产原样（core 的 `NOTICE` §3 记其为本项目实测版本）。
 
 账本的**唯一写手**是 `script/update_components.sh`（§4）；不要手工替换二进制后直接提交，
 否则 §5 的校验必然失配。
@@ -103,5 +104,7 @@ CI 每次推送都会跑。换 external 目录组件时用 §2 的两步手动�
 
 - `THIRD_PARTY_NOTICES.md`：各二进制的出处与许可证声明（xspiderd **GPL-3.0-only**、
   aria2next **GPL-2.0**）；`package_dmg.sh` 会把它拷入 DMG 根（「许可证与第三方声明.txt」）。
-- `LICENSE.aria2`：GPL-2.0 全文。
-- 原始 aria2 项目的官方出处声明待补（core 仓库 NOTICE 未记录，不臆写）。
+- `LICENSE.aria2`：GPL-2.0 全文；打包时与声明一同拷入 DMG 根
+  （「GPL-2.0 许可证（aria2next）.txt」）。
+- 原始 aria2 项目官方出处：<https://aria2.github.io/>（源码 <https://github.com/aria2/aria2>，
+  许可证同为 GPL-2.0-or-later）。

@@ -36,8 +36,9 @@ script/package_dmg.sh 1.2.3     # 或显式指定
 
 脚本流程：先跑 `verify_components.sh`（组件校验不过就不进入构建）→ Release 构建
 （arm64）→ ad-hoc 深签名（签名失败会中止脚本，不被吞掉）→ 组装 DMG（app + 指向
-/Applications 的快捷方式，并把 `THIRD_PARTY_NOTICES.md` 拷入 DMG 根显示为
-「许可证与第三方声明.txt」）→ 产物 `dist/XSpiderMac-<版本>.dmg`（`dist/` 不入库）。
+/Applications 的快捷方式，并把 `THIRD_PARTY_NOTICES.md` 与 `LICENSE.aria2`（GPL-2.0
+全文）拷入 DMG 根，分别显示为「许可证与第三方声明.txt」「GPL-2.0 许可证（aria2next）.txt」）
+→ 产物 `dist/XSpiderMac-<版本>.dmg`（`dist/` 不入库）。
 
 ## 3. 产物与 GitHub Release
 
@@ -49,9 +50,9 @@ script/package_dmg.sh 1.2.3     # 或显式指定
 
 2. 打 tag（与 `MARKETING_VERSION` 一致）并创建 GitHub Release，上传
    **dmg + sha256**，Release 说明写变更记录（各版本变更记录集中在 Releases）。
-3. **分发物必须携带许可证对应物**：DMG 内的「许可证与第三方声明.txt」
-   （来自 `THIRD_PARTY_NOTICES.md`，aria2next 的 GPL-2.0 全文见 `LICENSE.aria2`）。
-   仓库里有、分发包里也要有。
+3. **分发物必须携带许可证对应物**：DMG 根内的「许可证与第三方声明.txt」与
+   「GPL-2.0 许可证（aria2next）.txt」（分别来自 `THIRD_PARTY_NOTICES.md` 与
+   `LICENSE.aria2`）。仓库里有、分发包里也要有。
 4. **不要重新引入 GitHub Pages 部署**：曾随上游官网一起删除过
    `gh-pages.yml`——它会把**上游**官网（含上游赞助入口）部署到本仓库的 Pages。
 
