@@ -31,6 +31,14 @@ jobs:
           cd XSpiderMac
           xcodegen generate
 
+      # 生产源码零边界泄漏（X 端点 / queryId / features / aria2 RPC 等）
+      - name: Boundary guard
+        run: bash script/check_boundaries.sh
+
+      # 随包二进制与 components.lock.json 对账
+      - name: Verify bundled components
+        run: bash script/verify_components.sh
+
       - name: Run unit tests
         run: |
           cd XSpiderMac
