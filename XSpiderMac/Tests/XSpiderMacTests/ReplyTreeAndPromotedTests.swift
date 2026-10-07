@@ -53,12 +53,12 @@ final class ReplyPresentationTests: XCTestCase {
     }
 
     /// 相关 = 保持组件返回顺序（不做本地重排）
-    func testRelevanceKeepsServerOrder() {
+    func testRelevanceKeepsComponentOrder() {
         let nodes = [node("a", likes: 1, minutesAgo: 5),
                      node("b", likes: 99, minutesAgo: 1),
                      node("c", likes: 50, minutesAgo: 30)]
         XCTAssertEqual(ReplySort.relevance.sorted(nodes).map(\.post.id), ["a", "b", "c"],
-                       "「相关」必须保持服务端顺序（服务端自带相关性信号）")
+                       "「相关」必须保持组件返回顺序，应用侧不做二次重排")
     }
 
     /// 喜欢 = 按点赞数降序
