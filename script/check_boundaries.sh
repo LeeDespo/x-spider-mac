@@ -16,12 +16,10 @@
 # - 一般 URLSession 使用（ImageCache 等图片/媒体加载）不受限——本脚本
 #   只拦协议特征，不拦网络 API 本身。
 #
-# token 清单依据 .agents/organize/plan-v2.md §3.4，其中 plan 初稿的
-# `aria2.` 整体前缀已按「命中面校准」缩窄为真正的 RPC 特征：`aria2.`
-# 会误伤现役合法标识符（AppDirectories.swift 的 aria2 会话目录、
-# XSpiderComponent.swift 传给 sidecar 的 XSPIDER_ARIA2_PATH），而组件化
-# 之前的 Aria2RPCClient 实际形状是 aria2.addUri / aria2.tellStatus /
-# --enable-rpc / --rpc-secret，缩窄后恰好覆盖回归、不误伤现役代码。
+# token 清单只覆盖能够明确说明“X 协议 / 下载引擎实现重新泄漏进外壳”的特征。
+# 不使用 `aria2.` 这类宽泛前缀，因为会误伤合法的会话目录名与 sidecar 路径；
+# 只拦截具体 RPC 方法和服务端启动 / 鉴权旗标。规则依据本文件与 AGENTS.md 的
+# 职责边界自解释，不依赖未入库的本地 Agent 计划。
 #
 # 注释剥离（行级近似）：// 行注释与 /* */ 块注释中的内容不参与匹配，
 # 文档注释里提及 token（如解释设计时写到 queryId）不算泄漏。唯一的例外
