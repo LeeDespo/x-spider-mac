@@ -1,0 +1,42 @@
+name: macOS Tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "XSpiderMac/**"
+      - "script/**"
+      - ".github/workflows/macos-tests.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "XSpiderMac/**"
+      - "script/**"
+      - ".github/workflows/macos-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          cd XSpiderMac
+          xcodegen generate
+
+      - name: Run unit tests
+        run: |
+          cd XSpiderMac
+          xcodebuild \
+            -project XSpiderMac.xcodeproj \
+            -scheme XSpiderMac \
+            -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
