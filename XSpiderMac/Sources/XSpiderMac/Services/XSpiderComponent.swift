@@ -128,20 +128,30 @@ final class XSpiderComponent: @unchecked Sendable {
     }
 
     /// 起进程并完成握手（幂等：已经在跑就直接返回）。
+    ///
+    /// 「检查是否已启动 → 登记本次启动」**整体在锁内完成**：拆成两段 `sync` 的话，
+    /// 两个并发的首次调用都会看到 `launch == nil`，各自起一个 sidecar
+    /// （第二个会撞上状态目录的单实例锁，或者叠成一个占着端口的孤儿）。
     @discardableResult
     func ensureStarted() async throws -> Info {
-        if let existing = sync({ process?.isRunning == true ? info : nil }) {
-            return existing
+        let decision: (running: Info?, task: Task<Info, Error>?) = sync {
+            if process?.isRunning == true, let existing = info {
+                return (existing, nil)
+            }
+            if let inFlight = launch {
+                return (nil, inFlight)
+            }
+            let task = Task<Info, Error> { [weak self] in
+                guard let self else { throw ComponentError.transport("组件对象已释放") }
+                return try await self.launchProcess()
+            }
+            launch = task
+            return (nil, task)
         }
-        if let inFlight = sync({ launch }) {
-            return try await inFlight.value
+        if let existing = decision.running { return existing }
+        guard let task = decision.task else {
+            throw ComponentError.transport("组件启动状态异常（既没在跑也没有启动任务）")
         }
-        let task = Task<Info, Error> { [weak self] in
-            guard let self else { throw ComponentError.transport("组件对象已释放") }
-            return try await self.launchProcess()
-        }
-        sync { launch = task }
-
         defer { sync { launch = nil } }
         return try await task.value
     }
@@ -360,7 +370,7 @@ final class XSpiderComponent: @unchecked Sendable {
             ready = try await waitForReadyLine(binary: binary, process: proc)
         } catch {
             // 没握上手就别留一个半死的进程在后台
-            if proc.isRunning { proc.terminate() }
+            await discardProcess(proc)
             throw error
         }
         sync {
@@ -370,13 +380,23 @@ final class XSpiderComponent: @unchecked Sendable {
         }
 
         // 握手：形态 + 契约版本（契约 §6：主版本不匹配就拒绝启动，不要降级成"部分可用"）
-        let version = try await performCall("system.version", [:], port: ready.port, token: ready.token)
+        //
+        // `ready` 之后到 `system.version` 之间已经能连上端口了，这一步仍可能失败
+        // （token 被拒 / 响应形状不对 / 连接中断）。**失败也必须收掉进程**：
+        // 否则 sidecar 活着、`ensureStarted()` 却没拿到 `Info`，再启动一次就会
+        // 叠加实例或撞上状态目录的单实例锁（见 `docs/CONTRACT.md` §2）。
+        let version: [String: JSONValue]
+        do {
+            version = try await performCall("system.version", [:], port: ready.port, token: ready.token)
+        } catch {
+            await discardProcess(proc)
+            throw error
+        }
         let transport = version[string: "transport"] ?? "?"
         let contract = version[string: "contract_version"] ?? "?"
         let build = version[string: "build_version"] ?? "?"
         guard contract.split(separator: ".").first.map(String.init) == Self.supportedContractMajor else {
-            proc.terminate()
-            clearProcessState()
+            await discardProcess(proc)
             throw ComponentError.transport(
                 "组件契约版本 \(contract) 与本应用要求的 \(Self.supportedContractMajor).x 不匹配：请更新组件或应用")
         }
@@ -441,6 +461,22 @@ final class XSpiderComponent: @unchecked Sendable {
             token = ""
             stdoutBuffer = Data()
         }
+    }
+
+    /// 握手失败路径的统一善后：**收掉进程 + 清空状态**。
+    ///
+    /// `terminate()` 只发 SIGTERM；组件若卡住不退，它会带着 `XSPIDER_STATE_DIR`
+    /// 里的单实例锁继续活着，下次启动就撞锁。所以给一点时间，仍不退就 SIGKILL。
+    private func discardProcess(_ proc: Process) async {
+        if proc.isRunning {
+            proc.terminate()
+            for _ in 0..<15 {
+                if !proc.isRunning { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
+        }
+        clearProcessState()
     }
 
     // MARK: - JSON-RPC

@@ -530,10 +530,21 @@ final class MediaRecords: @unchecked Sendable {
     /// 追加一个媒体 id（读-改-写，幂等）。
     ///
     /// - Returns: `true` = 这次真的写入了（此前不在记录里）；
-    ///   `false` = 已存在（无操作）或写入失败（已告警）。
+    ///   `false` = 已存在（无操作）、文件不可解析（拒绝覆盖）或写入失败（已告警）。
     @discardableResult
     func appendDownloadId(_ mediaId: String, userId: String, fileURL: URL) -> Bool {
         guard !mediaId.isEmpty else { return false }
+        // **读不出来的文件，绝不用空记录覆盖它**：
+        // `loadDownload` 把"不存在"与"存在但损坏 / 版本不符 / 读不了"都折叠成 nil，
+        // 直接 `?? 空记录` 再写回，就等于一次追加把整份记录（几千个 id）碾成一条。
+        // 「按无记录处理」是**读**的口径（`MEDIA_RECORDS.md` §4.1）；写这一侧
+        // 破坏一个存在却读不懂的文件没有任何收益，宁可告警并跳过这次写入。
+        if loadDownload(fileURL: fileURL) == nil, fm.fileExists(atPath: fileURL.path) {
+            AppLogger.warn("下载记录存在但无法解析,拒绝覆盖写入", category: "DL", [
+                "file": fileURL.path,
+            ])
+            return false
+        }
         var record = loadDownload(fileURL: fileURL) ?? DownloadRecord(userId: userId, ids: [])
         guard !record.ids.contains(mediaId) else { return false }
         // 首个写入者定下 user_id；之后不再改写（多作者共用一个文件夹时只作标记）

@@ -5,6 +5,9 @@ import XCTest
 ///
 /// 回归用户反馈：边栏直接把完整状态文案显示出来，位置窄会被截断。
 /// 现在只显示「正常 / 异常 / 限流」，详情进悬停。
+///
+/// 下面的长度断言是**代理指标**（真正的截断取决于实际布局与字体），
+/// 属纯逻辑冒烟，不等价于界面验收。
 final class StatusShortLabelTests: XCTestCase {
 
     override func setUp() async throws {

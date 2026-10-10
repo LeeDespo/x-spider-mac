@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import UserNotifications
 
 /// 上游 download store + aria2 的原生替代：URLSessionDownloadTask。
@@ -36,6 +37,14 @@ final class DownloadStore {
     /// 这才是"滑动卡到被吃掉"的主因。缓存只在 `tasks` / Tab / 用户筛选变化时失效。
     private var filteredCache: [String: [DownloadTask]] = [:]
     private var knownUsersCache: [KnownUser]?
+
+    /// 筛选缓存的**未命中次数**。存在的理由：缓存命中与否无法从返回值看出来
+    /// （重算一遍也会得到相同内容），于是"缓存测试"只能证明结果一致、证明不了命中。
+    /// 这个计数让测试能断言"第二次调用没有重新筛选"。
+    ///
+    /// `@ObservationIgnored`：它在 `tasksForCurrentTab` 里自增，而那个方法在视图
+    /// body 求值中被调用——若被观测，一次未命中就会在 body 中途触发重绘依赖。
+    @ObservationIgnored private(set) var filteredCacheMissCount = 0
 
     /// 筛选栏里的一行：账号 + 它在历史里的记录条数。
     struct KnownUser: Identifiable, Sendable {
@@ -91,6 +100,7 @@ final class DownloadStore {
     func tasksForCurrentTab(statuses: [DownloadStatus]) -> [DownloadTask] {
         let key = "\(userFilterScreenName ?? "*")|\(statuses.map(\.rawValue).joined(separator: ","))"
         if let cached = filteredCache[key] { return cached }
+        filteredCacheMissCount += 1
         let filterName = userFilterScreenName
         let filtered = tasks
             .filter { task in
@@ -139,6 +149,18 @@ final class DownloadStore {
     /// 下载历史是否已脏（有改动还没落盘）。与 `historySaveScheduled` 一起做节流，见 `markHistoryDirty`。
     private var historyDirty = false
     private var historySaveScheduled = false
+
+    /// 下载历史写盘的**串行队列**（进程内共享）。
+    ///
+    /// 为什么必须串行：`persistTasks()` 会把当时的 `tasks` 编成一份快照丢进后台写，
+    /// 多个后台写任务之间原本没有任何顺序保障——旧快照的编码/写盘若比新快照慢，
+    /// 最后落盘的就是**旧数据**（`.atomic` 只防半文件，不防新旧倒序）。
+    /// 串行队列保证「按提交顺序落盘」，队列里的最后一个块一定携带最新快照。
+    ///
+    /// `flushHistoryNow()`（退出路径）也走这个队列：它 `sync` 排队，
+    /// 于是必然排在所有已提交的后台写之后，不会被一个尚未完成的旧写覆盖。
+    /// 队列里的块只做编码 + 写文件，不碰任何主线程状态，因此 `sync` 不会死锁。
+    private static let historyWriteQueue = DispatchQueue(label: "moe.keli.xspider.mac.download-history.write")
     /// 历史落盘的最小间隔：进度事件按片到达，这个粒度对"重启后能看到进度"完全够用。
     private static let historySaveIntervalNanos: UInt64 = 1_000_000_000
 
@@ -419,29 +441,39 @@ final class DownloadStore {
     /// 在扫描/导入/导出时会被当成无法定位而丢弃（`RecordsIO` 要求非空），
     /// 写下去等于让这条 id 无声消失。宁可少一条记录、留一条告警。
     ///
+    /// - Returns: 写入结果。**"下载成功"与"记录写成功"是两件事**：前者由文件本身
+    ///   成立，后者决定下次的跳过判定准不准。调用方（`finalizeComponentDownload`）
+    ///   用返回值把"文件下了但记录没落上"这条可观测起来，而不是让界面谎称一切正常。
+    ///
     /// 非 private：`MediaRecordsTests` 直接断言"账号判不出来时不落盘"这条行为。
-    func recordDownloaded(mediaId: String?, post: TwitterPost, media: TwitterMedia, dir: String) {
-        guard let mediaId, !mediaId.isEmpty else { return }
+    @discardableResult
+    func recordDownloaded(mediaId: String?, post: TwitterPost, media: TwitterMedia,
+                          dir: String) -> RecordWriteOutcome {
+        guard let mediaId, !mediaId.isEmpty else { return .notApplicable }
         switch settings.sameFileCheckModeValue {
         case .fileName:
-            return
+            return .notApplicable
         case .distributed:
             guard let userId = accountIdForRecord(post: post, media: media, dir: dir) else {
                 AppLogger.warn("下载记录无法定位账号,未写入", category: "DL", [
                     "mediaId": mediaId, "dir": dir,
                 ])
-                return
+                return .failed
             }
-            _ = MediaRecords.shared.appendDownloadId(
-                mediaId, userId: userId, fileURL: distributedRecordURL(dir: dir))
+            let url = distributedRecordURL(dir: dir)
+            if MediaRecords.shared.isDownloaded(mediaId: mediaId, fileURL: url) { return .alreadyPresent }
+            return MediaRecords.shared.appendDownloadId(mediaId, userId: userId, fileURL: url)
+                ? .written : .failed
         case .centralized:
             guard let userId = accountIdForRecord(post: post, media: media, dir: dir) else {
                 AppLogger.warn("下载记录无法定位账号,未写入", category: "DL", [
                     "mediaId": mediaId, "dir": dir,
                 ])
-                return
+                return .failed
             }
-            _ = MediaRecords.shared.appendCentralDownloadId(mediaId, userId: userId)
+            if MediaRecords.shared.isDownloaded(mediaId: mediaId, userId: userId) { return .alreadyPresent }
+            return MediaRecords.shared.appendCentralDownloadId(mediaId, userId: userId)
+                ? .written : .failed
         }
     }
 
@@ -500,8 +532,11 @@ final class DownloadStore {
         // 编码与写盘挪到后台：1000 个任务（每条内嵌完整推文）编码一次要几十毫秒，
         // 放主线程会直接顶住界面。路径先取出来——`historyURL` 是 MainActor 隔离的，
         // 后台任务里碰不到。
+        //
+        // 走**串行**队列而不是 `Task.detached`：并发写多个快照会让旧数据晚于新数据落盘
+        // （见 `historyWriteQueue` 的说明）。队列是 FIFO，先提交的旧快照先写完。
         let url = Self.historyURL
-        Task.detached(priority: .utility) {
+        Self.historyWriteQueue.async {
             guard let data = try? JSONEncoder().encode(items) else { return }
             try? data.write(to: url, options: .atomic)
         }
@@ -533,6 +568,9 @@ final class DownloadStore {
     }
 
     /// **同步**落盘，给退出路径用：那里必须确定写完，不能等异步任务。
+    ///
+    /// 通过 `historyWriteQueue.sync` 排队，保证排在所有已提交的后台写之后：
+    /// 直接写文件的话，一个还在途中的旧快照可能随后覆盖这份最新数据。
     func flushHistoryNow() {
         guard historyDirty else { return }
         historyDirty = false
@@ -544,7 +582,9 @@ final class DownloadStore {
                           engineRaw: $0.engine?.rawValue)
         }
         guard let data = try? JSONEncoder().encode(items) else { return }
-        try? data.write(to: Self.historyURL, options: .atomic)
+        Self.historyWriteQueue.sync {
+            try? data.write(to: Self.historyURL, options: .atomic)
+        }
     }
 
     private func restoreTasks() {
@@ -596,11 +636,28 @@ final class DownloadStore {
                     }
                     self.reconcile(job)
                 }
+                var confirmedPause = 0
                 for jobId in toPause {
-                    _ = try? await XSpiderComponent.shared.call("dl.pause", ["job_id": .string(jobId)])
+                    do {
+                        _ = try await XSpiderComponent.shared.call("dl.pause", ["job_id": .string(jobId)])
+                        confirmedPause += 1
+                    } catch {
+                        // 没确认暂停成功就不能留着"已暂停"的界面假象：
+                        // 用权威列表把这一条的真实状态拉回来。
+                        AppLogger.warn("启动对账暂停未确认", category: "DL", [
+                            "jobId": jobId, "error": error.localizedDescription,
+                        ])
+                        if let job = jobs.first(where: { $0[string: "job_id"] == jobId }) {
+                            self.reconcile(job)
+                        }
+                    }
                 }
+                // 计数分两个：请求了多少、组件确认了多少——只报请求数会把"计划"
+                // 说成"已完成"（旧实现就是如此，日志显得比事实乐观）。
                 AppLogger.info("启动时与组件对账", category: "DL", [
-                    "jobs": "\(jobs.count)", "已按策略暂停": "\(toPause.count)",
+                    "jobs": "\(jobs.count)",
+                    "requestedPause": "\(toPause.count)",
+                    "confirmedPause": "\(confirmedPause)",
                 ])
             } catch {
                 AppLogger.debug("启动对账失败（组件可能还没起来）", category: "DL", [
@@ -754,9 +811,14 @@ final class DownloadStore {
 
     /// 暂停：**保留断点**（组件会把半成品留在目标目录，恢复时接着下）。
     /// 与"取消"的区别只在这里——取消会连半成品一起清掉。
+    ///
+    /// 这是**乐观更新**：先改 UI 状态再发请求。请求失败时用权威列表把那一条纠回来
+    /// （见 `reconcileJobFromComponent`），不然界面会一直显示"已暂停"而组件仍在下载。
     func pause(_ gid: String) {
         update(gid: gid) { $0.status = .paused }
-        componentCall("dl.pause", gid)
+        componentCall("dl.pause", gid) { [weak self] in
+            self?.reconcileJobFromComponent(gid)
+        }
         refreshSleepAssertion()
     }
 
@@ -831,10 +893,24 @@ final class DownloadStore {
             Task.detached(priority: .utility) {
                 let fm = FileManager.default
                 var removed = 0
+                var failed = 0
                 for p in paths {
-                    if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p); removed += 1 }
+                    guard fm.fileExists(atPath: p) else { continue }
+                    // **只在真的删掉时计数**：原来"文件在就 +1"会把删除失败也算成成功，
+                    // 日志里的 files=N 于是夸大真实清理量（用户据此以为已经清干净了）。
+                    do {
+                        try fm.removeItem(atPath: p)
+                        removed += 1
+                    } catch {
+                        failed += 1
+                        AppLogger.debug("删除文件失败", category: "DL", [
+                            "path": p, "error": error.localizedDescription,
+                        ])
+                    }
                 }
-                AppLogger.info("已删除记录和源文件", category: "DL", ["files": "\(removed)"])
+                AppLogger.info("已删除记录和源文件", category: "DL", [
+                    "files": "\(removed)", "failed": "\(failed)",
+                ])
             }
         }
     }
@@ -1063,7 +1139,16 @@ final class DownloadStore {
                 "user": task.post.user.screenName,
                 "engine": task.engine?.rawValue ?? settings.engine.rawValue,
             ])
-            recordDownloaded(mediaId: task.media.id, post: task.post, media: task.media, dir: task.dir)
+            // 记录写不进去不该把"文件下好了"改判成失败，但必须留下可查的证据：
+            // 否则下一次判定会显示"未下载"→ 重复下载，而日志里什么都没有。
+            let outcome = recordDownloaded(mediaId: task.media.id, post: task.post,
+                                           media: task.media, dir: task.dir)
+            if outcome == .failed {
+                AppLogger.warn("下载完成但记录未写入,跳过判定可能失准", category: "DL", [
+                    "file": task.fileName, "mediaId": task.media.id ?? "?",
+                    "mode": settings.sameFileCheckModeValue.rawValue,
+                ])
+            }
             AccountStatusStore.shared.noteCDNSuccess()
         }
     }
@@ -1103,15 +1188,46 @@ final class DownloadStore {
     }
 
     /// 发一条不关心结果的组件调用（暂停/取消这类"尽力而为"的操作）。
-    private func componentCall(_ method: String, _ gid: String) {
+    ///
+    /// 失败按 **warn** 记（不是 debug）：暂停与取消都是**先改 UI、再发请求**的乐观更新，
+    /// 请求失败时界面已经显示"已暂停/已删除"了，只在 debug 里留一笔等于让 UI
+    /// 与事实长期不一致。需要纠正的调用方用 `onFailure` 拿权威状态回来对账。
+    private func componentCall(_ method: String, _ gid: String,
+                               onFailure: (@MainActor @Sendable () -> Void)? = nil) {
         Task { [weak self] in
             do {
                 _ = try await XSpiderComponent.shared.call(method, ["job_id": .string(gid)])
             } catch {
-                AppLogger.debug("组件调用 \(method) 失败", category: "DL", [
+                AppLogger.warn("组件调用 \(method) 失败", category: "DL", [
                     "gid": gid, "error": error.localizedDescription,
                 ])
                 _ = self  // 保持闭包对 self 的弱引用语义
+                onFailure?()
+            }
+        }
+    }
+
+    /// 一次组件调用失败后，用权威的 `dl.list` 把那一条任务的真实状态拉回来。
+    ///
+    /// 列表里没有这条 job 时保持现状（组件本来就不认识它——比如它已经结束并清掉了）。
+    /// `reconcile` 只改这一条，不会牵动别的任务。
+    private func reconcileJobFromComponent(_ gid: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let list = try await XSpiderComponent.shared.call("dl.list")
+                for job in (list[array: "jobs"] ?? []).compactMap({ $0.asObject })
+                where job[string: "job_id"] == gid {
+                    self.reconcile(job)
+                }
+                // 纠回成 active 之后要保证轮询在跑（它可能在"暂停"时已经自行结束），
+                // 以及防休眠断言仍然成立。
+                self.startComponentPolling()
+                self.refreshSleepAssertion()
+            } catch {
+                AppLogger.warn("组件调用失败后对账也失败,界面状态可能滞后", category: "DL", [
+                    "gid": gid, "error": error.localizedDescription,
+                ])
             }
         }
     }
@@ -1222,6 +1338,22 @@ final class DownloadStore {
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
+}
+
+/// 下载记录写入的结果。
+///
+/// 「文件下好了」与「跳过判定所依赖的记录写成功了」是**两个层面的完成**，不能混为一谈：
+/// 前者由文件本身成立，后者不一定。把结果显式分出来，收尾处才能把"下了但没记账"
+/// 这条单独告警，而不是让下载成功掩盖记录失败。
+enum RecordWriteOutcome: Equatable {
+    /// 当前判定依据不写记录（按文件名：文件名本身就是判据），或没有媒体 id。
+    case notApplicable
+    /// 该 id 已经在记录里（幂等命中，无需写）。
+    case alreadyPresent
+    /// 这次真的写进去了。
+    case written
+    /// 写入失败（磁盘 / 权限 / 记录文件不可解析 / 账号无法定位）。
+    case failed
 }
 
 /// 组件报回来的下载失败（**结构化**：reason 是短标签，status 是 HTTP 码）。

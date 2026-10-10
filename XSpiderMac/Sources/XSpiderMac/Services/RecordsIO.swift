@@ -571,10 +571,23 @@ enum RecordsIO {
     }
 
     /// 保存路径下的直接子目录（跳过隐藏目录）
+    ///
+    /// **读取失败不再折叠成"空"**：上层导入/重建把"目录里确实没有东西"与"扫描不了"
+    /// 当成同一个结果，用户就会看到一个看起来正常的"0 条"。目录不存在是正常的空
+    /// （全新安装），只有**存在却读不了**才告警。
     private static func directSubdirectories(in saveDir: String) -> [URL] {
         let url = URL(fileURLWithPath: saveDir, isDirectory: true)
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: url, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        guard FileManager.default.fileExists(atPath: saveDir) else { return [] }
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: url, includingPropertiesForKeys: [.isDirectoryKey])
+        } catch {
+            AppLogger.warn("读取目录失败,扫描结果不完整", category: "REC", [
+                "dir": saveDir, "error": error.localizedDescription,
+            ])
+            return []
+        }
         return entries.filter { entry in
             guard !entry.lastPathComponent.hasPrefix(".") else { return false }
             return (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
@@ -582,10 +595,21 @@ enum RecordsIO {
     }
 
     /// 目录下的普通文件（跳过隐藏文件：记录文件与 `.DS_Store` 都以 `.` 开头）
+    ///
+    /// 同 `directSubdirectories`：目录不存在按空处理，存在却读不了要告警。
     private static func regularFiles(in dir: String) -> [URL] {
         let url = URL(fileURLWithPath: dir, isDirectory: true)
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: url, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        guard FileManager.default.fileExists(atPath: dir) else { return [] }
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: url, includingPropertiesForKeys: [.isRegularFileKey])
+        } catch {
+            AppLogger.warn("读取目录失败,扫描结果不完整", category: "REC", [
+                "dir": dir, "error": error.localizedDescription,
+            ])
+            return []
+        }
         return entries.filter { entry in
             guard !entry.lastPathComponent.hasPrefix(".") else { return false }
             return (try? entry.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
