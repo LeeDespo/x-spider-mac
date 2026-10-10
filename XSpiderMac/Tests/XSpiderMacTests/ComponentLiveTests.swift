@@ -32,13 +32,18 @@ final class ComponentLiveTests: XCTestCase {
     /// 而会新建下载任务的测试指向临时目录、下面还会把目录删掉——留下的条目点开是空的，
     /// 就是垃圾。我第一次跑 live 测试时就这么脏了用户的历史。
     ///
-    /// 不需要额外等待：`tasks` 的 didSet 是**同步**落盘的，而 `defer` 的执行顺序
-    /// （后注册的先跑）保证"先摘任务、再还原文件"。
+    /// **还原前先 `flushHistoryNow()`**：`tasks` 的 didSet 只是把历史标脏、节流落盘
+    /// （最多每秒一次、在后台写），所以还原时可能仍有待写的旧快照在途。
+    /// `flushHistoryNow()` 走同一条串行写队列，先把内存里的（已摘干净的）任务写掉，
+    /// 再用备份的原始字节覆盖，保证测试结束后这条队列上不会再有写把它顶回脏数据。
     @MainActor
     private func backupDownloadHistory() -> () -> Void {
         let url = DownloadStore.historyURL
         guard let backup = try? Data(contentsOf: url) else { return {} }
-        return { try? backup.write(to: url, options: .atomic) }
+        return {
+            DownloadStore.shared.flushHistoryNow()
+            try? backup.write(to: url, options: .atomic)
+        }
     }
 
     func testComponentIsReachableAndReportsTransport() async throws {
@@ -225,7 +230,13 @@ final class ComponentLiveTests: XCTestCase {
         defer {
             SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
             SettingsStore.shared.settings.download.sameFileSkip = originalSkip
+            // 临时目录里的任务一律摘掉（测试中途抛错也要清干净），再还原用户历史。
+            // 还原动作自己在覆盖前会先同步落盘一次，见 `backupDownloadHistory`。
+            for task in DownloadStore.shared.tasks where task.dir.hasPrefix(outDir) {
+                DownloadStore.shared.remove(task.gid, alsoDeleteFiles: true)
+            }
             try? FileManager.default.removeItem(atPath: outDir)
+            restoreHistory()
         }
 
         let user = try await XSpiderAPI.shared.getUser(screenName: "tesla")
@@ -264,9 +275,7 @@ final class ComponentLiveTests: XCTestCase {
                 "file": download.fileName, "type": download.media.type.rawValue,
             ])
         }
-
-        // 收尾：把这些任务取消掉（清临时文件），不留半成品
-        for download in created { DownloadStore.shared.remove(download.gid, alsoDeleteFiles: true) }
+        // 收尾（摘任务 + 还原历史）在 `defer` 里做，测试中途抛错也跑得到。
     }
 
     /// **下载路径的真实链路**：应用建任务 → 组件搬字节 → 应用验内容与记录。

@@ -52,6 +52,32 @@ final class MediaRecordsTests: XCTestCase {
         XCTAssertNil(records.loadDownload(fileURL: url), "空对象必须整份丢弃")
     }
 
+    /// 追加时**绝不覆盖一个存在却读不懂的文件**（MAC-07）。
+    ///
+    /// `loadDownload` 把"不存在"与"存在但损坏 / 版本不符 / 读不了"都折叠成 nil；
+    /// 若追加用 `?? 空记录` 再写回，一次追加就把整份记录（几千个 id）碾成一条。
+    func testAppendRefusesToOverwriteUnparsableRecord() throws {
+        let url = tempDir.appendingPathComponent("broken.json")
+        // 半截 JSON（模拟写入中途断电 / 外部编辑损坏）
+        let original = Data(#"{"version":1,"kind":"xspider.download-record","user_id":"1","ids":["broken"#.utf8)
+        try original.write(to: url)
+
+        XCTAssertFalse(records.appendDownloadId("m-new", userId: "1", fileURL: url),
+                       "记录文件存在却无法解析时必须拒绝写入，不能返回成功")
+        XCTAssertEqual(try Data(contentsOf: url), original, "原文件一个字节都不能动")
+
+        // 高版本（将来 v2 写的）同样不覆盖
+        let future = Data(#"{"version":2,"kind":"xspider.download-record","user_id":"1","ids":["a"]}"#.utf8)
+        try future.write(to: url)
+        XCTAssertFalse(records.appendDownloadId("m-new", userId: "1", fileURL: url))
+        XCTAssertEqual(try Data(contentsOf: url), future)
+
+        // 全新路径（文件不存在）照常写入
+        let fresh = tempDir.appendingPathComponent("fresh.json")
+        XCTAssertTrue(records.appendDownloadId("m-new", userId: "1", fileURL: fresh))
+        XCTAssertEqual(records.loadDownload(fileURL: fresh)?.ids, ["m-new"])
+    }
+
     /// JSON 缩进 2 空格（契约 §4），且不残留临时文件
     func testJSONUsesTwoSpaceIndentAndNoTempLeftover() throws {
         let url = records.distributedDownloadURL(accountDir: tempDir.path)
@@ -826,8 +852,9 @@ final class MediaRecordsTests: XCTestCase {
         DownloadStore.shared.refreshDownloadedCaches()
 
         let post = replant(samplePost(), userId: "")
-        DownloadStore.shared.recordDownloaded(mediaId: "m1", post: post,
-                                              media: post.medias![0], dir: dir.path)
+        let failed = DownloadStore.shared.recordDownloaded(mediaId: "m1", post: post,
+                                                           media: post.medias![0], dir: dir.path)
+        XCTAssertEqual(failed, .failed, "账号无法定位 = 记录没落上，必须以 .failed 回报（收尾处据此告警）")
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: dir.appendingPathComponent(MediaRecords.defaultDownloadRecordName).path),
             "账号无法确定时不得写记录（写下去就是一条会被导入/导出丢弃的坏记录）")
@@ -835,12 +862,18 @@ final class MediaRecordsTests: XCTestCase {
         // 有账号文件夹可兜底时正常写入，且 user_id 取文件夹里的数字 id
         let accountDir = tempDir.appendingPathComponent("Nick-nick[13298072]", isDirectory: true)
         try FileManager.default.createDirectory(at: accountDir, withIntermediateDirectories: true)
-        DownloadStore.shared.recordDownloaded(mediaId: "m2", post: post,
-                                              media: post.medias![0], dir: accountDir.path)
+        let written = DownloadStore.shared.recordDownloaded(mediaId: "m2", post: post,
+                                                            media: post.medias![0], dir: accountDir.path)
+        XCTAssertEqual(written, .written, "写进去要回报 .written")
         let record = try XCTUnwrap(MediaRecords.shared.loadDownload(
             fileURL: accountDir.appendingPathComponent(MediaRecords.defaultDownloadRecordName)))
         XCTAssertEqual(record.userId, "13298072", "user_id 取目标文件夹里的数字 id")
         XCTAssertEqual(record.ids, ["m2"])
+
+        // 同一个 id 再记一次：幂等命中，不算失败
+        let again = DownloadStore.shared.recordDownloaded(mediaId: "m2", post: post,
+                                                          media: post.medias![0], dir: accountDir.path)
+        XCTAssertEqual(again, .alreadyPresent, "重复记同一媒体应当是幂等命中，不是失败")
     }
 
     /// 场景 (c)：作者 id 正常时直接用作者 id（文件夹名不参与）

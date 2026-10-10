@@ -82,8 +82,8 @@ final class DownloadStoreBatchTests: XCTestCase {
         XCTAssertEqual(users.first { $0.screenName == "bob" }?.count, 3, "bob 有 3 条")
     }
 
-    /// 分页：`tasksForCurrentTab` 返回完整列表（分页在视图层做），且结果被缓存到
-    /// 同一份数组实例共享（缓存生效的证据：第二次调用不做新分配的内容比较）。
+    /// 筛选结果被缓存：第二次调用**不再重算**（用未命中计数证明，而不是只看结果一致——
+    /// 重算一遍也会得到相同内容，那样的断言证明不了缓存）。
     @MainActor
     func testFilteredResultIsCachedAcrossCalls() {
         let store = DownloadStore.shared
@@ -91,12 +91,17 @@ final class DownloadStoreBatchTests: XCTestCase {
         defer { snapshot.restore() }
 
         store.tasks = (0..<300).map { task($0, user: "alice") }
+        let missesBefore = store.filteredCacheMissCount
+
         let first = store.tasksForCurrentTab(statuses: [.complete])
-        let second = store.tasksForCurrentTab(statuses: [.complete])
         XCTAssertEqual(first.count, 300)
+        XCTAssertEqual(store.filteredCacheMissCount, missesBefore + 1, "第一次调用应当未命中并建缓存")
+
+        let second = store.tasksForCurrentTab(statuses: [.complete])
         XCTAssertEqual(second.count, 300)
-        // 缓存返回同一份内容（改变 tasks 后必须失效，见下一条）
-        XCTAssertEqual(first.map(\.gid), second.map(\.gid))
+        XCTAssertEqual(second.map(\.gid), first.map(\.gid))
+        XCTAssertEqual(store.filteredCacheMissCount, missesBefore + 1,
+                       "第二次调用必须命中缓存，不再重新筛选")
     }
 
     /// `tasks` 变化后筛选结果必须失效（否则界面会显示已删除的旧数据）。

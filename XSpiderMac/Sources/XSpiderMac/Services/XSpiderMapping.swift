@@ -112,9 +112,17 @@ enum XSpiderMapping {
               let postAuthor = Self.author(authorJSON) else { return nil }
 
         let createdAt = date(json["created_at"])
-        let medias = json[array: "medias"]?.compactMap { item -> TwitterMedia? in
+        let rawMedias = json[array: "medias"]
+        let medias = rawMedias?.compactMap { item -> TwitterMedia? in
             guard let fields = item.asObject else { return nil }
             return media(fields, createdTime: createdAt)
+        }
+        // 单个媒体解析失败 → 宁可丢掉它，也不能让整条推文消失；但**不能无声无息**：
+        // 条目数对不上就记一笔，否则"界面少了一张图"在日志里查无实据。
+        if let raw = rawMedias, let parsed = medias, parsed.count < raw.count {
+            AppLogger.warn("推文媒体条目解析失败,已丢弃", category: "CORE", [
+                "postId": id, "parsed": "\(parsed.count)", "total": "\(raw.count)",
+            ])
         }
 
         let retweetedBy = json[object: "retweeted_by"].flatMap { Self.author($0) }
@@ -154,12 +162,28 @@ enum XSpiderMapping {
     /// `page<post>` → `(posts, cursor)`。注意契约里 **cursor 键不出现就是到头了**。
     static func postPage(_ result: [String: JSONValue]) -> (posts: [TwitterPost], cursor: String?) {
         let items = (result[array: "items"] ?? []).compactMap { $0.asObject }
-        return (items.compactMap { post($0) }, result[string: "cursor"])
+        let posts = items.compactMap { post($0) }
+        logDroppedItems(parsed: posts.count, total: items.count, kind: "post")
+        return (posts, result[string: "cursor"])
     }
 
     static func userPage(_ result: [String: JSONValue]) -> (users: [TwitterUser], cursor: String?) {
         let items = (result[array: "items"] ?? []).compactMap { $0.asObject }
-        return (items.compactMap { user($0) }, result[string: "cursor"])
+        let users = items.compactMap { user($0) }
+        logDroppedItems(parsed: users.count, total: items.count, kind: "user")
+        return (users, result[string: "cursor"])
+    }
+
+    /// 列表条目解析失败时告警。
+    ///
+    /// `compactMap` 的静默丢项是"授权面"：契约正常时永远不会触发，可一旦上游归一化
+    /// 被破坏（少 `author` / 缺 `id`），页面会**安静地少内容**——没有错误、没有日志，
+    /// 只有用户觉得"怎么少了"。允许丢一条（比整页报错强），但必须留下证据。
+    private static func logDroppedItems(parsed: Int, total: Int, kind: String) {
+        guard parsed < total else { return }
+        AppLogger.warn("契约列表条目解析失败,已丢弃", category: "CORE", [
+            "kind": kind, "parsed": "\(parsed)", "total": "\(total)",
+        ])
     }
 
     // MARK: - 评论树
