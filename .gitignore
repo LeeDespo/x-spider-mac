@@ -23,6 +23,9 @@ xcuserdata/
 *.xcuserstate
 *.xcresult
 
+# 由 project.yml 生成的 Xcode 工程（不入库；改 project.yml 后跑 xcodegen generate）
+XSpiderMac/XSpiderMac.xcodeproj/
+
 # ── 打包产物（dmg 走 GitHub Release）──
 dist/
 

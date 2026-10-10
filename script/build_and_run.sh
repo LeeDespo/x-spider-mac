@@ -11,6 +11,9 @@ DERIVED_DIR="${PROJECT_DIR}/XSpiderMac/build"
 
 mkdir -p "${DERIVED_DIR}"
 
+# 工程由 project.yml 生成、不入库：先确保工程存在（改了 project.yml 也会在这里刷新）
+(cd "${PROJECT_DIR}/XSpiderMac" && xcodegen generate)
+
 xcodebuild \
   -project "${PROJECT_FILE}" \
   -scheme XSpiderMac \

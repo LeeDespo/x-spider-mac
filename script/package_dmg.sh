@@ -34,6 +34,9 @@ mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
 echo "==> 校验随包组件"
 "${PROJECT_DIR}/script/verify_components.sh"
 
+echo "==> 生成工程（project.yml 是唯一真源）"
+(cd "${PROJECT_DIR}/XSpiderMac" && xcodegen generate)
+
 echo "==> 构建 Release（arm64）"
 xcodebuild \
   -project "${PROJECT_FILE}" \
