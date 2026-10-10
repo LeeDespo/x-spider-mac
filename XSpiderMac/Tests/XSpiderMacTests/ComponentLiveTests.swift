@@ -3,10 +3,12 @@ import XCTest
 
 /// **接线的真实验证**：应用自己的那条路（`XSpiderAPI` → 组件）能不能取到真数据。
 ///
-/// 与 `XSpiderMacTests` 里其它测试不同，这条**要联网**，所以默认跳过：
+/// 与 `XSpiderMacTests` 里其它测试不同，这条**要联网**，所以默认跳过。
+/// 跑 live 必须用 `TEST_RUNNER_` 前缀（xcodebuild 只转发该前缀的环境变量；
+/// 裸 `XSPIDER_LIVE=1` 到不了测试宿主，会被静默跳过）：
 ///
 /// ```bash
-/// XSPIDER_LIVE=1 xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
+/// TEST_RUNNER_XSPIDER_LIVE=1 xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
 ///   -destination 'platform=macOS,arch=arm64' \
 ///   -derivedDataPath build/DerivedData \
 ///   test -only-testing:XSpiderMacTests/ComponentLiveTests
@@ -40,7 +42,7 @@ final class ComponentLiveTests: XCTestCase {
     }
 
     func testComponentIsReachableAndReportsTransport() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
 
         let info = try await XSpiderComponent.shared.ensureStarted()
         XCTAssertEqual(info.transport, "sidecar", "组件应当自报 sidecar 形态")
@@ -52,7 +54,7 @@ final class ComponentLiveTests: XCTestCase {
     }
 
     func testFetchUserThroughTheAppPath() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie，先在设置里导入一次")
 
@@ -74,7 +76,7 @@ final class ComponentLiveTests: XCTestCase {
     /// 账户信息改由组件回答（`auth.whoami`）：拿得到 screen_name 与头像就是通的。
     @MainActor
     func testWhoamiThroughTheAppPath() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
@@ -89,7 +91,7 @@ final class ComponentLiveTests: XCTestCase {
     /// 关注态：拿得到布尔值即可（true/false 都算通过，我们不假设测试账号关注了谁）。
     @MainActor
     func testIsFollowingThroughTheAppPath() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
@@ -107,7 +109,7 @@ final class ComponentLiveTests: XCTestCase {
     /// **不拿真实推文试**：那会给作者发通知、在账号上留下痕迹，属于"测试不该做的事"。
     @MainActor
     func testMutateIsWiredWithoutSideEffects() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
@@ -159,7 +161,7 @@ final class ComponentLiveTests: XCTestCase {
     /// → 视频格子整片空白。契约里当时根本没有封面字段，所以这条也是"接入才暴露"的缺口。
     @MainActor
     func testVideoMediaHasAPosterAndAPlayableURL() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
@@ -208,7 +210,7 @@ final class ComponentLiveTests: XCTestCase {
     ///   不碰用户真实的下载目录与「跳过已下载」开关（先存后改、改完还原）。
     @MainActor
     func testCreationTaskLoopRunsEndToEnd() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
@@ -277,7 +279,7 @@ final class ComponentLiveTests: XCTestCase {
     /// `.downloadedrecord.json`（含该媒体 id），且 `hasDownloaded` 返回 true。
     @MainActor
     func testDownloadThroughTheStoreAndComponent() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
 
@@ -376,7 +378,7 @@ final class ComponentLiveTests: XCTestCase {
     ///
     /// **不建下载任务**：那会往用户的下载目录写真实文件，live 测试不该有那种副作用。
     func testCrawlPagesJoinBackToFullPosts() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie")
         let proxy = await MainActor.run { SettingsStore.shared.settings.proxy }
@@ -436,7 +438,7 @@ final class ComponentLiveTests: XCTestCase {
     /// 取一页媒体时间线：这条同时验证**分页形状**与**媒体映射**
     /// （`medias[].url` / `ext` / `kind` 能不能落进 `TwitterMedia`）。
     func testFetchUserMediasThroughTheAppPath() async throws {
-        try XCTSkipUnless(isLive, "live 测试：设 XSPIDER_LIVE=1 才跑")
+        try XCTSkipUnless(isLive, "live 测试默认跳过（运行方式见 docs/TESTING.md §1）")
         let cookie = storedCookie
         try XCTSkipIf(cookie.isEmpty, "应用里还没有 cookie，先在设置里导入一次")
 

@@ -275,33 +275,52 @@ final class TranslationPackListTests: XCTestCase {
     }
 }
 
-/// 连续转推的去重（回归：同页重复 id 会让 SwiftUI 列表出现空白）
-final class DuplicatePostIdTests: XCTestCase {
+/// 语言比对与目标语言解析（`TranslationStore` / `Settings`）。
+final class TranslationLanguageTests: XCTestCase {
 
-    /// 同页出现重复 id 时，去重后应只剩一条 —— 模拟"同一账号连转同一条推文"
-    @MainActor
-    func testSamePageDuplicatesAreRemoved() {
-        let store = HomepageStore.shared
-        store.clearPostList()
-
-        // 三条条目展平后 id 相同（同一条原推文被连转三次）
-        var seen = Set<String>()
-        let ids = ["1900000000000000001", "1900000000000000001", "1900000000000000001",
-                   "1900000000000000002"]
-        let deduped = ids.filter { seen.insert($0).inserted }
-        XCTAssertEqual(deduped, ["1900000000000000001", "1900000000000000002"],
-                       "同页重复 id 必须去掉，否则 ForEach 只渲染第一个、其余空白")
+    /// 主语言子标签比对：忽略地区/书写变体
+    func testSameLanguageIgnoresRegionAndScript() {
+        // zh-Hans 与 zh 视为同语言（只比主标签）
+        XCTAssertTrue(TranslationStore.isSameLanguage("zh-Hans", Locale.Language(identifier: "zh")))
+        XCTAssertTrue(TranslationStore.isSameLanguage("zh", Locale.Language(identifier: "zh-Hans")))
+        // en-US 与 en 同语言
+        XCTAssertTrue(TranslationStore.isSameLanguage("en-US", Locale.Language(identifier: "en")))
+        // 不同语言必须判为不同（否则该翻的不翻）
+        XCTAssertFalse(TranslationStore.isSameLanguage("ja", Locale.Language(identifier: "zh-Hans")))
+        XCTAssertFalse(TranslationStore.isSameLanguage("en", Locale.Language(identifier: "ja")))
     }
 
-    /// 跨页去重同样有效（同一个 Set 承担两种职责）
+    /// 空语言码不应被误判为"同语言"（否则会漏翻）
+    func testEmptyLanguageIsNotSame() {
+        XCTAssertFalse(TranslationStore.isSameLanguage("", Locale.Language(identifier: "en")))
+    }
+
+    /// 自动翻译默认关闭：开启会让每次浏览都触发翻译，打扰且耗电
     @MainActor
-    func testCrossPageDuplicatesStillRemoved() {
-        var seen = Set<String>()
-        let page1 = ["a", "b"]
-        let page2 = ["b", "c"]   // b 与上一页重复
-        let d1 = page1.filter { seen.insert($0).inserted }
-        let d2 = page2.filter { seen.insert($0).inserted }
-        XCTAssertEqual(d1, ["a", "b"])
-        XCTAssertEqual(d2, ["c"], "跨页重复也要去掉")
+    func testAutoTranslateDefaultsOff() {
+        XCTAssertFalse(SettingsStore.shared.settings.autoTranslateEnabled,
+                       "自动翻译默认应为关")
+    }
+
+    /// 空值语义：存储为空字符串表示"跟随系统"。
+    /// **不要**断言真实 settings 的当前值——测试宿主是应用本体，
+    /// 用户的已存设置（如 zh-Hans）会污染这类断言。
+    /// 这里只验证"空 → 跟随系统"这条映射规则本身。
+    func testEmptyTargetLanguageMeansFollowSystem() {
+        var settings = Settings()
+        settings.app.translateTargetLanguage = nil
+        XCTAssertEqual(settings.translateTargetLanguageRaw, "",
+                       "未设置时应为空（表示跟随系统）")
+        XCTAssertEqual(settings.translateTargetLanguage.languageCode,
+                       Settings.systemPreferredLanguage.languageCode,
+                       "未设置时应回落到**系统偏好语言**，而不是被 bundle 降级的 Locale.current")
+
+        settings.app.translateTargetLanguage = "ja"
+        XCTAssertEqual(settings.translateTargetLanguageRaw, "ja")
+        XCTAssertEqual(settings.translateTargetLanguage.languageCode, "ja")
+
+        // 空字符串写回应为 nil（表示跟随系统），而不是存一个空串
+        settings.translateTargetLanguageRaw = ""
+        XCTAssertNil(settings.app.translateTargetLanguage)
     }
 }

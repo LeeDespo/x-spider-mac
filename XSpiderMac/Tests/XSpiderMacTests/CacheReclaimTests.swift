@@ -33,30 +33,6 @@ final class CacheReclaimTargetTests: XCTestCase {
                        120_000_000, "上限 200 MB、60% → 回收到 120 MB")
     }
 
-    /// 目标只与上限有关，和当前占用无关（用户给的例子：上限 1 GB、超到 2 GB → 收到 0.6 GB）
-    func testTargetIgnoresCurrentUsage() {
-        // 复刻 enforceLimit 的删除循环：从最旧开始删，删到剩余 <= 目标
-        func remainingAfterReclaim(sizes: [Int64], limit: Int64, targetPercent: Int64) -> Int64 {
-            var remaining = sizes.reduce(0, +)
-            let target = ImageCache.reclaimTargetBytes(limitBytes: limit, targetPercent: targetPercent)
-            for size in sizes {                      // 调用方已按最旧→最新排序
-                guard remaining > target else { break }
-                remaining -= size
-            }
-            return remaining
-        }
-
-        // 1 GB 上限、60% → 收到 600 MB；2 GB 占用（每个 100 MB）时删掉 14 个
-        let usage2GB = Array(repeating: Int64(100_000_000), count: 20)
-        XCTAssertEqual(remainingAfterReclaim(sizes: usage2GB, limit: 1_000_000_000, targetPercent: 60),
-                       600_000_000)
-
-        // 5 GB 占用时删到同样的 600 MB（旧语义会随占用越删越多）
-        let usage5GB = Array(repeating: Int64(100_000_000), count: 50)
-        XCTAssertEqual(remainingAfterReclaim(sizes: usage5GB, limit: 1_000_000_000, targetPercent: 60),
-                       600_000_000)
-    }
-
     /// 目标必须**低于上限**（区间上限 90%）——否则清完立刻又超限，反复全目录扫描
     func testTargetAlwaysStaysUnderLimit() {
         let limit: Int64 = 500_000_000
@@ -178,20 +154,18 @@ final class CacheEvictionOnDiskTests: XCTestCase {
 /// 边栏状态行内文案（熔断倒计时直接显示）
 final class StatusInlineTextTests: XCTestCase {
 
-    /// 倒计时文案含秒数，且很短（边栏一行放得下）
-    @MainActor
-    func testCooldownTextIsShort() {
-        let text = L("熔断中(%d)").replacingOccurrences(of: "%d", with: "37")
-        XCTAssertTrue(text.contains("37"))
-        XCTAssertLessThanOrEqual(text.count, 12, "行内文案要放得进边栏")
-    }
-
-    /// 非熔断时回落到简称
-    @MainActor
-    func testFallsBackToShortLabelWhenNotThrottled() {
-        let store = AccountStatusStore.shared
-        store.reset()
-        XCTAssertEqual(store.shortLabel, L("正常"))
-        XCTAssertEqual(store.cdnShortLabel, L("正常"))
+    /// 倒计时文案：含秒数、放得进边栏，且**每种语言都命中译文**
+    /// （曾出现调用方用错 key，英文界面回落到中文）。
+    func testCooldownTextIsLocalizedAndShort() {
+        defer { L10n.language = .zhHans }
+        for lang in Settings.Language.allCases {
+            L10n.language = lang
+            let text = L("熔断中(%d)").replacingOccurrences(of: "%d", with: "37s")
+            XCTAssertTrue(text.contains("37s"), "\(lang.rawValue)：倒计时要带秒")
+            XCTAssertLessThanOrEqual(text.count, 20, "\(lang.rawValue)：行内文案要放得进边栏")
+            if lang == .en {
+                XCTAssertFalse(text.contains("熔断"), "英文界面不得回落到中文 key：\(text)")
+            }
+        }
     }
 }

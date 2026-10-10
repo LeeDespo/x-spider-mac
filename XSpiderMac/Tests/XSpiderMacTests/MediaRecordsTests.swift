@@ -645,13 +645,8 @@ final class MediaRecordsTests: XCTestCase {
     func testTargetDirUsesAccountFolderNaming() {
         let post = samplePost()
         let base = tempDir.path
-        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
-        let originalSubfolder = SettingsStore.shared.settings.download.accountSubfolder
-        defer {
-            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
-            SettingsStore.shared.settings.download.accountSubfolder = originalSubfolder
-            DownloadStore.shared.invalidateJudgements()
-        }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         SettingsStore.shared.settings.download.saveDirBase = base
         SettingsStore.shared.settings.download.accountSubfolder = true
 
@@ -670,14 +665,11 @@ final class MediaRecordsTests: XCTestCase {
     func testTargetDirAndJudgementSurviveNicknameChange() throws {
         let base = tempDir.appendingPathComponent("rename", isDirectory: true)
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
-        let originalSubfolder = SettingsStore.shared.settings.download.accountSubfolder
         let originalMode = SettingsStore.shared.settings.download.sameFileCheckMode
+        let snapshot = StoreSnapshot()
         defer {
-            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
-            SettingsStore.shared.settings.download.accountSubfolder = originalSubfolder
             SettingsStore.shared.settings.download.sameFileCheckMode = originalMode
-            DownloadStore.shared.invalidateJudgements()
+            snapshot.restore()
         }
         SettingsStore.shared.settings.download.saveDirBase = base.path
         SettingsStore.shared.settings.download.accountSubfolder = true
@@ -726,15 +718,8 @@ final class MediaRecordsTests: XCTestCase {
     func testSameMediaDownloadedThreeTimesKeepsOneCopy() throws {
         let dir = tempDir.appendingPathComponent("f9", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let originalMode = SettingsStore.shared.settings.download.sameFileCheckMode
-        let originalUnique = SettingsStore.shared.settings.download.appendUniqueId
-        let originalTemplate = SettingsStore.shared.settings.download.fileNameTemplate
-        defer {
-            SettingsStore.shared.settings.download.sameFileCheckMode = originalMode
-            SettingsStore.shared.settings.download.appendUniqueId = originalUnique
-            SettingsStore.shared.settings.download.fileNameTemplate = originalTemplate
-            DownloadStore.shared.invalidateJudgements()
-        }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         SettingsStore.shared.settings.download.sameFileCheckMode = SameFileCheckMode.fileName.rawValue
         SettingsStore.shared.settings.download.appendUniqueId = true
         SettingsStore.shared.settings.download.fileNameTemplate = "%POST_ID% %EXT%"
@@ -773,19 +758,8 @@ final class MediaRecordsTests: XCTestCase {
     func testCreateDownloadTaskSkipsWhenUniqueIdNameAlreadyOnDisk() async throws {
         let dir = tempDir.appendingPathComponent("f9-store", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let originalMode = SettingsStore.shared.settings.download.sameFileCheckMode
-        let originalSubfolder = SettingsStore.shared.settings.download.accountSubfolder
-        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
-        let originalSkip = SettingsStore.shared.settings.download.sameFileSkip
-        let originalUnique = SettingsStore.shared.settings.download.appendUniqueId
-        defer {
-            SettingsStore.shared.settings.download.sameFileCheckMode = originalMode
-            SettingsStore.shared.settings.download.accountSubfolder = originalSubfolder
-            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
-            SettingsStore.shared.settings.download.sameFileSkip = originalSkip
-            SettingsStore.shared.settings.download.appendUniqueId = originalUnique
-            DownloadStore.shared.invalidateJudgements()
-        }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         SettingsStore.shared.settings.download.sameFileCheckMode = SameFileCheckMode.fileName.rawValue
         SettingsStore.shared.settings.download.accountSubfolder = false
         SettingsStore.shared.settings.download.saveDirBase = dir.path
@@ -846,11 +820,8 @@ final class MediaRecordsTests: XCTestCase {
     @MainActor
     func testRecordDownloadedSkipsWriteWhenAccountIsUnknown() throws {
         let dir = tempDir.appendingPathComponent("f7-unknown", isDirectory: true)
-        let originalMode = SettingsStore.shared.settings.download.sameFileCheckMode
-        defer {
-            SettingsStore.shared.settings.download.sameFileCheckMode = originalMode
-            DownloadStore.shared.invalidateJudgements()
-        }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         SettingsStore.shared.settings.download.sameFileCheckMode = SameFileCheckMode.distributed.rawValue
         DownloadStore.shared.refreshDownloadedCaches()
 
@@ -904,11 +875,8 @@ final class MediaRecordsTests: XCTestCase {
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         let old = base.appendingPathComponent("OldNick-old_name[13298072]", isDirectory: true)
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        let originalSaveDir = SettingsStore.shared.settings.download.saveDirBase
-        defer {
-            SettingsStore.shared.settings.download.saveDirBase = originalSaveDir
-            AccountFolder.invalidateIndex()
-        }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         SettingsStore.shared.settings.download.saveDirBase = base.path
         AccountFolder.invalidateIndex()
         DownloadStore.shared.refreshDownloadedCaches()

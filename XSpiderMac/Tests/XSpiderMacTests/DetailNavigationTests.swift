@@ -114,11 +114,11 @@ final class TweetDetailCacheTests: XCTestCase {
     }
 
     override func setUp() async throws {
-        await MainActor.run { TweetDetailCache.shared.clear() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     override func tearDown() async throws {
-        await MainActor.run { TweetDetailCache.shared.clear() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     @MainActor
@@ -170,11 +170,11 @@ final class TweetDetailCacheTests: XCTestCase {
 final class NavigationHistoryTests: XCTestCase {
 
     override func setUp() async throws {
-        await MainActor.run { NavigationHistory.shared.reset() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     override func tearDown() async throws {
-        await MainActor.run { NavigationHistory.shared.reset() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     @MainActor

@@ -37,8 +37,8 @@ final class DownloadStoreBatchTests: XCTestCase {
     @MainActor
     func testBatchRemovalRemovesEverythingInOnePass() {
         let store = DownloadStore.shared
-        let saved = store.tasks
-        defer { store.tasks = saved }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
 
         store.tasks = (0..<500).map { task($0, user: $0 % 2 == 0 ? "alice" : "bob") }
         XCTAssertEqual(store.tasks.count, 500)
@@ -55,8 +55,8 @@ final class DownloadStoreBatchTests: XCTestCase {
     @MainActor
     func testIndexIsRebuiltAfterBatchRemoval() {
         let store = DownloadStore.shared
-        let saved = store.tasks
-        defer { store.tasks = saved }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
 
         store.tasks = (0..<50).map { task($0, user: "alice") }
         store.removeVisibleRecords(statuses: [.complete])
@@ -70,8 +70,8 @@ final class DownloadStoreBatchTests: XCTestCase {
     @MainActor
     func testKnownUsersCarryPerUserCounts() {
         let store = DownloadStore.shared
-        let saved = store.tasks
-        defer { store.tasks = saved }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
 
         store.tasks = (0..<7).map { task($0, user: "alice") }
             + (0..<3).map { task(100 + $0, user: "bob") }
@@ -87,8 +87,8 @@ final class DownloadStoreBatchTests: XCTestCase {
     @MainActor
     func testFilteredResultIsCachedAcrossCalls() {
         let store = DownloadStore.shared
-        let saved = store.tasks
-        defer { store.tasks = saved }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
 
         store.tasks = (0..<300).map { task($0, user: "alice") }
         let first = store.tasksForCurrentTab(statuses: [.complete])
@@ -103,8 +103,8 @@ final class DownloadStoreBatchTests: XCTestCase {
     @MainActor
     func testFilteredCacheInvalidatesWhenTasksChange() {
         let store = DownloadStore.shared
-        let saved = store.tasks
-        defer { store.tasks = saved }
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
 
         store.tasks = (0..<5).map { task($0, user: "alice") }
         XCTAssertEqual(store.tasksForCurrentTab(statuses: [.complete]).count, 5)

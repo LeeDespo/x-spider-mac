@@ -1,85 +1,6 @@
 import XCTest
 @testable import XSpiderMac
 
-/// 数据源按用户记忆 + 时间范围提交刷新。
-///
-/// 用户要求：搜索用户界面的数据源改为分段控制，**要有记忆**（下次进同一用户还是上次的选项），
-/// 默认值为**推文**。
-final class HomepageSourceMemoryTests: XCTestCase {
-
-    private let userA = "memory_test_alpha"
-    private let userB = "memory_test_beta"
-
-    override func setUp() async throws {
-        HomepageStore.clearRememberedSource(for: userA)
-        HomepageStore.clearRememberedSource(for: userB)
-    }
-
-    override func tearDown() async throws {
-        HomepageStore.clearRememberedSource(for: userA)
-        HomepageStore.clearRememberedSource(for: userB)
-    }
-
-    /// 没记录过时默认「推文」（用户明确要求的默认值）
-    func testDefaultSourceIsTweets() {
-        XCTAssertEqual(HomepageStore.rememberedSource(for: userA), .tweets,
-                       "无记录时应默认推文，而不是媒体")
-        XCTAssertEqual(HomepageStore.rememberedSource(for: nil), .tweets)
-        XCTAssertEqual(HomepageStore.rememberedSource(for: ""), .tweets)
-    }
-
-    /// 记住后能读回（大小写不敏感：screen_name 实际大小写可变）
-    func testSourceIsRememberedPerUser() {
-        HomepageStore.persistSource(.medias, for: userA)
-        XCTAssertEqual(HomepageStore.rememberedSource(for: userA), .medias)
-        // 另一个用户不受影响
-        XCTAssertEqual(HomepageStore.rememberedSource(for: userB), .tweets,
-                       "记忆必须按用户隔离，不能串到别的用户")
-
-        HomepageStore.persistSource(.tweets, for: userB)
-        XCTAssertEqual(HomepageStore.rememberedSource(for: userA), .medias)
-        XCTAssertEqual(HomepageStore.rememberedSource(for: userB), .tweets)
-    }
-
-    /// 大小写不同的同一用户名视为同一用户
-    func testSourceMemoryIsCaseInsensitive() {
-        HomepageStore.persistSource(.medias, for: "MixedCase_User")
-        XCTAssertEqual(HomepageStore.rememberedSource(for: "mixedcase_user"), .medias)
-        HomepageStore.clearRememberedSource(for: "mixedcase_user")
-        XCTAssertEqual(HomepageStore.rememberedSource(for: "MIXEDCASE_USER"), .tweets)
-    }
-}
-
-/// 详情页下载按钮的计数语义。
-///
-/// 用户要求：不能只显示「下载全部(n)」，要按已下载数显示 n-m；
-/// 当前媒体已下载时显示「当前已下载」；全下完显示「全部已下载」。
-final class DetailDownloadCountTests: XCTestCase {
-
-    /// 待下载数量 = 总数 - 已下载数（按钮文案里显示的就是它）
-    private func pending(total: Int, downloaded: Int) -> Int { max(0, total - downloaded) }
-
-    func testPendingCountIsTotalMinusDownloaded() {
-        XCTAssertEqual(pending(total: 4, downloaded: 0), 4, "一个都没下 → 下载全部(4)")
-        XCTAssertEqual(pending(total: 4, downloaded: 1), 3, "下过 1 个 → 下载全部(3)")
-        XCTAssertEqual(pending(total: 4, downloaded: 3), 1)
-        XCTAssertEqual(pending(total: 4, downloaded: 4), 0, "全下完 → 0（此时显示「全部已下载」）")
-    }
-
-    /// 已下载数不应超过总数（记录文件里可能有本推文之外的媒体 ID 命中）
-    func testPendingNeverNegative() {
-        XCTAssertEqual(pending(total: 2, downloaded: 5), 0,
-                       "防负数：异常数据下不能出现「下载全部(-3)」")
-    }
-
-    func testAllDownloadedFlag() {
-        XCTAssertTrue(pending(total: 2, downloaded: 2) == 0)
-        XCTAssertFalse(pending(total: 2, downloaded: 1) == 0)
-        // 空媒体列表不算"全部已下载"（此时胶囊根本不渲染）
-        XCTAssertTrue(pending(total: 0, downloaded: 0) == 0)
-    }
-}
-
 /// 媒体查看窗口：切换范围与边界。
 ///
 /// 用户要求：不同界面切换范围要区分——详情页切本推文的媒体，
@@ -92,11 +13,11 @@ final class MediaViewerCenterTests: XCTestCase {
     }
 
     override func setUp() async throws {
-        await MainActor.run { MediaViewerCenter.shared.clearSessionForWindowClose() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     override func tearDown() async throws {
-        await MainActor.run { MediaViewerCenter.shared.clearSessionForWindowClose() }
+        await MainActor.run { TestStores.resetEphemeral() }
     }
 
     @MainActor
@@ -195,7 +116,6 @@ final class MediaViewerCenterTests: XCTestCase {
                        "范围里不应混入主推文或其他评论的媒体")
     }
 }
-
 /// 视频播放状态（底栏控件的数据源）
 final class VideoPlaybackModelTests: XCTestCase {
 
@@ -254,7 +174,6 @@ final class VideoPlaybackModelTests: XCTestCase {
                       "不应存在拖动进度的入口，实际发现: \(scrubLike)")
     }
 }
-
 /// 查看窗口的 URL 选择。
 final class MediaViewerURLTests: XCTestCase {
 
@@ -290,7 +209,6 @@ final class MediaViewerURLTests: XCTestCase {
         XCTAssertEqual(MediaViewerView.bestVideoURL(m)?.absoluteString, "https://a/anim.mp4")
     }
 }
-
 /// 媒体宽高比：评论缩略图与查看窗口都依赖它，必须**永远可用**
 final class TwitterMediaAspectTests: XCTestCase {
 

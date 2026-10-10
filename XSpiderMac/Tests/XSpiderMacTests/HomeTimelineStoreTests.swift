@@ -6,6 +6,10 @@ import XCTest
 /// 背景：媒体瀑布流出现过两个 bug，本文件把它们的契约锁住。
 final class HomeTimelineStoreTests: XCTestCase {
 
+    override func setUp() async throws {
+        await MainActor.run { TestStores.resetEphemeral() }
+    }
+
     private func makeMedia(id: String) -> TwitterMedia {
         TwitterMedia(
             id: id,
@@ -42,6 +46,9 @@ final class HomeTimelineStoreTests: XCTestCase {
     @MainActor
     func testFollowingSortRebuildsFlatMediaOrder() {
         let store = HomeTimelineStore.shared
+        // mode / followingSort 是持久化的：改过必须还原，否则污染用户的分段选择
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         store.mode = .following
         // 两条推文：A 赞少、B 赞多
         store.posts = [
@@ -64,6 +71,8 @@ final class HomeTimelineStoreTests: XCTestCase {
     @MainActor
     func testSortHasNoEffectInForYouMode() {
         let store = HomeTimelineStore.shared
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         store.mode = .forYou
         store.posts = [
             makePost(id: "A", likes: 10, mediaIds: ["mA"]),
@@ -78,9 +87,6 @@ final class HomeTimelineStoreTests: XCTestCase {
     /// 二者若脱节，瀑布流会误报"已加载全部"而不再翻页（"滚到底不出下一页"）。
     @MainActor
     func testHasMoreIsDerivedFromCursor() {
-        // Store 是单例：必须先复位分页状态，否则其他测试遗留的 cursor
-        // 会让本断言偶发失败（之前就是这个问题）
-        HomeTimelineStore.shared.resetPagingForTesting()
         XCTAssertFalse(HomeTimelineStore.shared.hasMore,
                        "未加载任何数据时不应声称还有更多（cursor 初始为 nil）")
     }
@@ -89,6 +95,8 @@ final class HomeTimelineStoreTests: XCTestCase {
     @MainActor
     func testSetFollowingSortIsIdempotent() {
         let store = HomeTimelineStore.shared
+        let snapshot = StoreSnapshot()
+        defer { snapshot.restore() }
         store.mode = .following
         store.posts = [makePost(id: "A", likes: 1, mediaIds: ["mA"])]
         store.setFollowingSort(.hot)
