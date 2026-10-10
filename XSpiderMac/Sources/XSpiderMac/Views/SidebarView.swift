@@ -104,7 +104,7 @@ struct SidebarView: View {
             return statusStore.shortLabel
         }
         let seconds = max(0, Int(statusStore.rateLimitDeadline?.timeIntervalSinceNow ?? 0))
-        return L("熔断中(%ds)").replacingOccurrences(of: "%d", with: "\(seconds)")
+        return L("熔断中(%d)").replacingOccurrences(of: "%d", with: "\(seconds)s")
     }
 
     /// CDN 行内文案：限流时同样显示倒计时
@@ -113,7 +113,7 @@ struct SidebarView: View {
             return statusStore.cdnShortLabel
         }
         let seconds = max(0, Int(until.timeIntervalSinceNow))
-        return L("熔断中(%ds)").replacingOccurrences(of: "%d", with: "\(seconds)")
+        return L("熔断中(%d)").replacingOccurrences(of: "%d", with: "\(seconds)s")
     }
 
     /// X API 的完整说明（信息按钮弹出）：简称 + 具体状态 + 原始说明。

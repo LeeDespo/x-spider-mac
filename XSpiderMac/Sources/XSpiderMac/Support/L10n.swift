@@ -825,7 +825,7 @@ enum L10n {
         ("正常", "OK"),
         ("在浏览器中打开", "Open in browser"),
         ("自动翻译的语言", "Auto-translate languages"),
-        ("熔断中(%d)", "Cooling down (%ds)"),
+        ("熔断中(%d)", "Cooling down (%d)"),
         ("超限回收目标（占上限 %）", "Reclaim target (% of limit)"),
         ("无上限", "Unlimited"),
         ("超过上限后自动清理最旧的缓存文件。「无上限」= 不限制缓存占用。", "Oldest cached files are purged once over the limit. \"Unlimited\" disables the cache cap."),
