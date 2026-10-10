@@ -432,6 +432,15 @@ struct Settings: Codable, Sendable {
         }
     }
 
+    /// 「记录文件名」是否可编辑（设置页那行 `.disabled` 的判据）。
+    ///
+    /// 这个名字有两个消费方：下载判定（走判定依据）与三个记录入口（走记录形态）。
+    /// 只有两条都是「集中式」时才该禁用；否则「判定集中式 + 形态分布式」的用户
+    /// 会改不了那三个入口正在用的文件名。
+    var recordFileNameEditable: Bool {
+        sameFileCheckModeValue == .distributed || recordsFormValue == .distributed
+    }
+
     /// 「文件名追加唯一标识」的用户开关（默认**打开**；nil 视为开）。
     var appendUniqueIdUserEnabled: Bool {
         get { download.appendUniqueId ?? true }

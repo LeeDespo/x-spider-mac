@@ -17,9 +17,11 @@ struct MediaTypeBadge: View {
     /// 紧凑尺寸用于小图（推文卡内的媒体行 / 评论缩略图）
     var compact: Bool = false
 
+    /// 只有视频 / GIF 才有类型标签；图片是默认预期，加标签只是噪声。
+    static func showsBadge(for type: MediaType) -> Bool { type != .photo }
+
     var body: some View {
-        // 图片不显示标签
-        if type != .photo {
+        if Self.showsBadge(for: type) {
             HStack(spacing: 3) {
                 Image(systemName: type == .gif ? "sparkles" : "video.fill")
                     .font(.system(size: compact ? 8 : 9, weight: .bold))

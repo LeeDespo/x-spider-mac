@@ -181,8 +181,7 @@ struct SettingsView: View {
                     DownloadStore.shared.refreshDownloadedCaches()
                 }
             ))
-            .disabled(settingsStore.settings.sameFileCheckModeValue != .distributed
-                      && settingsStore.settings.recordsFormValue != .distributed)
+            .disabled(!settingsStore.settings.recordFileNameEditable)
             .infoHint(L("分布式记录的文件名（默认 .downloadedrecord.json），创建在每个账号文件夹里。\n判定依据或记录形态选「分布式」时可改；集中式记录固定放在应用数据目录、不用这个名字。"))
 
             // 记录导入导出 / 按文件名重建（契约 §7/§8）

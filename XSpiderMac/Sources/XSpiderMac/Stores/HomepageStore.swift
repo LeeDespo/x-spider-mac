@@ -302,7 +302,7 @@ final class HomepageStore {
             // 只会渲染第一个、其余留空（表现为"连续转推时后面几张卡片是空白"）。
             // 去重后再记 `seenPostIds`：既避免同页重复，也保持跨页去重有效。
             var pageSeen = Set<String>()
-            let dedupedPage = posts.filter { pageSeen.insert($0.id).inserted }
+            let dedupedPage = Self.dedupeNewPosts(posts, into: &pageSeen)
             seenPostIds = pageSeen
             let visible = Self.applyDisplayFilter(dedupedPage, filter: filter)
             postList = visible
@@ -472,7 +472,7 @@ final class HomepageStore {
             //
             // **去重必须先于筛选**：先记 id 再过滤，否则被筛掉的推文没进 seenPostIds，
             // 它在相邻页重复出现时会被当成新条目重新走一遍筛选（甚至漏进列表）。
-            let deduped = r.posts.filter { seenPostIds.insert($0.id).inserted }
+            let deduped = Self.dedupeNewPosts(r.posts, into: &seenPostIds)
             let fresh = Self.applyDisplayFilter(deduped, filter: filter)
 
             // **时间轴推进**：用**服务端原始页**里最旧一条的日期（不是筛选后的），
@@ -577,6 +577,19 @@ final class HomepageStore {
             }
         }
         return result
+    }
+
+    /// 按 `post.id` 去重：把**首次出现**的 id 记进 `seen`，重复项丢弃。
+    ///
+    /// 同页与跨页两种情况共用这一条（`insert().inserted` 对同页内后续重复也返回
+    /// false）。同页重复必须去掉，否则 `ForEach` 只渲染第一个、其余留空白——
+    /// 同一账号连续转推同一条推文时，展平后多条 `post.id` 都等于原推文 id。
+    ///
+    /// **去重必须先于展示筛选**：先记 id 再过滤，否则被筛掉的推文没进 `seen`，
+    /// 它在相邻页重复出现时会被当成新条目重新走一遍筛选（甚至漏进列表）。
+    nonisolated static func dedupeNewPosts(_ posts: [TwitterPost],
+                                            into seen: inout Set<String>) -> [TwitterPost] {
+        posts.filter { seen.insert($0.id).inserted }
     }
 
     // MARK: - 筛选（上游 DownloadController：日期/类型/来源）

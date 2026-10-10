@@ -234,6 +234,15 @@ struct MediaDetailView: View {
         return medias.filter { store.hasDownloaded(media: $0, dir: dir, post: p) }.count
     }
 
+    /// 下载胶囊的文案状态（纯函数，便于测试）。
+    ///
+    /// `total` = 本推文媒体数，`downloaded` = 已判定为已下载的数量
+    /// （由 `medias` 过滤得出，故天然 `<= total`）。无媒体时不渲染胶囊
+    /// （见 `showCapsule` 分支），所以 `.pending(0)` 不会被展示。
+    static func downloadCapsuleState(total: Int, downloaded: Int) -> (allDone: Bool, pending: Int) {
+        (allDone: total > 0 && downloaded >= total, pending: max(0, total - downloaded))
+    }
+
     /// 下载胶囊：媒体正下方居中。
     ///
     /// 三个文案都随**已下载状态**变化（判定依据跟随设置，见 `DownloadStore.hasDownloaded`）：
@@ -244,9 +253,8 @@ struct MediaDetailView: View {
         // 读 judgementVersion 建立观察依赖：判定依据/保存路径变化后缓存会变，
         // 但 SwiftUI 追踪不到 static 缓存 → 不读它按钮状态会停在旧结果
         let _ = store.judgementVersion
-        let total = medias.count
-        let done = downloadedCount
-        let allDone = total > 0 && done >= total
+        let capsule = Self.downloadCapsuleState(total: medias.count, downloaded: downloadedCount)
+        let allDone = capsule.allDone
         return HStack(spacing: 12) {
             Button {
                 if let media = current { downloadCurrent(media) }
@@ -262,7 +270,7 @@ struct MediaDetailView: View {
             Button {
                 downloadAllInTweet()
             } label: {
-                Label(allDone ? L("全部已下载") : L("下载全部(\(total - done))"),
+                Label(allDone ? L("全部已下载") : L("下载全部(\(capsule.pending))"),
                       systemImage: allDone ? "checkmark.circle.fill" : "arrow.down.circle.fill")
                     .font(.callout)
             }
