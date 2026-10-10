@@ -5,19 +5,18 @@
 
 ## 1. 单元测试
 
-```bash
-cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test
-```
+命令见 [`../CONTRIBUTING.md` 的「构建与运行」](../CONTRIBUTING.md#构建与运行)。
 
 - 范围：`XSpiderMac/Tests/XSpiderMacTests/`（映射、记录层、判定、设置、同步窗口等
   纯逻辑用例；记录体系的测试清单见 `../MEDIA_RECORDS.md` §12）。
-- **live 测试默认跳过**：`ComponentLiveTests` 由环境变量 `XSPIDER_LIVE=1` 门控
-  （`XCTSkipUnless`），默认全跳——所以 CI 测试 job **无需任何凭据**。真跑 live 时：
+- **live 测试默认跳过**：`ComponentLiveTests` 由环境变量门控（`XCTSkipUnless`），
+  默认全跳——所以 CI 测试 job **无需任何凭据**。真跑 live 时**必须用
+  `TEST_RUNNER_` 前缀**：xcodebuild 只把该前缀的环境变量转发给测试宿主，
+  裸 `XSPIDER_LIVE=1` 到不了测试进程，会被静默跳过。
 
   ```bash
-  XSPIDER_LIVE=1 xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-    -destination 'platform=macOS,arch=arm64' test
+  (cd XSpiderMac && TEST_RUNNER_XSPIDER_LIVE=1 xcodebuild -project XSpiderMac.xcodeproj \
+    -scheme XSpiderMac -destination 'platform=macOS,arch=arm64' test)
   ```
 
 - 编译通过**不等于**行为正确；下表的实测项按改动类型执行。

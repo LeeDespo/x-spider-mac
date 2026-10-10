@@ -112,27 +112,13 @@ codesign --force --sign - "<组件目录>"/xspiderd "<组件目录>"/aria2next
 ## 构建
 
 需要 **Xcode 26 或更高**（使用 macOS 26 SDK；deployment target 仍为 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）。
+工程由 `XSpiderMac/project.yml` 生成，`XSpiderMac.xcodeproj` **不入库**。
 
-```bash
-# project.yml 变更后重新生成工程
-cd XSpiderMac && xcodegen generate
-
-# 构建 + 启动 Debug 版（arm64）
-script/build_and_run.sh
-
-# 单元测试
-cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test
-
-# 打包 dmg（Release）
-script/package_dmg.sh
-
-# 校验随包组件与账本一致（换过组件 / 打包前）
-script/verify_components.sh
-```
+生成工程、构建 / 运行、单元测试、打包 dmg 的完整命令见
+[CONTRIBUTING.md](CONTRIBUTING.md#构建与运行)。
 
 > `Resources/Binaries/` 里放的两个二进制（`aria2next`、`xspiderd`）是**随应用分发的兜底副本**，
-> 会一起打进 app bundle。改了 `project.yml`（版本号、内置文件等）后必须重新 `xcodegen generate`。
+> 会一起打进 app bundle。
 
 ## 仓库结构
 

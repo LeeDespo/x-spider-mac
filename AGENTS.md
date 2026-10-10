@@ -28,7 +28,7 @@
 | 测试、live 验收、验证清单 | `docs/TESTING.md` |
 | 发布 / Tag / DMG / checksum | `docs/RELEASING.md` |
 | 设置默认值 | `SETTINGS_DEFAULTS.md` |
-| 工程文件 | `XSpiderMac/project.yml`（`.xcodeproj` 由 xcodegen 生成） |
+| 工程文件 | `XSpiderMac/project.yml`（`.xcodeproj` 由 xcodegen 生成、不入库） |
 
 ### 不要越过的边界
 
@@ -87,17 +87,8 @@
 
 ## 构建与验证
 
-```bash
-# project.yml 变更后生成工程
-(cd XSpiderMac && xcodegen generate)
-
-# 构建 + 启动 Debug
-script/build_and_run.sh
-
-# 单元测试
-cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test
-```
+工程由 `XSpiderMac/project.yml` 生成（`.xcodeproj` 不入库）；生成工程、构建 / 运行、
+单元测试的命令见 [`CONTRIBUTING.md`](CONTRIBUTING.md#构建与运行)。
 
 改动完成后至少运行与改动相关的单元测试。涉及组件接线时，另外确认设置页「组件状态」可完成启动和 `system.version` 握手。
 

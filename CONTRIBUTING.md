@@ -11,6 +11,8 @@ XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应
 
 ## 构建与运行
 
+> 下面是构建 / 运行 / 测试命令的**唯一出处**；README、`AGENTS.md`、`docs/` 里都指向这里。
+
 ```bash
 # 生成工程（改了 XSpiderMac/project.yml 后必做）
 (cd XSpiderMac && xcodegen generate)
@@ -22,6 +24,9 @@ script/build_and_run.sh
 cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
   -destination 'platform=macOS,arch=arm64' test
 ```
+
+`XSpiderMac.xcodeproj` 由 `project.yml` 生成、**不入库**；
+`script/build_and_run.sh`、`script/package_dmg.sh` 与 CI 都会各自先跑一遍 `xcodegen generate`。
 
 ## 动手前必读
 

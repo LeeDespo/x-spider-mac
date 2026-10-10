@@ -19,24 +19,13 @@ XSpiderMac 是面向 macOS 的原生 SwiftUI X（Twitter）媒体客户端。应
 ## 0.2 五分钟跑起来
 
 **前提**：Xcode 26+（需要 macOS 26 SDK；deployment target 仍为 macOS 15.0）与 [xcodegen](https://github.com/yonaskolb/XcodeGen)
-（`brew install xcodegen`）。`XSpiderMac/project.yml` 是工程的**唯一真源**，
-`XSpiderMac.xcodeproj`（入库）由它生成——**改了 `project.yml`（加文件、改设置、改 target）
-必须重跑 `xcodegen generate`**，否则新文件不进工程。
+（`brew install xcodegen`）。`XSpiderMac/project.yml` 是工程的**唯一真源**；
+`XSpiderMac.xcodeproj` 由它生成、**不入库**——改了 `project.yml`（加文件、改设置、
+改 target）必须重跑 `xcodegen generate`，否则新文件不进工程
+（`script/build_and_run.sh` 与 `script/package_dmg.sh` 会各自先跑一遍）。
 
-```bash
-# 1) 生成工程（改了 project.yml 后必做）
-(cd XSpiderMac && xcodegen generate)
-
-# 2) 构建 + 启动 Debug（arm64）
-script/build_and_run.sh
-
-# 3) 单元测试
-(cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test)
-
-# 4) 打包 Release dmg
-script/package_dmg.sh
-```
+生成工程、构建 / 运行、单元测试、打包 dmg 的命令统一维护在
+[`CONTRIBUTING.md` 的「构建与运行」](../CONTRIBUTING.md#构建与运行)。
 
 最低系统 **macOS 15.0**。改动时不要降低，也**不要为版本差异写降级分支**。
 
@@ -581,12 +570,7 @@ Bundle.main.localizations  == ["en"]         ← 原因
    会把遗漏补上；
 4. **未签名** —— 首次打开需手动放行。
 
-## 6.4 已移除的死代码（勿再当作"已实现"）
+## 6.4 已移除的实现（勿再当作"已实现"）
 
-| 已删 | 原因 |
-|---|---|
-| `NetworkClient` / `RequestGate` / `XClientTransaction` | HTTP 重试/退避、限流闸门、请求签名——**已收进组件**（第 2 部分） |
-| 旧直连 X / 下载实现 | 已迁入 `x-spider-core`；mac 侧只保留契约客户端、映射与产品逻辑 |
-| 评论发布输入框 | 从未形成可用产品能力，已删除，避免把未完成入口误认为已支持功能 |
-| `SelectiveDownloadSheet.swift` | 从未被引用（选择模式一直是内联的），留着会让人以为"选择页面"是那个弹窗 |
-| 字幕选择 | 那是"视频内嵌字幕轨"，与需求（实时翻译字幕）不是一回事 |
+这些能力/文件曾被移除；清单归档在
+[`docs/history/removed-code.md`](history/removed-code.md)，不要把它们当成已支持的功能。

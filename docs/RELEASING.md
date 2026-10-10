@@ -11,9 +11,8 @@
   「解除系统拦截」放行。
 - **版本号真源**：`XSpiderMac/project.yml` 的 `MARKETING_VERSION`。
   发版时它与 GitHub Release 的 tag 保持一致（如 tag `v1.2.3` ↔ 版本 `1.2.3`）。
-  改 `project.yml` 后必须重跑 `(cd XSpiderMac && xcodegen generate)`，把生成的
-  `XSpiderMac.xcodeproj` 一起提交——**不要手改 pbxproj**；CI 每次现生成工程跑测试，
-  不依赖入库工程是否最新。
+  `XSpiderMac.xcodeproj` 由它生成、**不入库**——**不要手改 pbxproj**；
+  `package_dmg.sh` 与 CI 每次都会现生成工程，不依赖本地工程是否最新。
 - **随包组件**：打包前脚本会自动跑 `verify_components.sh` 与
   `components.lock.json` 对账（见 `COMPONENTS.md` §5）；升级组件先走
   `COMPONENTS.md` §4，再回来发版。
@@ -23,8 +22,7 @@
 ```bash
 script/verify_components.sh    # 随包组件与账本对账（换过组件后必须）
 script/check_boundaries.sh     # 生产源码零边界泄漏（涉组件/API 的改动收尾前）
-cd XSpiderMac && xcodebuild -project XSpiderMac.xcodeproj -scheme XSpiderMac \
-  -destination 'platform=macOS,arch=arm64' test   # 单测全绿（live 默认跳过）
+# 单测全绿：live 默认跳过；命令见 CONTRIBUTING.md 「构建与运行」
 ```
 
 ## 2. 打包

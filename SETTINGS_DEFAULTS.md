@@ -61,8 +61,8 @@
 | 端口策略 | 固定（`fixed`） | 固定 / 随机 | |
 | 显示下载提示框 | **开**（nil 安全） | — | 右下角悬浮进度条 |
 
-> 本轮（2026-10-02，设置模式版本 `settingsSchemaVersion = 2`）把上表 4 个键的默认值
-> 定为 **判定依据 centralized / 记录形态 centralized / 唯一标识打开**；
+> 设置模式版本 `settingsSchemaVersion = 2` 起，上表 4 个键的默认值为
+> **判定依据 centralized / 记录形态 centralized / 唯一标识打开**；
 > 老配置（标记缺失或 < 2）由一次性覆盖顶成这 4 个值，**旧值不做映射**。
 > 细节见 `MEDIA_RECORDS.md` §9.1/§9.2。
 
